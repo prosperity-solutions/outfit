@@ -1,0 +1,17 @@
+# `outfit version` prints build info and the git it found, and never fails
+# because of git.
+outfit version
+stdout '^outfit v0.0.0-test \(commit test, built test, '
+stdout 'git [0-9]+\.[0-9]+'
+
+outfit version --json
+stdout '"version":"v0.0.0-test"'
+stdout '"git":\{"version":"[0-9.]+","ok":true\}'
+
+# Unknown commands exit 2 and name the fix.
+! outfit frobnicate
+cmp stderr want-unknown.txt
+
+-- want-unknown.txt --
+outfit: unknown command "frobnicate"
+fix: outfit help

@@ -111,11 +111,12 @@ jobs:
         with:
           version: latest
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - name: shellcheck
         run: |
           files=$(git ls-files 'install.sh' 'scripts/**/*.sh' | grep -E '(^install\.sh$|shim)' || true)
           if [ -n "$files" ]; then printf '%s\n' "$files" | xargs shellcheck -s sh; fi
+          shellcheck -s sh scripts/ci/*.sh
           # The ported bash helpers are bash, not POSIX sh.
           shellcheck -S warning -s bash scripts/dev/*.sh tests/*.sh
       - name: actionlint
@@ -147,7 +148,58 @@ jobs:
         with:
           go-version-file: go.mod
       - name: go test -race
-        run: go test -race ./...
+        run: go test -race -short ./...
+
+  # Which git/OS legs run. Linux is cheap, so every Linux leg runs on PRs; macOS
+  # minutes count about 10x against a private repo's quota, so a PR gets only
+  # Apple git on macos-latest and the rest runs on push to main (and in
+  # release.yml).
+  plan:
+    name: Plan test matrix
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          linux='{"os":"ubuntu-24.04","git":"2.36.6"},{"os":"ubuntu-24.04","git":"latest"},{"os":"ubuntu-24.04-arm","git":"latest"}'
+          mac='{"os":"macos-latest","git":"apple"}'
+          full='{"os":"macos-latest","git":"brew"},{"os":"macos-15-intel","git":"apple"}'
+          if [ "$EVENT" = push ]; then
+            echo "matrix={\"include\":[$linux,$mac,$full]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix={\"include\":[$linux,$mac]}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Integration (real git in temp dirs) and e2e (testscript against the real
+  # binary): everything `go test -short` skips.
+  integration:
+    name: Integration (${{ matrix.os }}, git ${{ matrix.git }})
+    runs-on: ${{ matrix.os }}
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+      - name: Cache git build
+        if: matrix.git != 'apple' && matrix.git != 'brew'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/outfit-git
+          key: git-${{ runner.os }}-${{ runner.arch }}-${{ matrix.git }}-${{ hashFiles('scripts/ci/install-git.sh') }}
+      - name: Install the git under test
+        env:
+          GIT_UNDER_TEST: ${{ matrix.git }}
+        run: scripts/ci/install-git.sh "$GIT_UNDER_TEST"
+      - name: go test (integration and e2e)
+        run: go test -race -count=1 ./...
 
   # The single required check. Fails unless every needed job SUCCEEDED. The
   # `commits` and `ship` jobs only exist on pull requests, so on a push to main
@@ -155,7 +207,7 @@ jobs:
   all-green:
     name: all-green
     runs-on: ubuntu-24.04
-    needs: [commits, ship, lint, unit]
+    needs: [commits, ship, lint, unit, plan, integration]
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always()
     steps:
       - name: Every needed job must have succeeded

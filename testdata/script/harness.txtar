@@ -1,0 +1,44 @@
+# The hermetic environment and the custom commands of docs/HANDOVER.md §7.1.
+env HOME=$WORK/home
+exec git config --global --get init.defaultBranch
+stdout '^main$'
+exec git var GIT_AUTHOR_IDENT
+stdout '^Test Author <author@example.com> 1700000000 \+0000$'
+
+# atomicsave replaces the file by rename; the inode changes, git is never told.
+exec git init -q repo
+cd repo
+cp $WORK/seed.txt a.txt
+exec git add a.txt
+exec git commit -qm 'feat: seed'
+atomicsave a.txt 'saved atomically'
+grep 'saved atomically' a.txt
+exec git status --porcelain
+stdout '^ M a.txt$'
+
+# blobsha agrees with git.
+blobsha a.txt
+cp stdout $WORK/ours.txt
+exec git hash-object a.txt
+cmp stdout $WORK/ours.txt
+
+# islink
+symlink link -> a.txt
+islink link a.txt
+! islink a.txt
+! islink link nope.txt
+
+# gitver and the condition agree.
+gitver >= 2.36
+[!gitge:2.36] stop 'git too old'
+
+# Hook stubs would log here; nothing has run.
+hooklog
+! stdout .
+
+# The git trace counts processes: `git --version` through a stub is one call.
+gitcalls reset
+gitcalls 0
+
+-- seed.txt --
+seed

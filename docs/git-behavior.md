@@ -30,3 +30,4 @@ test exists.
 | 17 | With `/.outfit/` excluded: `rg` (including `--hidden`) finds nothing under `.outfit/`; `rg --hidden -L` finds only the canonical `AGENTS.md`; `grep -r` finds exactly one hit (the real file); `grep -R` finds both paths (accepted residual risk). Verified with ripgrep 14.1 and GNU grep 3.11. | _pending (PR 6)_ |
 | 18 | `git config get` exists only from git 2.46; the floor is 2.36, so only `git config --get` / `--list` are used. | _pending (PR 1)_ |
 | 19 | Ubuntu 22.04 ships git 2.34, below the floor. | _documented in the refusal message (PR 1)_ |
+| 20 | After a repository tree is **copied** (every mtime changes), a cone `sparse-checkout set` left files that should have been removed, because git still saw their stat data as stale. Running `git update-index -q --refresh` after the copy fixes it. Fixtures do this once after copying. *(Observed with Apple git 2.54 on macOS.)* | `testkit` `TestOptions/cone` |

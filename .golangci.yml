@@ -6,3 +6,5 @@ linters:
         - fmt.Fprint
         - fmt.Fprintf
         - fmt.Fprintln
+        - os.RemoveAll
+        - (*os.File).Close
