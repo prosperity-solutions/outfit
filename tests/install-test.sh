@@ -29,7 +29,7 @@ sha256_of() { if command -v sha256sum >/dev/null; then sha256sum "$1" | awk '{pr
 farm() { # farm DIR [extra tool...]
   mkdir -p "$1"
   local t p
-  for t in sh bash curl tar awk tr sed grep cut wc mktemp mv cp chmod rm dirname uname sha256sum shasum cat mkdir head printf basename "${@:2}"; do
+  for t in sh bash curl tar gzip gunzip awk tr sed grep cut wc mktemp mv cp chmod rm dirname uname sha256sum shasum cat mkdir head printf basename "${@:2}"; do
     p=$(command -v "$t" 2>/dev/null || true)
     case "$p" in /*) ln -sf "$p" "$1/$t" ;; esac
   done

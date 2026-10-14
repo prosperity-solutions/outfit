@@ -214,8 +214,9 @@ main() {
 
   get checksums.txt
   archive=$(awk -v p="$plat" '$2 ~ "^outfit_[0-9A-Za-z.+-]+_" p "\\.tar\\.gz$" { print $2 }' "$tmp/checksums.txt")
-  [ -n "$archive" ] && [ "$(printf '%s\n' "$archive" | wc -l)" -eq 1 ] ||
+  if [ -z "$archive" ] || [ "$(printf '%s\n' "$archive" | wc -l)" -ne 1 ]; then
     err "checksums.txt does not list exactly one $plat build"
+  fi
   if [ -n "$ver" ] && [ "$archive" != "outfit_${ver}_$plat.tar.gz" ]; then
     err "asked for $ver but the release holds $archive"
   fi
@@ -238,7 +239,7 @@ main() {
 
   mkdir "$tmp/x"
   tar -xzf "$tmp/$archive" -C "$tmp/x"
-  [ -f "$tmp/x/outfit" ] && [ ! -L "$tmp/x/outfit" ] || err "$archive has no plain outfit file"
+  if [ ! -f "$tmp/x/outfit" ] || [ -L "$tmp/x/outfit" ]; then err "$archive has no plain outfit file"; fi
 
   dir=$(install_dir)
   mkdir -p "$dir" 2>/dev/null || true
