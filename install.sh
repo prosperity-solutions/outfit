@@ -19,7 +19,7 @@
 #   OUTFIT_BASE_URL       Public download base (default https://github.com/prosperity-solutions/outfit).
 #                         For tests.
 #   OUTFIT_API_URL        API base (default https://api.github.com/repos/prosperity-solutions/outfit).
-#                         For tests.
+#                         For tests; the token is sent only to api.github.com or this machine.
 #   OUTFIT_MINISIGN_PUBKEY  Replaces the embedded signing key(s) below. For tests.
 #
 # A release always carries checksums.txt and checksums.txt.minisig; both are
@@ -194,8 +194,9 @@ main() {
   if [ -n "$token" ]; then
     # The token goes to the API URL and nowhere else, and never in the clear.
     case "$api" in
-      https://* | file://* | http://localhost[:/]* | http://127.0.0.1[:/]*) ;;
-      *) err "refusing to send a GitHub token to $api (only https URLs; OUTFIT_API_URL is for tests)" ;;
+      *@*) err "refusing to send a GitHub token to $api (a URL with a user part can name another host)" ;;
+      https://api.github.com/* | file://* | http://localhost[:/]* | http://127.0.0.1[:/]*) ;;
+      *) err "refusing to send a GitHub token to $api (it goes only to https://api.github.com; OUTFIT_API_URL is for tests and may only name this machine)" ;;
     esac
     rel=latest
     [ -z "$ver" ] || rel=tags/v$ver

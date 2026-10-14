@@ -10,14 +10,22 @@ import (
 	"github.com/prosperity-solutions/outfit/internal/update"
 )
 
-// installCommand is what to run when outfit cannot replace itself where it lives.
-const installCommand = `curl -fsSL -H "Authorization: Bearer $(gh auth token)" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | OUTFIT_INSTALL_DIR="$HOME/.local/bin" sh`
+// installScript installs the latest release; installCommand does so into a folder
+// the user owns, for when outfit cannot replace itself where it lives.
+const (
+	installScript  = `curl -fsSL -H "Authorization: Bearer $(gh auth token)" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh`
+	installCommand = `curl -fsSL -H "Authorization: Bearer $(gh auth token)" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | OUTFIT_INSTALL_DIR="$HOME/.local/bin" sh`
+)
 
 // updateClient builds the release client from the environment: the token from
 // OUTFIT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN or `gh auth token`, the two bases
 // from OUTFIT_BASE_URL and OUTFIT_API_URL (for tests), the keys compiled in.
-func updateClient(e Env) (*update.Client, string) {
-	tok, ignored := update.FindToken(e.Getenv, e.GHToken)
+func updateClient(ctx context.Context, e Env) (*update.Client, string) {
+	var gh func() string
+	if e.GHToken != nil {
+		gh = func() string { return e.GHToken(ctx) }
+	}
+	tok, ignored := update.FindToken(e.Getenv, gh)
 	keys := e.UpdateKeys
 	if keys == nil {
 		keys = update.Keys()
@@ -35,13 +43,22 @@ func updateClient(e Env) (*update.Client, string) {
 func asCLIError(err error) error {
 	var ue *update.Error
 	if errors.As(err, &ue) {
-		return Errorf("%s", ue.Msg).WithFix(ue.Fix)
+		fix := ue.Fix
+		if fix == "" {
+			fix = "outfit update --check   (see what is published; if it persists, reinstall: docs/install.md)"
+		}
+		e := Errorf("%s", ue.Msg).WithFix(fix)
+		e.Retryable = ue.Retryable
+		return e
 	}
 	var nw *update.NotWritableError
 	if errors.As(err, &nw) {
-		return (&Error{Code: ExitNeedsHuman, Msg: nw.Error() + " (outfit never uses sudo)"}).WithFix(installCommand)
+		return (&Error{Code: ExitNeedsHuman,
+			Msg: nw.Error() + " (outfit never uses sudo). The command below installs the latest release into a folder you own; " +
+				"then put that folder before " + nw.Dir + " on your PATH, and run `outfit init` in each repository so the hook shims point at the new copy"}).
+			WithFix(installCommand)
 	}
-	return Errorf("%v", err)
+	return Errorf("%v", err).WithFix("outfit update --check")
 }
 
 type updateJSON struct {
@@ -88,26 +105,30 @@ func cmdUpdate(ctx context.Context, e Env, args []string) int {
 	if *version != "" {
 		v, err := update.ParseVersion(*version)
 		if err != nil {
-			return fail(Usagef("%v", err).WithFix("outfit update --version v0.1.0"))
+			return fail(Usagef("%v", err).WithFix("outfit update --check   (shows the latest release)"))
 		}
 		want = &v
 	}
 	cur, curErr := update.ParseVersion(e.Build.Version)
 	dev := curErr != nil
 
-	client, ignored := updateClient(e)
+	client, ignored := updateClient(ctx, e)
 	if ignored != "" {
 		fmt.Fprintln(e.Stderr, "warning: "+ignored)
 	}
 
 	if *check {
-		latest, err := client.Latest(ctx)
+		latest, err := client.LatestVerified(ctx)
 		if err != nil {
 			return fail(asCLIError(err))
 		}
 		avail := dev || cur.Less(latest)
 		j := updateJSON{Current: e.Build.Version, Latest: latest.String(), UpdateAvailable: &avail}
-		if !avail {
+		switch {
+		case dev:
+			// A plain `outfit update` refuses on a development build.
+			return emit(j, fmt.Sprintf("Latest release: %s (this is a development build; `outfit update --version %s` installs it)", latest, latest))
+		case !avail:
 			return emit(j, fmt.Sprintf("outfit %s is up to date", cur))
 		}
 		return emit(j, fmt.Sprintf("Update available: %s → %s. Run outfit update", e.Build.Version, latest))
@@ -115,7 +136,7 @@ func cmdUpdate(ctx context.Context, e Env, args []string) int {
 
 	if dev && want == nil {
 		return fail(Errorf("this is a development build (version %q); `outfit update` would replace it with a release", e.Build.Version).
-			WithFix("outfit update --version v0.1.0   (or install a release: docs/install.md)"))
+			WithFix("outfit update --check   (names the latest release; then outfit update --version <it>), or install one: " + installScript))
 	}
 	if e.Exe == "" {
 		return fail(Errorf("cannot tell where the running outfit lives").WithFix(installCommand))
@@ -135,8 +156,9 @@ func cmdUpdate(ctx context.Context, e Env, args []string) int {
 	}
 
 	if want == nil {
-		// Latest: a cheap look first, so an up-to-date outfit downloads nothing.
-		latest, err := client.Latest(ctx)
+		// Latest: a cheap, signature-checked look first, so an up-to-date outfit downloads
+		// no archive but cannot be made to believe it is up to date by an unsigned answer.
+		latest, err := client.LatestVerified(ctx)
 		if err != nil {
 			return fail(asCLIError(err))
 		}
@@ -169,7 +191,10 @@ func cmdUpdate(ctx context.Context, e Env, args []string) int {
 // bannerEnabled is the §5 rule: only on a terminal, without --json, not in CI, not
 // opted out.
 func bannerEnabled(e Env, args []string) bool {
-	return e.IsTTY && !wantsJSON(args) && e.Getenv("CI") == "" && e.Getenv("OUTFIT_NO_UPDATE_CHECK") == ""
+	// Under a git hook (OUTFIT_HOOK_ACTIVE, or the index git exports to hooks) a
+	// command like `outfit status` must stay fast too.
+	return e.IsTTY && !wantsJSON(args) && e.Getenv("CI") == "" && e.Getenv("OUTFIT_NO_UPDATE_CHECK") == "" &&
+		e.Getenv("OUTFIT_HOOK_ACTIVE") == "" && e.Getenv("GIT_INDEX_FILE") == ""
 }
 
 // newBanner builds the banner for an eligible command. Everything that can be slow
@@ -181,7 +206,7 @@ func newBanner(e Env) *update.Banner {
 		Dir:     update.CacheDir(e.Getenv),
 		Now:     time.Now,
 		Check: func(ctx context.Context) (update.Version, error) {
-			c, _ := updateClient(e)
+			c, _ := updateClient(ctx, e)
 			return c.Latest(ctx)
 		},
 	}

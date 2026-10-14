@@ -41,8 +41,8 @@ type Env struct {
 	// IsTTY reports whether stderr is a terminal (the update banner only shows
 	// there).
 	IsTTY bool
-	// GHToken returns the output of `gh auth token`; nil means do not look.
-	GHToken func() string
+	// GHToken returns the output of `gh auth token`, within ctx; nil means do not look.
+	GHToken func(context.Context) string
 	// HTTP and UpdateKeys are for tests of `update`; nil means the defaults (the
 	// system client, the keys compiled in from internal/update/keys.txt).
 	HTTP       *http.Client

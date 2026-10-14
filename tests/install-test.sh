@@ -280,6 +280,11 @@ D=$WORK/api-http
 run_install OUTFIT_API_URL="http://evil.example/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN
 check "a token is never sent over plain http" rc_is 1
 check "  with the reason" out_has "refusing to send a GitHub token"
+for evil in "https://evil.example/api" "https://api.github.com.evil.example/api" "http://localhost:80@evil.example/api" "https://api.github.com@evil.example/api"; do
+  D=$WORK/api-evil
+  run_install OUTFIT_API_URL="$evil" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN
+  check "a token is not sent to $evil" out_has "refusing to send a GitHub token"
+done
 # gh as the last-resort token source
 mkdir -p "$WORK/ghbin"
 cp -P "$WORK/bin"/* "$WORK/ghbin/"

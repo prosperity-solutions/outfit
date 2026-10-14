@@ -20,14 +20,20 @@ import (
 // Error is a failure with the exact fix to run, which is what agents and people
 // follow. The CLI turns it into its own error type.
 type Error struct {
-	Msg string
-	Fix string
+	Msg       string
+	Fix       string
+	Retryable bool // a transient failure (network, 5xx, 429): the same command may work later
 }
 
 func (e *Error) Error() string { return e.Msg }
 
 func fixf(fix, format string, a ...any) *Error {
 	return &Error{Msg: fmt.Sprintf(format, a...), Fix: fix}
+}
+
+// retryf is a transient failure: trying again is the fix.
+func retryf(format string, a ...any) *Error {
+	return &Error{Msg: fmt.Sprintf(format, a...), Fix: "outfit update   (try again)", Retryable: true}
 }
 
 // Client fetches, verifies and unpacks a release. One attempt per request, no
@@ -109,13 +115,24 @@ func (c *Client) http() *http.Client {
 	return &cp
 }
 
-// secureEnough reports whether a token may be sent to u: https, or http to this machine.
-func secureEnough(u *url.URL) bool {
-	if u.Scheme == "https" {
-		return true
-	}
+func isLoopback(u *url.URL) bool {
 	h := u.Hostname()
-	return u.Scheme == "http" && (h == "localhost" || h == "127.0.0.1" || h == "::1")
+	return h == "localhost" || h == "127.0.0.1" || h == "::1"
+}
+
+// secureEnough reports whether a request may follow a redirect to u: https, or http
+// to this machine.
+func secureEnough(u *url.URL) bool {
+	return u.Scheme == "https" || (u.Scheme == "http" && isLoopback(u))
+}
+
+// tokenHostOK reports whether the GitHub token may be sent to u: only the real API
+// host over https, or this machine (tests). OUTFIT_API_URL can name another place,
+// and a token must never follow it there: the signature still protects the binary,
+// but the token has no such protection.
+func tokenHostOK(u *url.URL) bool {
+	return (u.Scheme == "https" && u.Hostname() == "api.github.com" && u.User == nil) ||
+		((u.Scheme == "http" || u.Scheme == "https") && isLoopback(u) && u.User == nil)
 }
 
 func (c *Client) metaTimeout() time.Duration {
@@ -139,8 +156,8 @@ func (c *Client) get(ctx context.Context, rawURL, accept string, auth bool, time
 	if err != nil {
 		return nil, err
 	}
-	if auth && !secureEnough(u) {
-		return nil, fixf("", "refusing to send a GitHub token to %s (only https; OUTFIT_API_URL is for tests)", u.Host)
+	if auth && !tokenHostOK(u) {
+		return nil, fixf("unset OUTFIT_API_URL", "refusing to send a GitHub token to %s (it goes only to api.github.com over https; OUTFIT_API_URL is for tests and may only name this machine)", u.Host)
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -158,7 +175,7 @@ func (c *Client) get(ctx context.Context, rawURL, accept string, auth bool, time
 	}
 	resp, err := c.http().Do(req)
 	if err != nil {
-		return nil, fixf("", "could not reach %s: %v", u.Host, scrub(err, c.Token.Value))
+		return nil, retryf("could not reach %s: %v", u.Host, scrub(err, c.Token.Value))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -166,7 +183,7 @@ func (c *Client) get(ctx context.Context, rawURL, accept string, auth bool, time
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return nil, fixf("", "could not read from %s: %v", u.Host, scrub(err, c.Token.Value))
+		return nil, retryf("could not read from %s: %v", u.Host, scrub(err, c.Token.Value))
 	}
 	if int64(len(b)) > limit {
 		return nil, fixf("", "%s sent more than %d bytes; not an outfit release file", u.Path, limit)
@@ -195,7 +212,10 @@ func (c *Client) statusError(u *url.URL, status int, auth bool) error {
 		return fixf("gh auth login   (or set OUTFIT_GITHUB_TOKEN)",
 			"could not download %s (HTTP %d): that release does not exist, or the repository is private and needs a GitHub token", u.Path, status)
 	}
-	return fixf("", "GitHub answered %d for %s", status, u.Path)
+	if status >= 500 || status == 429 {
+		return retryf("GitHub answered %d for %s", status, u.Path)
+	}
+	return fixf("outfit update --check", "GitHub answered %d for %s", status, u.Path)
 }
 
 // ---- release layout -------------------------------------------------------
@@ -284,9 +304,9 @@ func archiveFor(checksums []byte, plat string) (name, sum string, v Version, err
 	return name, sum, v, nil
 }
 
-// Latest reports the newest release's version without downloading it. It is
-// information for `--check` and the banner: installing re-derives and verifies
-// everything.
+// Latest reports the newest release's version without downloading anything beyond
+// the release listing. It is UNAUTHENTICATED information, good enough for the update
+// banner: anything that acts on the answer uses LatestVerified or Fetch.
 func (c *Client) Latest(ctx context.Context) (Version, error) {
 	plat, err := Platform(c.goos(), c.goarch())
 	if err != nil {
@@ -307,10 +327,20 @@ func (c *Client) Latest(ctx context.Context) (Version, error) {
 	return v, err
 }
 
-// Fetch downloads the release (the latest, or exactly want), verifies the
-// signature of its checksum list against the compiled-in keys, then the archive's
-// SHA-256 against it, and unpacks the executable. Fail closed at every step.
-func (c *Client) Fetch(ctx context.Context, want *Version) (*Package, error) {
+// release is one release whose checksum list has been verified.
+type release struct {
+	s    *source
+	name string  // the archive for this platform
+	sum  string  // its SHA-256, from the signed list
+	v    Version // its version
+}
+
+// verified opens the release (the latest, or exactly want) and checks everything
+// that can be checked without the archive: the minisign signature of checksums.txt
+// against the compiled-in keys, that it lists exactly one build for this platform,
+// that it is the version asked for, and (token path) that it is the release's own
+// build. Fail closed at every step.
+func (c *Client) verified(ctx context.Context, want *Version) (*release, error) {
 	if len(c.Keys) == 0 {
 		return nil, fixf("reinstall with install.sh (docs/install.md)",
 			"this build has no trusted release keys, so it cannot verify an update (is it a development build?)")
@@ -332,7 +362,7 @@ func (c *Client) Fetch(ctx context.Context, want *Version) (*Package, error) {
 		return nil, err
 	}
 	if err := Verify(c.Keys, sums, sig); err != nil {
-		return nil, fixf("", "%v; nothing was installed", err)
+		return nil, fixf("outfit update   (try again; if it keeps failing, reinstall: docs/install.md)", "%v; nothing was installed", err)
 	}
 	name, sum, v, err := archiveFor(sums, plat)
 	if err != nil {
@@ -346,19 +376,41 @@ func (c *Client) Fetch(ctx context.Context, want *Version) (*Package, error) {
 			return nil, fixf("", "release %s holds %s, which is not its own build; nothing was installed", s.tag, name)
 		}
 	}
-	archive, err := s.file(ctx, name, c.downloadTimeout(), maxArchive)
+	return &release{s: s, name: name, sum: sum, v: v}, nil
+}
+
+// LatestVerified is the newest release's version, read from a checksum list whose
+// signature checked out: what `outfit update` and `update --check` decide on, so
+// an unsigned answer cannot make outfit believe it is up to date.
+func (c *Client) LatestVerified(ctx context.Context) (Version, error) {
+	r, err := c.verified(ctx, nil)
+	if err != nil {
+		return Version{}, err
+	}
+	return r.v, nil
+}
+
+// Fetch downloads the release (the latest, or exactly want) after verified(), checks
+// the archive's SHA-256 against the signed list, and unpacks the executable.
+func (c *Client) Fetch(ctx context.Context, want *Version) (*Package, error) {
+	r, err := c.verified(ctx, want)
+	if err != nil {
+		return nil, err
+	}
+	archive, err := r.s.file(ctx, r.name, c.downloadTimeout(), maxArchive)
 	if err != nil {
 		return nil, err
 	}
 	got := sha256.Sum256(archive)
-	if hex.EncodeToString(got[:]) != sum {
-		return nil, fixf("", "SHA-256 mismatch for %s (expected %s, got %s); nothing was installed", name, sum, hex.EncodeToString(got[:]))
+	if hex.EncodeToString(got[:]) != r.sum {
+		return nil, fixf("outfit update   (try again; if it keeps failing, reinstall: docs/install.md)",
+			"SHA-256 mismatch for %s (expected %s, got %s); nothing was installed", r.name, r.sum, hex.EncodeToString(got[:]))
 	}
 	bin, err := ExtractBinary(archive)
 	if err != nil {
-		return nil, fixf("", "%s: %v; nothing was installed", name, err)
+		return nil, fixf("", "%s: %v; nothing was installed", r.name, err)
 	}
-	return &Package{Version: v, Archive: name, Binary: bin}, nil
+	return &Package{Version: r.v, Archive: r.name, Binary: bin}, nil
 }
 
 func (c *Client) goos() string {

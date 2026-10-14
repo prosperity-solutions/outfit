@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,7 +18,9 @@ var BannerCommands = map[string]bool{"status": true, "ls": true, "use": true, "s
 // CacheDir is where outfit keeps update.json and update.lock: the user cache
 // directory, derived from the given environment so tests can point it anywhere.
 func CacheDir(getenv func(string) string) string {
-	if d := getenv("XDG_CACHE_HOME"); d != "" && runtime.GOOS != "darwin" {
+	// Like os.UserCacheDir, an XDG_CACHE_HOME that is not absolute is ignored: a
+	// relative one would put the cache inside whatever repository outfit runs in.
+	if d := getenv("XDG_CACHE_HOME"); filepath.IsAbs(d) && runtime.GOOS != "darwin" {
 		return filepath.Join(d, "outfit")
 	}
 	home := getenv("HOME")
@@ -32,7 +35,11 @@ func CacheDir(getenv func(string) string) string {
 
 type cacheFile struct {
 	CheckedAt time.Time `json:"checked_at"`
-	Latest    string    `json:"latest"`
+	Latest    string    `json:"latest,omitempty"`
+	// Failed marks a check that got a definite error (no token, offline, 404): it
+	// is not retried for FailureBackoff, so a user who can never reach the release
+	// does not pay a network round trip and a `gh` process on every command.
+	Failed bool `json:"failed,omitempty"`
 }
 
 func readCache(dir string) (cacheFile, bool) {
@@ -80,11 +87,14 @@ type Banner struct {
 	Now      func() time.Time
 	Budget   time.Duration // default 800 ms
 	Interval time.Duration // default 24 h
+	// FailureBackoff is how long a failed check is not retried. Default 1 h.
+	FailureBackoff time.Duration
 
 	cur     Version
 	started time.Time
 	result  chan checkResult
 	cached  *Version
+	skip    bool
 }
 
 type checkResult struct {
@@ -109,9 +119,17 @@ func (b *Banner) Start(ctx context.Context) {
 	if b.Interval == 0 {
 		b.Interval = 24 * time.Hour
 	}
+	if b.FailureBackoff == 0 {
+		b.FailureBackoff = time.Hour
+	}
 	b.started = b.Now()
-	if c, ok := readCache(b.Dir); ok && b.started.Sub(c.CheckedAt) < b.Interval {
-		if v, err := ParseVersion(c.Latest); err == nil {
+	if c, ok := readCache(b.Dir); ok {
+		age := b.started.Sub(c.CheckedAt)
+		if c.Failed && age < b.FailureBackoff {
+			b.skip = true // failed recently: say nothing, ask nothing
+			return
+		}
+		if v, err := ParseVersion(c.Latest); err == nil && !c.Failed && age < b.Interval {
 			b.cached = &v
 			return
 		}
@@ -129,6 +147,9 @@ func (b *Banner) Start(ctx context.Context) {
 // the check only as long as the budget leaves; a check that is not done is skipped
 // and tried again next time. The cache is written only after a successful check.
 func (b *Banner) Finish() string {
+	if b.skip {
+		return ""
+	}
 	var latest *Version
 	switch {
 	case b.cached != nil:
@@ -151,6 +172,11 @@ func (b *Banner) Finish() string {
 			}
 		}
 		if r.err != nil {
+			// A check cut off by the budget is not a verdict: try again next time.
+			// Anything else (offline, 404, no token) is remembered for a while.
+			if !errors.Is(r.err, context.DeadlineExceeded) && !errors.Is(r.err, context.Canceled) {
+				_ = writeCache(b.Dir, cacheFile{CheckedAt: b.Now(), Failed: true})
+			}
 			return ""
 		}
 		_ = writeCache(b.Dir, cacheFile{CheckedAt: b.Now(), Latest: r.v.String()})

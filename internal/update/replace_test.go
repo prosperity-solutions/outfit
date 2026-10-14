@@ -194,13 +194,54 @@ func TestBannerSlowCheckIsSkippedAndNotCached(t *testing.T) {
 	}
 }
 
-func TestBannerFailedCheckIsNotCached(t *testing.T) {
+func TestBannerFailedCheckIsRememberedOnlyAsABackOff(t *testing.T) {
 	b := banner(t, "0.1.0", func(context.Context) (Version, error) { return Version{}, errors.New("offline") })
 	b.Start(context.Background())
 	if got := b.Finish(); got != "" {
 		t.Fatalf("banner %q", got)
 	}
-	if _, ok := readCache(b.Dir); ok {
-		t.Fatal("a failed check was cached: it would hide updates for a day")
+	c, ok := readCache(b.Dir)
+	if !ok || !c.Failed || c.Latest != "" {
+		t.Fatalf("cache = %+v, %v: a failure must be a back-off marker, never an answer", c, ok)
+	}
+}
+
+func TestBannerBacksOffAfterAFailedCheckButNotAfterATimeout(t *testing.T) {
+	var calls atomic.Int32
+	failing := func(context.Context) (Version, error) { calls.Add(1); return Version{}, errors.New("HTTP 404") }
+	b := banner(t, "0.1.0", failing)
+	b.Start(context.Background())
+	b.Finish()
+	// Within the hour: no second attempt, nothing printed.
+	b2 := &Banner{Current: "0.1.0", Dir: b.Dir, Check: failing, Budget: 200 * time.Millisecond}
+	b2.Start(context.Background())
+	if got := b2.Finish(); got != "" {
+		t.Fatalf("banner %q after a failure", got)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("checks = %d: a failed check was retried within the back-off", calls.Load())
+	}
+	// After the back-off it tries again.
+	b3 := &Banner{Current: "0.1.0", Dir: b.Dir, Check: failing, Budget: 200 * time.Millisecond, Now: func() time.Time { return time.Now().Add(2 * time.Hour) }}
+	b3.Start(context.Background())
+	b3.Finish()
+	if calls.Load() != 2 {
+		t.Fatalf("checks = %d, want 2 after the back-off", calls.Load())
+	}
+
+	// A check cut off by the budget says nothing about the network: not remembered.
+	cut := func(ctx context.Context) (Version, error) { <-ctx.Done(); return Version{}, ctx.Err() }
+	b4 := banner(t, "0.1.0", cut)
+	b4.Start(context.Background())
+	b4.Finish()
+	if _, ok := readCache(b4.Dir); ok {
+		t.Fatal("a timed-out check was cached as a failure")
+	}
+}
+
+func TestCacheDirIgnoresARelativeXDGCacheHome(t *testing.T) {
+	get := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	if d := CacheDir(get(map[string]string{"XDG_CACHE_HOME": ".cache", "HOME": "/h"})); !filepath.IsAbs(d) {
+		t.Fatalf("a relative XDG_CACHE_HOME was used: %q", d)
 	}
 }

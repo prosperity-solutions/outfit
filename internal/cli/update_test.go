@@ -137,7 +137,7 @@ func TestUpdateVersionFlag(t *testing.T) {
 
 func TestUpdateDevBuildRefusesUnlessAskedForARelease(t *testing.T) {
 	f := newUpdate(t)
-	if code := f.run("dev", "update"); code != cli.ExitError || !strings.Contains(f.errb.String(), "development build") || !strings.Contains(f.errb.String(), "fix: outfit update --version") {
+	if code := f.run("dev", "update"); code != cli.ExitError || !strings.Contains(f.errb.String(), "development build") || !strings.Contains(f.errb.String(), "outfit update --version") {
 		t.Fatalf("code=%d err=%q", code, f.errb.String())
 	}
 	if f.installed() != string(testkit.Binary("0.1.0")) {
@@ -265,6 +265,8 @@ func TestBannerOnlyWhereItBelongs(t *testing.T) {
 		"get (hook command)": {nil, true, []string{"get", "biome"}},
 		"hook":               {nil, true, []string{"hook", "pre-commit"}},
 		"version":            {nil, true, []string{"version"}},
+		"inside a git hook":  {map[string]string{"OUTFIT_HOOK_ACTIVE": "pre-commit@/r/.git"}, true, []string{"ls"}},
+		"git exported index": {map[string]string{"GIT_INDEX_FILE": "/r/.git/index"}, true, []string{"ls"}},
 	} {
 		if got := bannerRun(t, f, repo, c.extra, c.tty, c.args...); strings.Contains(got, "Update available") {
 			t.Errorf("%s: banner shown: %q", name, got)
@@ -280,5 +282,95 @@ func TestHookCommandsNeverTouchTheNetwork(t *testing.T) {
 	bannerRun(t, f, repo, nil, true, "hook", "pre-commit")
 	if n := len(f.rel.Requests()) - before; n != 0 {
 		t.Fatalf("hook commands made %d network requests", n)
+	}
+}
+
+func TestUpdateJSONErrorsCarryAFixAndRetryable(t *testing.T) {
+	f := newUpdate(t)
+	var j struct {
+		Error     string `json:"error"`
+		Fix       string `json:"fix"`
+		Retryable bool   `json:"retryable"`
+		Code      int    `json:"code"`
+	}
+	decode := func() {
+		t.Helper()
+		j = struct {
+			Error     string `json:"error"`
+			Fix       string `json:"fix"`
+			Retryable bool   `json:"retryable"`
+			Code      int    `json:"code"`
+		}{}
+		if err := json.Unmarshal(f.out.Bytes(), &j); err != nil {
+			t.Fatalf("not JSON: %q", f.out.String())
+		}
+	}
+	// Nobody home: transient, so retryable, and the fix is to try again.
+	f.env["OUTFIT_BASE_URL"] = "http://127.0.0.1:1"
+	if code := f.run("0.1.0", "update", "--check", "--json"); code != cli.ExitError {
+		t.Fatalf("code=%d", code)
+	}
+	decode()
+	if !j.Retryable || j.Fix == "" || j.Code != 1 {
+		t.Fatalf("unreachable: %+v", j)
+	}
+	// A bad signature is not transient, but still names a fix.
+	f2 := newUpdate(t)
+	f2.rel.Break.Signature = true
+	f3 := &updateFixture{t: t, rel: testkit.NewFakeRelease(t, f2.rel.Plat), home: t.TempDir(), exe: f.exe}
+	f3.rel.Break.Signature = true
+	f3.rel.Add("0.2.0")
+	f3.env = map[string]string{"HOME": f3.home, "OUTFIT_BASE_URL": f3.rel.URL, "OUTFIT_API_URL": f3.rel.APIURL}
+	f = f3
+	if code := f.run("0.1.0", "update", "--json"); code != cli.ExitError {
+		t.Fatalf("code=%d out=%q", code, f.out.String())
+	}
+	decode()
+	if j.Retryable || j.Fix == "" || !strings.Contains(j.Error, "nothing was installed") {
+		t.Fatalf("bad signature: %+v", j)
+	}
+}
+
+func TestUpdateCheckOnADevBuildDoesNotPointAtAFailingCommand(t *testing.T) {
+	f := newUpdate(t)
+	if code := f.run("dev", "update", "--check"); code != 0 {
+		t.Fatalf("code=%d err=%q", code, f.errb.String())
+	}
+	out := f.out.String()
+	if !strings.Contains(out, "development build") || !strings.Contains(out, "outfit update --version 0.2.0") || strings.Contains(out, "Run outfit update") {
+		t.Fatalf("out = %q", out)
+	}
+}
+
+func TestUpdateRefusesToBelieveAnUnsignedLatest(t *testing.T) {
+	// The release listing says 0.2.0 but its checksum list is signed by someone else:
+	// outfit must not conclude "up to date" or "update available" from it.
+	plat, _ := update.Platform(runtime.GOOS, runtime.GOARCH)
+	f := &updateFixture{t: t, rel: testkit.NewFakeRelease(t, plat), home: t.TempDir()}
+	f.rel.Break.Signature = true
+	f.rel.Add("0.2.0")
+	f.exe = filepath.Join(t.TempDir(), "outfit")
+	_ = os.WriteFile(f.exe, []byte("old"), 0o755)
+	f.env = map[string]string{"HOME": f.home, "OUTFIT_BASE_URL": f.rel.URL, "OUTFIT_API_URL": f.rel.APIURL}
+	for _, args := range [][]string{{"update"}, {"update", "--check"}} {
+		if code := f.run("0.2.0", args...); code != cli.ExitError {
+			t.Fatalf("%v: code=%d out=%q: an unsigned answer was believed", args, code, f.out.String())
+		}
+	}
+}
+
+func TestReadOnlyFixSaysWhatToDoNext(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can write anywhere")
+	}
+	f := newUpdate(t)
+	dir := filepath.Dir(f.exe)
+	_ = os.Chmod(dir, 0o555)
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	f.run("0.1.0", "update")
+	for _, want := range []string{"outfit init", "PATH"} {
+		if !strings.Contains(f.errb.String(), want) {
+			t.Errorf("err = %q, want %q", f.errb.String(), want)
+		}
 	}
 }

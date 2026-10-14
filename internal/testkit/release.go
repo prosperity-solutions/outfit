@@ -49,6 +49,9 @@ type FakeRelease struct {
 		TagMismatch bool   // API: tag_name says latest but the files are an older build
 		ExtraEntry  string // archive also holds a file with this name
 		Symlink     bool   // archive holds a symlink named outfit
+		// InsecureRedirect makes the asset endpoint redirect to plain http on a host
+		// that is not this machine.
+		InsecureRedirect bool
 	}
 }
 
@@ -289,6 +292,10 @@ func (f *FakeRelease) handleAPI(w http.ResponseWriter, r *http.Request, p string
 		f.mu.Unlock()
 		if version == "" {
 			http.NotFound(w, r)
+			return
+		}
+		if f.Break.InsecureRedirect {
+			http.Redirect(w, r, "http://storage.example.invalid/"+version+"/"+name, http.StatusFound)
 			return
 		}
 		// Like GitHub: the asset endpoint redirects to storage on another host.

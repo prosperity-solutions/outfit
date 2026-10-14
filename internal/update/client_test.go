@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -281,5 +282,74 @@ func TestExtractBinaryAllowList(t *testing.T) {
 		if _, err := ExtractBinary(a); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestTokenGoesOnlyToTheRealAPIHostOrThisMachine(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"https://api.github.com/repos/o/r":      true,
+		"http://127.0.0.1:8080/api":             true,
+		"https://localhost:9/api":               true,
+		"http://api.github.com/repos/o/r":       false, // not https
+		"https://evil.example/api":              false,
+		"https://api.github.com.evil.example/a": false,
+		"http://127.0.0.1.evil.example/api":     false,
+		"http://127.0.0.1@evil.example/api":     false,
+		"https://api.github.com@evil.example/a": false,
+		"http://localhost:80@evil.example/api":  false,
+	} {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := tokenHostOK(u); got != want {
+			t.Errorf("tokenHostOK(%s) = %v, want %v", raw, got, want)
+		}
+	}
+	// And the client enforces it: a token with an https API URL elsewhere is refused
+	// before any request is made.
+	c := &Client{APIURL: "https://evil.example/api", Token: Token{Value: "ghp_x", Source: "GH_TOKEN"}, Keys: testkit.NewFakeRelease(t, plat).Keys, GOOS: "linux", GOARCH: "amd64"}
+	if _, err := c.Latest(context.Background()); err == nil || !strings.Contains(err.Error(), "refusing to send a GitHub token") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRedirectToPlainHTTPIsRefused(t *testing.T) {
+	f := testkit.NewFakeRelease(t, plat)
+	f.Private, f.Token = true, "ghp_ok"
+	f.Add("0.2.0")
+	f.Break.InsecureRedirect = true
+	c := newClient(f)
+	c.Token = Token{Value: "ghp_ok", Source: "GH_TOKEN"}
+	_, err := c.Fetch(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "refusing a redirect") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLatestVerifiedChecksTheSignatureButLatestDoesNot(t *testing.T) {
+	f := testkit.NewFakeRelease(t, plat)
+	f.Break.Signature = true
+	f.Add("0.2.0")
+	c := newClient(f)
+	if v, err := c.Latest(context.Background()); err != nil || v.String() != "0.2.0" {
+		t.Fatalf("Latest (information only) = %v, %v", v, err)
+	}
+	if _, err := c.LatestVerified(context.Background()); err == nil {
+		t.Fatal("LatestVerified believed an unsigned checksum list")
+	}
+}
+
+func TestErrorsAreRetryableOnlyWhenTransient(t *testing.T) {
+	c := &Client{BaseURL: "http://127.0.0.1:1", Keys: testkit.NewFakeRelease(t, plat).Keys, GOOS: "linux", GOARCH: "amd64"}
+	_, err := c.Latest(context.Background())
+	var ue *Error
+	if !errors.As(err, &ue) || !ue.Retryable || ue.Fix == "" {
+		t.Fatalf("connection refused: %#v", err)
+	}
+	f := testkit.NewFakeRelease(t, plat) // no releases: 404
+	_, err = newClient(f).Latest(context.Background())
+	if !errors.As(err, &ue) || ue.Retryable {
+		t.Fatalf("404: %#v", err)
 	}
 }

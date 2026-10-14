@@ -55,10 +55,10 @@ func validToken(v string) bool {
 	return true
 }
 
-// GHAuthToken runs `gh auth token` for github.com, with a short budget. Empty when
-// gh is missing, not logged in, or slow.
-func GHAuthToken() string {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+// GHAuthToken runs `gh auth token` for github.com, within ctx and at most 2 seconds.
+// Empty when gh is missing, not logged in, or slow.
+func GHAuthToken(ctx context.Context) string {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "gh", "auth", "token", "--hostname", "github.com").Output()
 	if err != nil {
