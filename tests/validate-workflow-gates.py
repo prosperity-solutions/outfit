@@ -303,6 +303,11 @@ def check_secrets(doc, filename, text):
             f"{filename}: reads secrets ({', '.join(sorted(refs))}); only {SECRETS_HOME} may, "
             "because it only runs on pushes to main [secrets]"
         )
+    if filename == SECRETS_HOME and "OUTFIT_CODESIGN_SELFTEST" in text:
+        problems.append(
+            f"{filename}: mentions OUTFIT_CODESIGN_SELFTEST, which skips the timestamp and team "
+            "checks of the macOS signature and belongs to the pull-request smoke job only [secrets]"
+        )
     if filename == SECRETS_HOME:
         on = doc.get("on", doc.get(True))  # PyYAML reads a bare `on:` key as True
         ok = (
@@ -317,10 +322,21 @@ def check_secrets(doc, filename, text):
     return problems
 
 
+SMOKE_SCRIPT = "scripts/ci/signing-smoke.sh"
+
+
+def check_signing_smoke(filename, text):
+    """The release signs with a script nobody can exercise with the real secrets, so
+    ci.yml must keep running the throwaway-certificate smoke on every pull request."""
+    if filename == "ci.yml" and SMOKE_SCRIPT not in text:
+        return [f"ci.yml no longer runs {SMOKE_SCRIPT}: the macOS signing path would go untested until a release [secrets]"]
+    return []
+
+
 def check(path):
     text = path.read_text()
     doc = yaml.safe_load(text)
-    return check_doc(doc, str(label(path))) + check_secrets(doc, path.name, text)
+    return check_doc(doc, str(label(path))) + check_secrets(doc, path.name, text) + check_signing_smoke(path.name, text)
 
 
 # ── Self-test ─────────────────────────────────────────────────────────
@@ -567,6 +583,7 @@ SELFTEST = [
 
 
 SECRET_SELFTEST = [
+    ("selftest switch in release.yml", "release.yml", False, "on: {push: {branches: [main]}}\njobs: {a: {runs-on: x, steps: [{run: echo, env: {OUTFIT_CODESIGN_SELFTEST: '1'}}]}}"),
     ("secret in ci.yml", "ci.yml", False, "on: {push: {branches: [main]}}\njobs: {a: {runs-on: x, steps: [{run: echo, env: {K: '${{ secrets.MINISIGN_SECRET_KEY }}'}}]}}"),
     ("GITHUB_TOKEN anywhere", "ci.yml", True, "on: {push: {branches: [main]}}\njobs: {a: {runs-on: x, steps: [{run: echo, env: {K: '${{ secrets.GITHUB_TOKEN }}'}}]}}"),
     ("secrets via bracket", "ci.yml", False, "on: {push: {branches: [main]}}\njobs: {a: {runs-on: x, steps: [{run: echo, env: {K: \"${{ secrets['MINISIGN_SECRET_KEY'] }}\"}}]}}"),
@@ -582,6 +599,14 @@ SECRET_SELFTEST = [
 
 def selftest():
     failures = []
+    for name, filename, text, should_pass in [
+        ("ci.yml without the signing smoke", "ci.yml", "jobs: {a: {runs-on: x, steps: [{run: echo}]}}", False),
+        ("ci.yml with the signing smoke", "ci.yml", "jobs: {a: {runs-on: x, steps: [{run: scripts/ci/signing-smoke.sh}]}}", True),
+    ]:
+        passed = not check_signing_smoke(filename, text)
+        if passed != should_pass:
+            failures.append(f"  fixture {name!r} should {'pass' if should_pass else 'be rejected'}")
+        print(f"  {'ok' if passed == should_pass else 'FAIL'}  {name}")
     for name, filename, should_pass, text in SECRET_SELFTEST:
         problems = check_secrets(yaml.safe_load(text), filename, text)
         passed = not problems

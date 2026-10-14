@@ -79,6 +79,10 @@ gofmt -l . && go vet ./... && golangci-lint run && go test -race ./...
   `main`; a `feat:`/`fix:` (or `!`) PR title cuts the next version, `docs:`/`chore:`/`ci:`
   cut nothing. Only `release.yml` may reference the signing secrets
   (`tests/validate-workflow-gates.py` enforces it). Process: `docs/release.md`.
+- **macOS signing is native `codesign`, not quill.** `docs/HANDOVER.md` §8.3 says to
+  prefer GoReleaser's quill; it was tried on the first release and macOS killed the
+  signed binary on launch. The spec's own fallback is what ships. Why:
+  `docs/macos-signing.md` ("Why not quill"). Do not switch back.
 - macOS minutes count about 10× against a private repo's quota. On PRs macOS runs
   `unit`, one `e2e` leg and the short `signing` smoke job (it must run on macOS: the
   release signs with the native `codesign`); the full macOS matrix runs on push to

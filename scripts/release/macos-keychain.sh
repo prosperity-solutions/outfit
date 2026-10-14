@@ -79,7 +79,8 @@ case "$cmd" in
     p12="$work/devid.p12"
     printf '%s' "$MACOS_SIGN_P12" | base64 --decode > "$p12" 2>/dev/null \
       || die "MACOS_SIGN_P12 is not valid base64"
-    [ -s "$p12" ] || die "MACOS_SIGN_P12 decoded to nothing"
+    # macOS's base64 exits 0 on garbage and writes nothing, so the size is the check.
+    [ -s "$p12" ] || die "MACOS_SIGN_P12 decoded to nothing (is it the base64 of the .p12 file?)"
 
     # The keychain's own password only has to live as long as this keychain, and
     # nothing but this script ever unlocks it.
@@ -98,7 +99,7 @@ case "$cmd" in
     # length of the import; security(1) has no other way to take it.
     security import "$p12" -k "$kc" -f pkcs12 -x -P "$MACOS_SIGN_PASSWORD" \
       -T /usr/bin/codesign >/dev/null \
-      || die "could not import the .p12 — wrong MACOS_SIGN_PASSWORD, or not a PKCS#12 file"
+      || die "could not import the .p12: wrong MACOS_SIGN_PASSWORD, not a PKCS#12 file, or a PKCS#12 format this macOS does not read (re-export with /usr/bin/openssl pkcs12 -export; docs/macos-signing.md)"
     # Without this, codesign stops to ask for the keychain password in a GUI dialog
     # nobody on a runner can click, and the job hangs until its timeout.
     security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kc_pass" "$kc" >/dev/null

@@ -40,13 +40,20 @@ and the App Store Connect `.p8`. The `.p12` must hold the Developer ID Applicati
 certificate, its private key and Apple's Developer ID G2 intermediate; without the
 intermediate the keychain script finds no valid identity and says so. It also refuses a
 certificate with less than 30 days left, so an expiry fails a release a month early.
+Export from Keychain Access (File > Export Items, `.p12`, select the certificate and
+its key together) or re-wrap an existing file with
+`/usr/bin/openssl pkcs12 -export` (the macOS tool); both formats `security import`
+reads on current macOS. The secret value is `base64 -i file.p12 | pbcopy`, the notary
+key's `base64 -i AuthKey_XXXX.p8 | pbcopy`.
 
 When the signing secrets exist, the macOS smoke legs check the built binary **before
 anything is published**, and a `verify-signing` job on `macos-latest` reads the published
 file back afterwards. Both run `scripts/release/check-macos-signature.sh`:
 `codesign --verify --strict`, a Developer ID authority, the hardened-runtime flag, a
-secure timestamp, and a `TeamIdentifier` equal to the repository variable
-`MACOS_TEAM_ID`. A failed check fails the release.
+secure timestamp, a `TeamIdentifier` equal to the repository variable `MACOS_TEAM_ID`,
+and a designated requirement that names `outfit` and pins the team (not a hash). A
+failed check fails the release. Notarization is checked once, in the build hook: the
+submission must come back `Accepted`, or the build fails and the log is dumped.
 
 The signing path is exercised on **every pull request** without real secrets: the
 `signing` job (one short macOS job) runs the release's own GoReleaser snapshot and hook
@@ -54,7 +61,10 @@ with a throwaway certificate (named like a Developer ID one, trusted on the runn
 checks that both slices verify with the hardened runtime, that the checksum signature
 verifies, and that the signed universal binary **runs** (`scripts/ci/signing-smoke.sh`).
 Apple's timestamp server, the Apple-issued team and notarization are the parts it
-cannot exercise; the release's smoke legs check those on the real certificate.
+cannot exercise with a throwaway certificate: the build hook's own assertions and
+`check-macos-signature.sh` cover the timestamp and team on the real one. The
+notarization branch is exercised with a stub `notarytool` (accepted, and rejected with
+its log dumped), so its parsing is tested even though Apple is not.
 
 The hardened runtime means macOS removes `DYLD_*` variables from what a signed process
 starts. outfit runs your hooks as children, so a hook that relies on `DYLD_LIBRARY_PATH`

@@ -19,6 +19,14 @@ if [ -n "${TEAM_ID:-}" ]; then
   got=$(printf '%s\n' "$info" | sed -n 's/^TeamIdentifier=//p')
   [ "$got" = "$TEAM_ID" ] || { echo "::error::TeamIdentifier is '$got', expected '$TEAM_ID'"; exit 1; }
 fi
+# The requirement macOS remembers the binary by must name the program and pin the
+# TEAM, not a certificate or a hash (a renewed certificate keeps the identity).
+req=$(codesign -d -r- "$bin" 2>&1)
+printf '%s\n' "$req" | grep -Eq 'identifier "?outfit"?( |$)' || { echo "::error::the designated requirement does not name 'outfit': $req"; exit 1; }
+if [ -n "${TEAM_ID:-}" ]; then
+  printf '%s\n' "$req" | grep -Eq "leaf\[subject\.OU\] = \"?$TEAM_ID\"?" || { echo "::error::the designated requirement does not pin team $TEAM_ID: $req"; exit 1; }
+fi
+if printf '%s\n' "$req" | grep -Eq 'cdhash|leaf = H"'; then echo "::error::the designated requirement pins a hash: $req"; exit 1; fi
 # Informational: a bare executable is not an app, so spctl may say so.
 spctl -a -t install -vv "$bin" || true
 echo "archs: $(lipo -archs "$bin")"

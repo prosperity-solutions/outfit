@@ -101,3 +101,38 @@ mkdir "$work/x"
 tar -xzf dist/outfit_*_darwin_all.tar.gz -C "$work/x" outfit
 codesign --verify --strict "$work/x/outfit" || fail "the binary inside the darwin archive is not the signed one"
 ok "the binary inside the archive is signed"
+
+# The notarization branch of the hook, with a stub `xcrun`: Apple cannot be reached
+# with a throwaway certificate, but the zip, the JSON parsing, the Accepted check
+# and the log dump on failure are ours.
+stub="$work/stub"
+mkdir "$stub"
+cat >"$stub/xcrun" <<'STUB'
+#!/bin/sh
+echo "$*" >>"$STUB_LOG"
+case "$2" in
+  submit)
+    if [ "$STUB_RESULT" = accepted ]; then echo '{"id":"sub-1","status":"Accepted"}'; else echo '{"id":"sub-1","status":"Invalid"}'; exit 1; fi ;;
+  log) echo '{"issues":[{"message":"stub"}]}' ;;
+esac
+STUB
+chmod +x "$stub/xcrun"
+export STUB_LOG="$work/stub.log"
+MACOS_NOTARY_KEY=$(printf '%s\n' '-----BEGIN PRIVATE KEY-----' 'AAAA' '-----END PRIVATE KEY-----' | base64)
+export MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID=KEYID MACOS_NOTARY_ISSUER_ID=ISSUER
+
+cp "$bin" "$work/notarize-ok"
+: >"$STUB_LOG"
+PATH="$stub:$PATH" STUB_RESULT=accepted scripts/release/macos-sign.sh "$work/notarize-ok" >"$work/n1.log" 2>&1 ||
+  { cat "$work/n1.log"; fail "an accepted notarization failed the hook"; }
+grep -q 'notarytool submit' "$STUB_LOG" || fail "the hook never called notarytool submit"
+grep -q 'notarytool log' "$STUB_LOG" && fail "the hook fetched a log for an accepted submission"
+ok "an accepted notarization passes"
+
+cp "$bin" "$work/notarize-bad"
+: >"$STUB_LOG"
+if PATH="$stub:$PATH" STUB_RESULT=invalid scripts/release/macos-sign.sh "$work/notarize-bad" >"$work/n2.log" 2>&1; then
+  fail "a rejected notarization did not fail the hook"
+fi
+grep -q 'notarytool log sub-1' "$STUB_LOG" || fail "a rejected notarization did not dump the log"
+ok "a rejected notarization fails the hook and dumps the log"

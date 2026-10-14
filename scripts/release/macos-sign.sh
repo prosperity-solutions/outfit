@@ -52,7 +52,8 @@ fi
 # The App Store Connect API key (.p8), from base64, for the length of this run only.
 key="$work/notary.p8"
 (umask 077 && printf '%s' "$MACOS_NOTARY_KEY" | base64 --decode > "$key") 2>/dev/null || die "MACOS_NOTARY_KEY is not valid base64"
-[ -s "$key" ] || die "MACOS_NOTARY_KEY decoded to nothing"
+# macOS's base64 exits 0 on garbage and writes nothing; and a .p8 is a PEM.
+[ -s "$key" ] && grep -q 'BEGIN PRIVATE KEY' "$key" || die "MACOS_NOTARY_KEY is not the base64 of an App Store Connect API key (.p8)"
 notary=(xcrun notarytool)
 auth=(--key "$key" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER_ID")
 

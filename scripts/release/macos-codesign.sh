@@ -14,7 +14,7 @@
 #                   ONLY for the PR smoke job (scripts/ci/signing-smoke.sh), which
 #                   signs with a throwaway self-signed certificate: skips the secure
 #                   timestamp and the Apple-issued-team checks such a certificate
-#                   cannot pass. The Release workflow refuses it.
+#                   cannot pass. Refused everywhere except the "CI" workflow.
 #
 # Signed with the hardened runtime and a secure timestamp, which notarization
 # requires. The identifier is passed and checked, not derived from the file name:
@@ -40,8 +40,9 @@ file=$3
 
 selftest=0
 if [ "${OUTFIT_CODESIGN_SELFTEST:-}" = 1 ]; then
-  # this keeps the switch out of a release run however it got into the environment.
-  [ "${GITHUB_WORKFLOW:-}" != Release ] || die "OUTFIT_CODESIGN_SELFTEST is set in the Release workflow — it skips the timestamp and team checks"
+  # An allowlist: the switch skips the timestamp and team checks, so it is honoured
+  # only in the pull-request CI workflow (ci.yml, named "CI"), never anywhere else.
+  [ "${GITHUB_WORKFLOW:-}" = CI ] || die "OUTFIT_CODESIGN_SELFTEST is only allowed in the CI workflow (this is '${GITHUB_WORKFLOW:-not GitHub Actions}'): it skips the timestamp and team checks"
   selftest=1
   echo "OUTFIT_CODESIGN_SELFTEST=1: skipping timestamp and team checks" >&2
 fi
@@ -84,7 +85,9 @@ fi
   || die "$file: hardened runtime is $([ "$runtime_flag" = 1 ] && echo on || echo off), expected $([ "$runtime" = 1 ] && echo on || echo off)"
 
 requirement=$(codesign -d -r- "$file" 2>&1)
-printf '%s\n' "$requirement" | grep -qF "identifier \"$identifier\"" \
+# codesign prints the identifier bare when it is a plain word ("outfit") and quoted
+# when it has dots ("dev.veld.daemon"): accept both.
+printf '%s\n' "$requirement" | grep -Eq "identifier \"?$identifier\"?( |$)" \
   || die "$file: designated requirement does not pin identifier $identifier: $requirement"
 
 if [ "$selftest" = 0 ]; then
