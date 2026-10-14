@@ -98,13 +98,13 @@ A profile name that no longer exists is treated as `base`, with a warning.
 | `outfit set <key>=<val>… [--here\|--global]` | personal override in git config; `key=` unsets (in that scope only: it prints which scopes still set the key). `--global` works outside a repo. `--here` needs `extensions.worktreeConfig`, which `outfit init` enables. Note that git copies a worktree's `config.worktree` into every worktree created afterwards, so `--here` in the main worktree leaks into new ones until outfit strips the copies on `worktree add`. |
 | `outfit ls` | profiles across the three tiers (`committed`, `local`, `worktree`), their keys and files; `*` marks the active one. |
 | `outfit init` / `outfit uninstall` | install or remove the hook dispatcher: [hooks.md](hooks.md). |
-| `outfit status` | the active profile, where every toggle comes from, the files it swaps, and warnings. Enforces git ≥ 2.36. |
+| `outfit status` | the active profile, where every toggle comes from, the files it swaps, the hook dispatcher's health (exit 4 when broken) and warnings. Enforces git ≥ 2.36. |
 
 All of them accept `--json`. Failures carry `"retryable"` and, when there is one, the exact `"fix"` command. `ls` shows a built-in `base` row (tier `builtin`): the profile that means no swaps.
 
 Exit codes: `0` ok, `1` error (or an unset `get`: there is no registry of known
 keys, so an unset key is "not found", like `git config --get`, never "unknown"),
-`2` usage or unknown profile, `3` needs a human and `4` out of sync or stale (`status` only): the last two are reserved and not emitted yet.
+`2` usage or unknown profile, `3` needs a human (reserved: not emitted yet) and `4` out of sync (`status` only: the hook dispatcher no longer points at its shims).
 
 ## Profile tiers
 

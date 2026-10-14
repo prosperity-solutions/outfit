@@ -54,7 +54,9 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 	default:
 		fmt.Fprintf(e.Stdout, "%s: %d hook shims in %s\n", verb, len(res.Shims), res.HooksDir)
 		fmt.Fprintf(e.Stdout, "  your hooks keep running from %s\n", res.OriginalDir)
-		fmt.Fprintf(e.Stdout, "  core.hooksPath set (worktree scope) in %d worktree(s)\n", len(res.Worktrees))
+		if res.HooksPathChanged {
+			fmt.Fprintf(e.Stdout, "  core.hooksPath set (worktree scope) in %d worktree(s)\n", len(res.Worktrees))
+		}
 		if res.EnabledWorktreeConfig {
 			fmt.Fprintln(e.Stdout, "  extensions.worktreeConfig enabled")
 		}
@@ -95,6 +97,9 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 	if *asJSON {
 		out, _ := json.Marshal(res)
 		fmt.Fprintln(e.Stdout, string(out))
+		if len(res.Failed) > 0 {
+			return ExitError
+		}
 		return ExitOK
 	}
 	for _, f := range res.Failed {

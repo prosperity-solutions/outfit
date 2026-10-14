@@ -8,8 +8,8 @@
 // the team's hook directly: uninstalling the binary must never silently disable
 // team hooks.
 //
-// A shim exists for EVERY client-side hook, whether or not the team has that hook
-// today. git only runs hooks that exist in core.hooksPath, so a fixed set chosen at
+// A shim exists for EVERY hook git can run in a non-bare repository (bar the few
+// listed in Hot), whether or not the team has that hook today. git only runs hooks that exist in core.hooksPath, so a fixed set chosen at
 // init would silently skip any hook added later (a merged PR adding a secret scan,
 // or `npm install` creating husky's directory after `outfit init`).
 //
@@ -25,9 +25,9 @@
 //   - Per-worktree config is written with `git config --file <git-dir>/config.worktree`,
 //     never by running git inside a checkout, so a worktree whose directory is gone
 //     cannot block init or uninstall (hooks-worktrees.txtar).
-//   - install.json (repo-wide, written BEFORE the first change, never rewritten)
-//     versus state.json (per worktree, rewritten by init): uninstall's exactness
-//     depends on the first surviving a half-finished init (hooks-lifecycle.txtar,
+//   - install.json (repo-wide, written BEFORE the first change; later inits keep
+//     its wasSet/preexisting facts) versus state.json (per worktree, rewritten by
+//     init): uninstall's exactness depends on the first surviving a half-finished init (hooks-lifecycle.txtar,
 //     hooks-worktrees.txtar). Do not merge them.
 //   - `outfit hook` runs the team hook FIRST and the guard after it passed, so the
 //     guard sees what a formatter hook staged; the team hook fails toward running,
@@ -182,10 +182,7 @@ func OriginalDir(gc config.GitConfig, ours, worktree, commonDir, home string) st
 
 // expand resolves ~/ and relative paths the way git does for core.hooksPath.
 func expand(p, worktree, home string) string {
-	switch {
-	case p == "~":
-		p = home
-	case strings.HasPrefix(p, "~/"):
+	if strings.HasPrefix(p, "~/") { // git expands ~/ (and ~user/, unsupported here)
 		p = filepath.Join(home, p[2:])
 	}
 	if !filepath.IsAbs(p) {

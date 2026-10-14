@@ -82,6 +82,16 @@ func cfg(ctx context.Context, g gitx.Client, file string, write bool, args ...st
 	return g.Read(ctx, full...)
 }
 
+// unset removes key from a config file; "not there" (git exits 5) is success, so
+// a partly-failed uninstall can be rerun to completion.
+func unset(ctx context.Context, g gitx.Client, file, key string) error {
+	res, err := cfg(ctx, g, file, true, "--unset-all", key)
+	if err != nil && res.ExitCode == 5 {
+		return nil
+	}
+	return err
+}
+
 // hooksPathIn reads core.hooksPath from one config file.
 func hooksPathIn(ctx context.Context, g gitx.Client, file string) (string, bool) {
 	res, err := cfg(ctx, g, file, false, "--get", "core.hooksPath")
@@ -133,6 +143,8 @@ type InstallResult struct {
 	MissingWorktrees []string `json:"missing_worktrees"`
 	// EnabledWorktreeConfig is true when init turned extensions.worktreeConfig on.
 	EnabledWorktreeConfig bool `json:"enabled_worktree_config"`
+	// HooksPathChanged is true when core.hooksPath was written in some worktree.
+	HooksPathChanged bool `json:"hooks_path_changed"`
 }
 
 // Install is `outfit init` for hooks: shims, extensions.worktreeConfig, and
@@ -193,14 +205,15 @@ func Install(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitConfi
 		}
 	}
 	inst.Binary, inst.Version = opt.Binary, opt.Version
-	if opt.DryRun {
-		if old, err := state.ReadInstall(common); err != nil || old.Binary != inst.Binary || old.Version != inst.Version {
-			out.Changed = true
-		}
-	} else if changed, err := state.WriteInstall(common, inst); err != nil {
-		return nil, err
-	} else if changed {
+	if fresh {
 		out.Changed = true
+	}
+	// Bookkeeping only: a new binary path or version is not a change by itself
+	// (the shims, which embed the path, are compared separately).
+	if !opt.DryRun {
+		if _, err := state.WriteInstall(common, inst); err != nil {
+			return nil, err
+		}
 	}
 
 	// 2. Hooks other tools dropped into our directory (lefthook install writes to
@@ -219,6 +232,7 @@ func Install(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitConfi
 	// make every later `lefthook install` fail.
 	for _, n := range Leftovers(ours) {
 		out.Changed = true
+		out.Removed = append(out.Removed, n)
 		if !opt.DryRun {
 			_ = os.Remove(filepath.Join(ours, n))
 		}
@@ -274,6 +288,7 @@ func Install(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitConfi
 		}
 		if v, ok := hooksPathIn(ctx, cg, w.ConfigFile()); !ok || !sameDir(v, ours) || out.EnabledWorktreeConfig {
 			out.Changed = true
+			out.HooksPathChanged = true
 			if !opt.DryRun {
 				if _, err := cfg(ctx, cg, w.ConfigFile(), true, "core.hooksPath", ours); err != nil {
 					return nil, err
@@ -420,7 +435,7 @@ func Uninstall(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitCon
 	// 1. hooksPath first, everywhere.
 	for _, w := range wts {
 		if v, ok := hooksPathIn(ctx, cg, w.ConfigFile()); ok && ownsHooksPath(expand(v, w.Path, home), ours) {
-			if _, err := cfg(ctx, cg, w.ConfigFile(), true, "--unset-all", "core.hooksPath"); err != nil {
+			if err := unset(ctx, cg, w.ConfigFile(), "core.hooksPath"); err != nil {
 				fail("core.hooksPath in the "+w.Name(), err)
 				continue
 			}
@@ -470,7 +485,7 @@ func Uninstall(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitCon
 				continue
 			}
 			seen[s.Key] = true
-			if _, err := cfg(ctx, cg, t.file, true, "--unset-all", s.Key); err != nil {
+			if err := unset(ctx, cg, t.file, s.Key); err != nil {
 				fail(s.Key, err)
 				continue
 			}
@@ -481,7 +496,7 @@ func Uninstall(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitCon
 	// 5. State files and the install record.
 	for _, w := range wts {
 		if err := os.Remove(state.Path(w.GitDir)); err == nil {
-			note("state " + w.GitDir)
+			note("state " + state.Path(w.GitDir))
 			_ = os.Remove(filepath.Dir(state.Path(w.GitDir)))
 		}
 	}
@@ -495,7 +510,9 @@ func Uninstall(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitCon
 			}
 		}
 		if empty {
-			if _, err := cfg(ctx, cg, filepath.Join(common, "config"), true, "--unset-all", "extensions.worktreeConfig"); err != nil {
+			if !gc.WorktreeConfig {
+				// already gone (an earlier, partly failed run): nothing to do
+			} else if err := unset(ctx, cg, filepath.Join(common, "config"), "extensions.worktreeConfig"); err != nil {
 				fail("extensions.worktreeConfig", err)
 			} else {
 				note("extensions.worktreeConfig")

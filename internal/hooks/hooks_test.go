@@ -284,3 +284,23 @@ func TestActiveKeyIsPerRepository(t *testing.T) {
 		t.Fatal("spelling of the path must not matter")
 	}
 }
+
+// Row 30 of docs/git-behavior.md: git decides a hook's cwd (the worktree root for
+// client hooks, $GIT_DIR for receive-side ones), so Chain must inherit it.
+func TestChainInheritsTheCallersWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "hooks", "post-update"), "#!/bin/sh\npwd -P\n", 0o755)
+	here := filepath.Join(dir, "gitdir")
+	if err := os.MkdirAll(here, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(here)
+	var out bytes.Buffer
+	if code, ran := Chain(context.Background(), filepath.Join(dir, "hooks"), "post-update", "post-update@x", nil, nil, &out, os.Stderr); code != 0 || !ran {
+		t.Fatalf("code=%d ran=%v", code, ran)
+	}
+	want, _ := filepath.EvalSymlinks(here)
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Fatalf("cwd = %q, want %q", got, want)
+	}
+}

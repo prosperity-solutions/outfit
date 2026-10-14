@@ -16,7 +16,7 @@ outfit uninstall         # undo it, in every worktree
 
 | What | Where |
 |---|---|
-| a shim for **every** client-side git hook (`pre-commit`, `commit-msg`, `pre-push`, `post-checkout`, …) | `<git-common-dir>/outfit/hooks/` |
+| a shim for **every** hook git can run in a non-bare repository (`pre-commit`, `commit-msg`, `pre-push`, `post-checkout`, …) bar five | `<git-common-dir>/outfit/hooks/` |
 | `core.hooksPath` = that directory, in the **per-worktree config of every worktree** | `<git-dir>/config.worktree` |
 | `extensions.worktreeConfig = true` | the repo's own config |
 | what uninstall needs (was the extension already on, which `outfit.*` settings existed) | `<git-common-dir>/outfit/install.json`, written **first** |
@@ -27,11 +27,13 @@ Nothing in the working tree changes and nothing is committed. Worktree scope bea
 path is absolute: a relative one would resolve per worktree, and in linked worktrees
 (where `.git` is a file) no hook would run at all.
 
-**Every** client hook is shimmed, not only the ones your team has today: git only runs
+**Every** hook is shimmed, not only the ones your team has today: git only runs
 hooks that exist in `core.hooksPath`, so a fixed set would silently skip a secret scan
-added next week, or husky's hooks when `npm install` runs after `outfit init`. The three
-hooks git runs on nearly every ref update or index write (`reference-transaction`,
-`post-index-change`, `fsmonitor-watchman`) are shimmed only when the team has one.
+added next week, or husky's hooks when `npm install` runs after `outfit init`. Five
+hooks are shimmed only when the team has one: three that git runs on nearly every ref
+update or index write (`reference-transaction`, `post-index-change`,
+`fsmonitor-watchman`, where a shim would cost a process each time) and two whose mere
+existence changes what git does (`push-to-checkout`, `proc-receive`).
 
 `init` writes to each worktree's `config.worktree` file directly, so a worktree whose
 checkout is gone (an unmounted drive, a directory deleted by hand) is configured too;

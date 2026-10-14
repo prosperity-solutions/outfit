@@ -99,7 +99,7 @@ func TestInitJSONShape(t *testing.T) {
 	if code := cli.Execute(context.Background(), env, []string{"init", "--dry-run", "--json"}); code != 0 {
 		t.Fatalf("code=%d", code)
 	}
-	for _, key := range []string{`"dry_run":true`, `"changed":true`, `"hooks_dir":`, `"original_hooks_dir":`, `"shims":[`, `"removed_shims":[]`, `"worktrees":[`, `"enabled_worktree_config":true`} {
+	for _, key := range []string{`"dry_run":true`, `"changed":true`, `"hooks_dir":`, `"original_hooks_dir":`, `"shims":[`, `"removed_shims":[]`, `"adopted_hooks":[]`, `"missing_worktrees":[]`, `"hooks_path_changed":true`, `"worktrees":[`, `"enabled_worktree_config":true`} {
 		if !strings.Contains(out.String(), key) {
 			t.Errorf("missing %s in %s", key, out.String())
 		}
@@ -132,5 +132,37 @@ func TestUninstallJSONShape(t *testing.T) {
 	cli.Execute(context.Background(), env, []string{"uninstall", "--json"})
 	if !strings.Contains(out.String(), `"changed":false`) {
 		t.Errorf("second uninstall must change nothing: %s", out.String())
+	}
+}
+
+// A partly failed uninstall can be finished by rerunning it (git exits 5 for a key
+// that is already gone: docs/git-behavior.md row 28).
+func TestUninstallCanBeRerunAfterAFailure(t *testing.T) {
+	f := testkit.New(t, testkit.Team)
+	for k, v := range testkit.EnvMap(f.Home) {
+		t.Setenv(k, v)
+	}
+	env, out, errb := hookEnv(f, f.Dir, "")
+	env.Getenv = os.Getenv
+	if code := cli.Execute(context.Background(), env, []string{"init"}); code != 0 {
+		t.Fatalf("init: %d", code)
+	}
+	stray := f.Path(".git/outfit/hooks/something-else")
+	if err := os.WriteFile(stray, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if code := cli.Execute(context.Background(), env, []string{"uninstall", "--json"}); code != cli.ExitError || !strings.Contains(out.String(), `"failed":["directory`) {
+		t.Fatalf("first run must fail (rc 1, JSON too): code=%d out=%s err=%s", code, out.String(), errb.String())
+	}
+	if err := os.Remove(stray); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if code := cli.Execute(context.Background(), env, []string{"uninstall", "--json"}); code != 0 || !strings.Contains(out.String(), `"failed":[]`) {
+		t.Fatalf("rerun must finish the job: code=%d out=%s", code, out.String())
+	}
+	if _, err := os.Stat(f.Path(".git/outfit")); err == nil {
+		t.Fatal("install record must be gone after a clean rerun")
 	}
 }

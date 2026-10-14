@@ -14,6 +14,12 @@ exec git commit --allow-empty -qm 'feat: fine'
 hooklog
 stdout 'hook=pre-commit'
 
+# Plain `git add` refuses a path outside the sparse patterns (docs/git-behavior.md row 27).
+cp $WORK/edited.md AGENTS.md
+! exec git add AGENTS.md
+stderr 'sparse'
+exec git restore AGENTS.md
+
 # A swapped path, staged on purpose with --sparse, is refused with the exact fix.
 cp $WORK/edited.md AGENTS.md
 exec git add --sparse AGENTS.md
