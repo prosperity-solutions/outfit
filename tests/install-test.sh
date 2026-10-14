@@ -1,0 +1,289 @@
+#!/usr/bin/env bash
+# Exercises install.sh against a fake release served from disk (file:// URLs): the
+# public layout and the API layout, a pinned version, a bad checksum, an
+# unsupported platform, a hostile archive, and (when a minisign binary is
+# installed) good and bad signatures. Set REQUIRE_MINISIGN=1 to fail instead of
+# skip when there is none (CI does).
+set -u
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+FAILS=0
+PASSES=0
+
+pass() { PASSES=$((PASSES + 1)); echo "ok   $1"; }
+fail() { FAILS=$((FAILS + 1)); echo "FAIL $1"; shift; for l in "$@"; do echo "       $l"; done; }
+
+# check NAME CONDITION...: the condition is a command; the last run's output is shown on failure.
+check() {
+  local name=$1
+  shift
+  if "$@"; then pass "$name"; else fail "$name" "output: $(head -c 600 "$WORK/out" 2>/dev/null)"; fi
+}
+
+sha256_of() { if command -v sha256sum >/dev/null; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi; }
+
+# A PATH holding only the tools the installer may use, so a developer's own gh,
+# outfit or minisign cannot change the result.
+farm() { # farm DIR [extra tool...]
+  mkdir -p "$1"
+  local t p
+  for t in sh bash curl tar awk tr sed grep cut wc mktemp mv cp chmod rm dirname uname sha256sum shasum cat mkdir head printf basename "${@:2}"; do
+    p=$(command -v "$t" 2>/dev/null || true)
+    case "$p" in /*) ln -sf "$p" "$1/$t" ;; esac
+  done
+}
+farm "$WORK/bin"
+HAVE_MINISIGN=0
+MINISIGN=$(command -v minisign 2>/dev/null || true)
+if [ -n "$MINISIGN" ]; then HAVE_MINISIGN=1; farm "$WORK/bin-ms" minisign; fi
+[ "$HAVE_MINISIGN" = 1 ] || { [ "${REQUIRE_MINISIGN:-0}" = 1 ] && fail "minisign is installed" "install it (apt install minisign / brew install minisign)"; }
+
+# ── the fake release ────────────────────────────────────────────────────────
+VER=0.9.9
+REL=$WORK/rel
+mkdir -p "$REL/pub/releases/latest/download" "$REL/pub/releases/download/v$VER" "$REL/api/releases/tags" "$REL/api/releases/assets"
+mkdir -p "$WORK/src"
+cat >"$WORK/src/outfit" <<'EOF'
+#!/bin/sh
+echo "outfit version 0.9.9 (fake)"
+EOF
+chmod +x "$WORK/src/outfit"
+for f in LICENSE README.md NOTICE; do echo "$f" >"$WORK/src/$f"; done
+
+mkrelease() { # mkrelease DIR: archives for every platform, checksums.txt
+  local d=$1 plat
+  rm -f "$d"/*
+  : >"$d/checksums.txt"
+  for plat in linux_amd64 linux_arm64 darwin_all; do
+    tar -czf "$d/outfit_${VER}_$plat.tar.gz" -C "$WORK/src" outfit LICENSE README.md NOTICE
+    echo "$(sha256_of "$d/outfit_${VER}_$plat.tar.gz")  outfit_${VER}_$plat.tar.gz" >>"$d/checksums.txt"
+  done
+}
+sign() { # sign DIR [KEYDIR]: writes checksums.txt.minisig
+  local d=$1 k=${2:-$WORK/key}
+  "$MINISIGN" -S -s "$k/sec" -m "$d/checksums.txt" -x "$d/checksums.txt.minisig" </dev/null >/dev/null 2>&1
+}
+if [ "$HAVE_MINISIGN" = 1 ]; then
+  for k in key other; do
+    mkdir -p "$WORK/$k"
+    "$MINISIGN" -G -W -f -p "$WORK/$k/pub" -s "$WORK/$k/sec" </dev/null >/dev/null 2>&1 ||
+      "$MINISIGN" -G -f -p "$WORK/$k/pub" -s "$WORK/$k/sec" </dev/null >/dev/null 2>&1 ||
+      { fail "could not generate a throwaway minisign key"; HAVE_MINISIGN=0; }
+  done
+fi
+pubkey_of() { sed -n '2p' "$1/pub"; }
+
+publish_public() { # publish_public: lay DIR out as the public release URLs do
+  local d=$WORK/dist
+  mkdir -p "$d"
+  mkrelease "$d"
+  [ "$HAVE_MINISIGN" = 1 ] && sign "$d" || echo "unsigned" >"$d/checksums.txt.minisig"
+  rm -rf "$REL/pub/releases/latest/download" "$REL/pub/releases/download/v$VER"
+  mkdir -p "$REL/pub/releases/latest/download" "$REL/pub/releases/download/v$VER"
+  cp "$d"/* "$REL/pub/releases/latest/download/"
+  cp "$d"/* "$REL/pub/releases/download/v$VER/"
+}
+publish_api() { # publish_api [minify]: lay dist out as the API does
+  local d=$WORK/dist i=100 json="" name f sep=""
+  rm -rf "$REL/api"
+  mkdir -p "$REL/api/releases/tags" "$REL/api/releases/assets"
+  for f in "$d"/*; do
+    name=$(basename "$f")
+    i=$((i + 1))
+    cp "$d/$name" "$REL/api/releases/assets/$i"
+    json="$json$sep{\"url\":\"https://api.github.com/repos/x/y/releases/assets/$i\",\"id\":$i,\"node_id\":\"RA_$i\",\"name\":\"$name\",\"label\":\"\",\"uploader\":{\"login\":\"bot\",\"id\":1,\"url\":\"https://api.github.com/users/bot\"},\"content_type\":\"application/gzip\"}"
+    sep=","
+  done
+  local body="{\"url\":\"https://api.github.com/repos/x/y/releases/1\",\"assets_url\":\"https://api.github.com/repos/x/y/releases/1/assets\",\"id\":1,\"name\":\"v$VER\",\"tag_name\":\"v$VER\",\"author\":{\"login\":\"bot\",\"url\":\"https://api.github.com/users/bot\"},\"assets\":[$json]}"
+  if [ "${1:-}" = minify ]; then printf '%s' "$body" >"$REL/api/releases/latest"
+  else printf '%s' "$body" | sed 's/,"/,\n  "/g; s/{"/{\n  "/g' >"$REL/api/releases/latest"; fi
+  cp "$REL/api/releases/latest" "$REL/api/releases/tags/v$VER"
+}
+
+# run_install ENV... : runs install.sh in a clean environment. Output in $WORK/out, status in $RC.
+RC=0
+H=$WORK/home
+mkdir -p "$H"
+run_install() {
+  # Arguments before `--` are environment settings; after it, arguments for the script.
+  # WITH_MINISIGN=1 puts a minisign on PATH.
+  local bin=$WORK/bin envs=() args=() seen=0 a
+  for a in "$@"; do
+    if [ "$a" = -- ] && [ $seen = 0 ]; then seen=1
+    elif [ $seen = 1 ]; then args+=("$a")
+    elif [ "$a" = WITH_MINISIGN=1 ]; then bin=$WORK/bin-ms
+    else envs+=("$a")
+    fi
+  done
+  case " ${envs[*]} " in *" PATH="*) ;; *) envs+=("PATH=$bin") ;; esac
+  env -i HOME="$H" TMPDIR="$WORK" "${envs[@]}" sh "$ROOT/install.sh" ${args[@]+"${args[@]}"} >"$WORK/out" 2>&1
+  RC=$?
+}
+base_env() { echo "OUTFIT_BASE_URL=file://$REL/pub"; }
+out_has() { grep -qF -- "$1" "$WORK/out"; }
+rc_is() { [ "$RC" = "$1" ]; }
+installed() { [ -x "$1/outfit" ] && [ "$("$1/outfit" version)" = "outfit version 0.9.9 (fake)" ]; }
+nothing_in() { [ ! -e "$1/outfit" ] && ! ls "$1"/.outfit.* >/dev/null 2>&1; }
+no_leftover_tmp() { find "$WORK" -mindepth 1 -maxdepth 1 -name "tmp.*" > "$WORK/left"; [ ! -s "$WORK/left" ] || { cat "$WORK/left" >> "$WORK/out"; return 1; }; }
+
+publish_public
+
+# ── public layout ───────────────────────────────────────────────────────────
+D=$WORK/d1
+run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D"
+check "latest installs and runs" rc_is 0
+check "  the binary is the fake release" installed "$D"
+check "  prints the new version" out_has "outfit version 0.9.9 (fake)"
+check "  hints at PATH when the dir is not on it" out_has "export PATH=\"$D:"
+check "  checksum-only note without minisign" out_has "only the checksum was checked"
+check "  leaves no temp files behind" no_leftover_tmp
+
+D=$WORK/d2
+run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" OUTFIT_VERSION=$VER
+check "pinned version installs" rc_is 0
+run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" OUTFIT_VERSION=v$VER
+check "pinned version with a v installs" rc_is 0
+D=$WORK/d2b
+run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" OUTFIT_VERSION=9.9.9
+check "a version that does not exist fails" rc_is 1
+check "  and installs nothing" nothing_in "$D"
+run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" 'OUTFIT_VERSION=../etc'
+check "a version with slashes is refused" rc_is 1
+check "  with a clear message" out_has "is not a version number"
+
+# dir already on PATH: no hint. Existing install is updated in place.
+D=$WORK/d3
+mkdir -p "$D"
+printf '#!/bin/sh\necho old\n' >"$D/outfit"
+chmod +x "$D/outfit"
+ln -sf "$WORK/bin"/* "$D/" 2>/dev/null || true
+run_install "$(base_env)" OUTFIT_INSTALL_DIR="$WORK/elsewhere" "PATH=$D:$WORK/bin"
+check "an existing install is replaced where it is" installed "$D"
+check "  without a PATH hint" bash -c '! grep -q "not on your PATH" "$1"' _ "$WORK/out"
+check "  and says where OUTFIT_INSTALL_DIR went" out_has "already installed in $D"
+check "  the other dir was never created" bash -c '[ ! -e "$1" ]' _ "$WORK/elsewhere"
+
+# ── checksum, platform, hostile archive ─────────────────────────────────────
+D=$WORK/d4
+mkdir -p "$D"
+printf '#!/bin/sh\necho precious\n' >"$D/outfit"
+chmod +x "$D/outfit"
+cp "$WORK/dist/checksums.txt" "$WORK/checksums.good"
+for f in "$REL"/pub/releases/latest/download/outfit_*.tar.gz; do printf 'tampered' >>"$f"; done
+run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" "PATH=$WORK/bin"
+check "a corrupted download is refused" rc_is 1
+check "  with the checksum named" out_has "SHA-256 mismatch"
+check "  and the existing binary is untouched" bash -c '[ "$("$1")" = precious ]' _ "$D/outfit"
+check "  and no staging file is left" bash -c '! ls "$1"/.outfit.* >/dev/null 2>&1' _ "$D"
+publish_public
+
+mkdir -p "$WORK/fakebin"
+farm "$WORK/fakebin-uname"
+rm -f "$WORK/fakebin-uname/uname"
+cat >"$WORK/fakebin-uname/uname" <<'EOF'
+#!/bin/sh
+case "$1" in -s) echo FreeBSD ;; -m) echo riscv64 ;; *) echo FreeBSD ;; esac
+EOF
+chmod +x "$WORK/fakebin-uname/uname"
+D=$WORK/d5
+env -i HOME="$H" PATH="$WORK/fakebin-uname" OUTFIT_BASE_URL="file://$REL/pub" OUTFIT_INSTALL_DIR="$D" sh "$ROOT/install.sh" >"$WORK/out" 2>&1
+RC=$?
+check "an unsupported platform fails clearly" rc_is 1
+check "  naming the platform" out_has "no outfit build for FreeBSD/riscv64"
+check "  and installs nothing" nothing_in "$D"
+
+# A hostile archive with a good checksum: the allow-list must still refuse it.
+hostile() { # hostile NAME BUILD-COMMAND
+  local name=$1 h=$WORK/hostile
+  rm -rf "$h"
+  mkdir -p "$h/src"
+  cp "$WORK/src"/* "$h/src/"
+  (cd "$h/src" && eval "$2")
+  for plat in linux_amd64 linux_arm64 darwin_all; do
+    (cd "$h/src" && tar -czf "$REL/pub/releases/latest/download/outfit_${VER}_$plat.tar.gz" "${@:3}" outfit LICENSE README.md NOTICE $3)
+  done
+  (cd "$REL/pub/releases/latest/download" && : >checksums.txt && for plat in linux_amd64 linux_arm64 darwin_all; do echo "$(sha256_of "outfit_${VER}_$plat.tar.gz")  outfit_${VER}_$plat.tar.gz" >>checksums.txt; done)
+  [ "$HAVE_MINISIGN" = 1 ] && sign "$REL/pub/releases/latest/download"
+  D=$WORK/dh
+  rm -rf "$D"
+  run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D"
+  check "hostile archive ($name) is refused" rc_is 1
+  check "  and installs nothing" nothing_in "$D"
+}
+hostile "extra file" 'echo x > evil' evil
+hostile "symlink" 'ln -s /etc/passwd link' link
+publish_public
+
+run_install "$(base_env)" OUTFIT_INSTALL_DIR="$WORK/d6" -- --extra
+check "an unknown argument is refused" rc_is 1
+
+# ── token / API layout ──────────────────────────────────────────────────────
+rm -rf "$REL/pub"
+publish_api
+TOKEN=ghp_FAKEtoken0123456789
+for how in "OUTFIT_GITHUB_TOKEN" "GH_TOKEN" "GITHUB_TOKEN"; do
+  D=$WORK/api-$how
+  run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" "$how=$TOKEN"
+  check "token from $how: installs through the API" rc_is 0
+  check "  and never prints the token" bash -c '! grep -q "$1" "$2"' _ "$TOKEN" "$WORK/out"
+  check "  and the binary works" installed "$D"
+done
+publish_api minify
+D=$WORK/api-min
+run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN
+check "a minified API response installs too" rc_is 0
+D=$WORK/api-pin
+run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN OUTFIT_VERSION=$VER
+check "a pinned version installs through the API" rc_is 0
+D=$WORK/api-missing
+run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN OUTFIT_VERSION=9.9.9
+check "a missing release fails" rc_is 1
+check "  and installs nothing" nothing_in "$D"
+# gh as the last-resort token source
+mkdir -p "$WORK/ghbin"
+cp -P "$WORK/bin"/* "$WORK/ghbin/"
+printf '#!/bin/sh\n[ "$1 $2" = "auth token" ] && echo %s\n' "$TOKEN" >"$WORK/ghbin/gh"
+chmod +x "$WORK/ghbin/gh"
+D=$WORK/api-gh
+env -i HOME="$H" PATH="$WORK/ghbin" OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" sh "$ROOT/install.sh" >"$WORK/out" 2>&1
+RC=$?
+check "gh auth token is used when no variable is set" rc_is 0
+check "  and not printed" bash -c '! grep -q "$1" "$2"' _ "$TOKEN" "$WORK/out"
+D=$WORK/api-badtoken
+run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" 'GH_TOKEN=bad token"quote'
+check "a token with odd characters is ignored (and the public URLs are tried)" rc_is 1
+check "  with the token-needed hint" out_has "needs a token"
+
+# ── minisign ────────────────────────────────────────────────────────────────
+if [ "$HAVE_MINISIGN" = 1 ]; then
+  publish_public
+  D=$WORK/ms1
+  run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_MINISIGN=1 OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/key")"
+  check "a good signature is accepted" rc_is 0
+  check "  and reported" out_has "signature OK"
+  D=$WORK/ms2
+  run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_MINISIGN=1 OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/other")"
+  check "a signature by another key is refused" rc_is 1
+  check "  naming the key problem" out_has "does not match the outfit release key"
+  check "  and nothing was installed" nothing_in "$D"
+  D=$WORK/ms3
+  run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_MINISIGN=1 OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/other") $(pubkey_of "$WORK/key")"
+  check "any one of several trusted keys is enough (key rotation)" rc_is 0
+  # The embedded key is the real release key, not the throwaway one.
+  D=$WORK/ms4
+  run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_MINISIGN=1
+  check "the embedded key rejects a throwaway signature" rc_is 1
+  # Checksum list edited after signing, with a matching archive hash: only the signature can catch it.
+  D=$WORK/ms5
+  printf '\n' >>"$REL/pub/releases/latest/download/checksums.txt"
+  run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_MINISIGN=1 OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/key")"
+  check "a checksum list changed after signing is refused" rc_is 1
+else
+  echo "skip minisign cases (no minisign installed)"
+fi
+
+echo
+echo "install-test: $PASSES passed, $FAILS failed"
+[ "$FAILS" -eq 0 ]

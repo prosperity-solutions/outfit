@@ -1,0 +1,87 @@
+# GoReleaser builds, archives, checksums and signs; publishing is done by
+# scripts/release/publish.sh (draft first, verified upload, then publish), so every
+# run is `goreleaser release --clean --skip=publish`. See docs/release.md.
+version: 2
+project_name: outfit
+
+builds:
+  - id: outfit
+    main: ./cmd/outfit
+    binary: outfit
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .ShortCommit }}
+      - -X main.date={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+# One macOS binary that runs natively on both Apple Silicon and Intel.
+universal_binaries:
+  - id: outfit-darwin
+    ids: [outfit]
+    replace: true
+    name_template: outfit
+
+archives:
+  - id: outfit
+    formats: [tar.gz]
+    # outfit_<version>_<os>_<arch>.tar.gz, with arch "all" for the macOS universal binary.
+    name_template: "outfit_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE, README.md, NOTICE]
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# The update key lives in the repository variable MINISIGN_PUBLIC_KEY and is
+# compiled in from internal/update/keys.txt. The secret key and password are repo
+# secrets; release.yml writes the key to a 0600 temp file, exports its path as
+# MINISIGN_KEY_FILE and deletes it afterwards. aead.dev/minisign reads the password
+# from stdin when it is not a terminal.
+signs:
+  - id: checksums
+    cmd: minisign
+    stdin: "{{ .Env.MINISIGN_PASSWORD }}"
+    args: ["-S", "-s", "{{ .Env.MINISIGN_KEY_FILE }}", "-m", "${artifact}", "-x", "${signature}"]
+    artifacts: checksum
+    signature: "${artifact}.minisig"
+
+# macOS signing and notarization via quill, which works from Linux and signs
+# the universal binary (tested on every PR: the signing-smoke job in ci.yml).
+# Both are optional. Without MACOS_SIGN_P12 the darwin binary ships unsigned:
+# curl-installed binaries are never quarantined, so Gatekeeper does not check them
+# (docs/macos-signing.md). Notarizing a bare Mach-O cannot be stapled, and does
+# not need to be. Two entries, exactly one of which is enabled: sign only, or
+# sign and notarize.
+notarize:
+  macos:
+    - enabled: '{{ and (isEnvSet "MACOS_SIGN_P12") (not (isEnvSet "MACOS_NOTARY_KEY")) }}'
+      ids: [outfit-darwin]
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+    - enabled: '{{ and (isEnvSet "MACOS_SIGN_P12") (isEnvSet "MACOS_NOTARY_KEY") }}'
+      ids: [outfit-darwin]
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 20m
+
+# From git, not the API, so the build job needs no token. The notes land in
+# dist/CHANGELOG.md and become the release body.
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^chore: bootstrap"

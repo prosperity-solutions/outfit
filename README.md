@@ -23,11 +23,25 @@ lefthook, plain `.git/hooks`).
 
 ## Install
 
-> outfit is being built in the open and has no release yet. This section gets its
-> one-line install command with the first release.
+The repository is private for now, so the download needs a GitHub token that can
+read it. With the GitHub CLI signed in (`gh auth login`):
 
-It is a single static binary for Linux (amd64, arm64) and macOS (universal),
-needs git 2.36 or newer, and updates itself with `outfit update`.
+```sh
+curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
+  https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
+```
+
+Once the repository is public, no token is needed:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
+```
+
+It is a single static binary for Linux (amd64, arm64) and macOS (universal), needs
+git 2.36 or newer, and never uses `sudo`: it puts `outfit` in `~/.local/bin` (or next
+to the one you already have). It checks a SHA-256 and, if `minisign` is installed, a
+signature. Options, and checking a download by hand: [docs/install.md](docs/install.md).
+`scripts/demo.sh` walks through it all in a throwaway repository.
 
 ## Use it
 
@@ -66,8 +80,9 @@ profile, then the team's committed defaults in `.outfit/config`. Keys the team
 
 ## Status
 
-Under construction, one pull request at a time: toggles and the hook dispatcher are
-in; profile file swaps, `outfit update` and the installer are next. The plan is
+Under construction, one pull request at a time: toggles, the hook dispatcher and
+the release pipeline are in; `outfit update` and profile file swaps are next. How a
+release is built and checked: [docs/release.md](docs/release.md). The plan is
 [docs/HANDOVER.md](docs/HANDOVER.md); how git actually behaves, pinned by tests, is
 [docs/git-behavior.md](docs/git-behavior.md).
 

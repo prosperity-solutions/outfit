@@ -1,0 +1,369 @@
+name: Release
+
+# Runs on every push to main. Ported in structure from veld's release workflow
+# (MIT; see NOTICE). The whole story, and how to rotate the signing key, is in
+# docs/release.md.
+#
+#   version -> build -> smoke (4 native runners) -> publish -> verify (4 runners)
+#                                                           \-> verify-signing
+#
+# This is the ONLY workflow that references the MINISIGN_* and MACOS_* secrets,
+# and it only runs on pushes to main, so a pull request can never reach them.
+on:
+  push:
+    branches: [main]
+
+# Two quick merges must not compute the same tag, and a release must never be
+# cancelled half way.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REPO: prosperity-solutions/outfit
+
+jobs:
+  # ── 1. What version, if any ───────────────────────────────────────────────
+  version:
+    name: Next version
+    runs-on: ubuntu-24.04
+    outputs:
+      releasable: ${{ steps.v.outputs.releasable }}
+      tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+      previous: ${{ steps.v.outputs.previous }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+      - name: Compute the next version from Conventional Commits
+        id: v
+        run: |
+          go install github.com/caarlos0/svu/v3@v3.4.0
+          current=$(svu current)
+          next=$(svu next --v0)
+          echo "current=$current next=$next"
+          # No tag yet makes `current` v0.0.0; svu then answers v0.1.0 for the
+          # first feat and v0.0.0 when nothing is releasable. --v0 keeps a
+          # breaking change from jumping to 1.0.
+          if [ "$next" = "$current" ]; then
+            echo "Nothing releasable since $current (only docs/chore/ci commits). Stopping."
+            echo "releasable=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "releasable=true"
+            echo "tag=$next"
+            echo "version=${next#v}"
+            if [ "$current" != v0.0.0 ]; then echo "previous=$current"; fi
+          } >> "$GITHUB_OUTPUT"
+          echo "### Releasing $next" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 2. Build, sign, checksum ──────────────────────────────────────────────
+  build:
+    name: Build and sign
+    needs: version
+    if: needs.version.outputs.releasable == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+
+      # Fail early, naming the thing, rather than building for ten minutes and
+      # failing at the signing step.
+      - name: Check the signing configuration
+        env:
+          MINISIGN_PUBLIC_KEY: ${{ vars.MINISIGN_PUBLIC_KEY }}
+          HAVE_MINISIGN_SECRET: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
+          HAVE_MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD != '' }}
+          HAVE_P12: ${{ secrets.MACOS_SIGN_P12 != '' }}
+          HAVE_P12_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD != '' }}
+          HAVE_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY != '' }}
+          HAVE_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID != '' }}
+          HAVE_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER_ID != '' }}
+        run: |
+          fail=0
+          if [ -z "$MINISIGN_PUBLIC_KEY" ]; then
+            echo "::error::the repository variable MINISIGN_PUBLIC_KEY is missing (Settings > Secrets and variables > Actions > Variables). Without it nothing can be signed or checked."
+            fail=1
+          else
+            var_key=$(printf '%s\n' "$MINISIGN_PUBLIC_KEY" | grep -vE '^(untrusted comment:|[[:space:]]*$)' | head -1 | tr -d '\r ')
+            if ! grep -qxF "$var_key" <(grep -vE '^(#|untrusted comment:|[[:space:]]*$)' internal/update/keys.txt | tr -d '\r '); then
+              echo "::error::MINISIGN_PUBLIC_KEY does not appear in internal/update/keys.txt. Clients would reject this release. Add the key there first (docs/release.md, 'Rotating the update key')."
+              fail=1
+            fi
+          fi
+          [ "$HAVE_MINISIGN_SECRET" = true ] || { echo "::error::the secret MINISIGN_SECRET_KEY is missing"; fail=1; }
+          [ "$HAVE_MINISIGN_PASSWORD" = true ] || { echo "::error::the secret MINISIGN_PASSWORD is missing"; fail=1; }
+          # macOS signing is optional, but half of it is a mistake.
+          if [ "$HAVE_P12" = true ]; then
+            [ "$HAVE_P12_PASSWORD" = true ] || { echo "::error::MACOS_SIGN_P12 is set but MACOS_SIGN_PASSWORD is not"; fail=1; }
+            if [ "$HAVE_NOTARY_KEY" = true ]; then
+              [ "$HAVE_NOTARY_KEY_ID" = true ] || { echo "::error::MACOS_NOTARY_KEY is set but MACOS_NOTARY_KEY_ID is not"; fail=1; }
+              [ "$HAVE_NOTARY_ISSUER" = true ] || { echo "::error::MACOS_NOTARY_KEY is set but MACOS_NOTARY_ISSUER_ID is not"; fail=1; }
+              echo "macOS: signing and notarizing" | tee -a "$GITHUB_STEP_SUMMARY"
+            else
+              echo "macOS: signing only (no MACOS_NOTARY_* secrets)" | tee -a "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "::warning::MACOS_SIGN_P12 is not set: the macOS binary ships UNSIGNED. That is fine for curl installs (docs/macos-signing.md)."
+            echo "macOS: unsigned (no MACOS_SIGN_P12)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$fail"
+
+      - name: Install the signing tool
+        run: go install aead.dev/minisign/cmd/minisign@v0.3.0
+
+      # The key exists on disk only for the next step, mode 0600, and is
+      # removed in the always() step below even when the build fails.
+      - name: Write the signing key
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          umask 077
+          keyfile=$(mktemp)
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$keyfile"
+          echo "MINISIGN_KEY_FILE=$keyfile" >> "$GITHUB_ENV"
+
+      - name: Tag locally and build (nothing is pushed or published here)
+        env:
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          gobin=$(go env GOPATH)/bin
+          export PATH="$PATH:$gobin"
+          git tag "$TAG"
+          go run github.com/goreleaser/goreleaser/v2@v2.18.3 release --clean --skip=publish
+
+      - name: Remove the signing key
+        if: always()
+        run: |
+          if [ -n "${MINISIGN_KEY_FILE:-}" ]; then rm -f "$MINISIGN_KEY_FILE"; fi
+
+      # The signature must verify against the committed key with the same Go
+      # code `outfit update` uses. A signing secret that does not match the
+      # committed key fails the release here, before anything is published.
+      - name: Verify the signature against internal/update/keys.txt
+        run: go run ./internal/tools/verifysig dist/checksums.txt dist/checksums.txt.minisig
+
+      - name: Gather the release files
+        run: |
+          set -e
+          mkdir -p out
+          cp dist/outfit_*.tar.gz dist/checksums.txt dist/checksums.txt.minisig out/
+          ls -l out
+          [ "$(find out -type f | wc -l)" -eq 5 ] || { echo "::error::expected 3 archives, checksums.txt and its signature in out/"; exit 1; }
+          if [ -f dist/CHANGELOG.md ]; then cp dist/CHANGELOG.md notes.md; else printf 'Release %s\n' "$TAG" > notes.md; fi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-files
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-notes
+          path: notes.md
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── 3. The real artifacts, run natively, before anyone else can ───────────
+  smoke:
+    name: Smoke (${{ matrix.os }})
+    needs: [version, build]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-files
+          path: out
+      # minisign is what lets install.sh check the signature too, against the
+      # key built into the script, so the real key and the real signature meet
+      # here for the first time on every runner.
+      - name: Install minisign
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then brew install minisign; else sudo apt-get update -qq && sudo apt-get install -y -qq minisign; fi
+      - name: Serve the build and install from it
+        run: |
+          set -e
+          mkdir -p "site/releases/latest/download" "site/releases/download/v$VERSION"
+          cp out/* "site/releases/latest/download/"
+          cp out/* "site/releases/download/v$VERSION/"
+          python3 -m http.server 8123 --bind 127.0.0.1 --directory site >server.log 2>&1 &
+          for _ in $(seq 1 30); do curl -fs http://127.0.0.1:8123/releases/latest/download/checksums.txt >/dev/null && break; sleep 1; done
+          export OUTFIT_BASE_URL=http://127.0.0.1:8123 OUTFIT_INSTALL_DIR="$RUNNER_TEMP/bin"
+          # No token: this exercises the public-URL path. (Runners have none, and a
+          # stray one would send the script to the API instead.)
+          unset GH_TOKEN GITHUB_TOKEN OUTFIT_GITHUB_TOKEN
+          sh install.sh | tee install.log
+          grep -q "signature OK" install.log
+          got=$("$OUTFIT_INSTALL_DIR/outfit" version | awk '{print $2}')
+          [ "$got" = "$VERSION" ] || { echo "::error::outfit version says '$got', expected $VERSION"; exit 1; }
+          echo "OUTFIT_BIN=$OUTFIT_INSTALL_DIR/outfit" >> "$GITHUB_ENV"
+      - name: Run the demo with the installed binary
+        run: scripts/demo.sh --quick --outfit "$OUTFIT_BIN"
+      - name: outfit update --check against the fake server
+        run: |
+          if "$OUTFIT_BIN" --help 2>&1 | grep -q '^  update'; then
+            OUTFIT_BASE_URL=http://127.0.0.1:8123 "$OUTFIT_BIN" update --check
+          else
+            echo "outfit has no update command in this release yet: skipped"
+          fi
+
+  # ── 4. Publish: tag, then a verified draft-first release ──────────────────
+  publish:
+    name: Publish
+    needs: [version, smoke]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-files
+          path: out
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-notes
+          path: notes
+      - name: Push the tag
+        run: |
+          set -e
+          sha=$(git rev-parse HEAD)
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            git fetch --quiet origin "refs/tags/$TAG:refs/tags/$TAG"
+            [ "$(git rev-list -n1 "$TAG")" = "$sha" ] || { echo "::error::$TAG already exists on a different commit"; exit 1; }
+            echo "$TAG is already pushed at this commit (re-run)."
+          else
+            git tag "$TAG" "$sha"
+            git push origin "refs/tags/$TAG"
+          fi
+      - name: Publish the release
+        run: scripts/release/publish.sh "$TAG" out notes/notes.md
+
+  # ── 5. The real install, exactly as a teammate does it ────────────────────
+  verify:
+    name: Verify (${{ matrix.os }})
+    needs: [version, publish]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+      PREVIOUS: ${{ needs.version.outputs.previous }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # raw.githubusercontent.com caches for about five minutes, and the release
+      # list can lag a moment behind the flip, so retry once a minute for ten.
+      - name: Install through the real URL and check the version
+        run: |
+          export OUTFIT_INSTALL_DIR="$RUNNER_TEMP/bin"
+          for attempt in $(seq 1 11); do
+            rm -rf "$OUTFIT_INSTALL_DIR"
+            if curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh; then
+              got=$("$OUTFIT_INSTALL_DIR/outfit" version | awk '{print $2}')
+              if [ "$got" = "${TAG#v}" ]; then
+                echo "outfit $got installed from the real URL on $RUNNER_OS/$RUNNER_ARCH"
+                echo "OUTFIT_BIN=$OUTFIT_INSTALL_DIR/outfit" >> "$GITHUB_ENV"
+                exit 0
+              fi
+              echo "installed $got, waiting for $TAG"
+            fi
+            echo "attempt $attempt of 11 failed; retrying in 60s"
+            sleep 60
+          done
+          echo "::error::could not install $TAG through raw.githubusercontent.com within ten minutes"
+          exit 1
+
+      # Only once the previous release itself has `outfit update`; until then it is
+      # reported as not verified, not silently passed.
+      - name: Update from the previous release to this one
+        run: |
+          if [ -z "$PREVIOUS" ]; then
+            echo "No previous release: update path not verified." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          dir="$RUNNER_TEMP/previous"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | OUTFIT_INSTALL_DIR="$dir" OUTFIT_VERSION="${PREVIOUS#v}" sh
+          if ! "$dir/outfit" --help 2>&1 | grep -q '^  update'; then
+            echo "$PREVIOUS has no 'outfit update': update path not verified." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          "$dir/outfit" update
+          got=$("$dir/outfit" version | awk '{print $2}')
+          [ "$got" = "${TAG#v}" ] || { echo "::error::updated $PREVIOUS but outfit is $got, expected ${TAG#v}"; exit 1; }
+          echo "Updated $PREVIOUS -> $got on $RUNNER_OS/$RUNNER_ARCH."
+
+  # ── 6. macOS signature, when there is one ─────────────────────────────────
+  verify-signing:
+    name: Verify macOS signing
+    needs: [version, publish]
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      HAVE_P12: ${{ secrets.MACOS_SIGN_P12 != '' }}
+      HAVE_NOTARY: ${{ secrets.MACOS_NOTARY_KEY != '' }}
+      TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
+    steps:
+      - name: Check the published binary's signature
+        run: |
+          if [ "$HAVE_P12" != true ]; then
+            echo "No MACOS_SIGN_P12: the macOS binary is unsigned, nothing to verify." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          mkdir dl && cd dl
+          gh release download "$TAG" -p '*_darwin_all.tar.gz'
+          tar -xzf ./*_darwin_all.tar.gz outfit
+          codesign --verify --strict --verbose=2 outfit
+          info=$(codesign -dvv outfit 2>&1)
+          echo "$info" | grep -E '^(Identifier|Authority|TeamIdentifier|Timestamp|CodeDirectory)'
+          echo "$info" | grep -q '^Authority=Developer ID Application' || { echo "::error::not signed by a Developer ID Application certificate"; exit 1; }
+          echo "$info" | grep -q 'flags=.*runtime' || { echo "::error::hardened runtime is not enabled"; exit 1; }
+          echo "$info" | grep -q '^Timestamp=' || { echo "::error::the signature has no secure timestamp"; exit 1; }
+          if [ -n "$TEAM_ID" ]; then
+            got=$(echo "$info" | sed -n 's/^TeamIdentifier=//p')
+            [ "$got" = "$TEAM_ID" ] || { echo "::error::TeamIdentifier is '$got', expected '$TEAM_ID'"; exit 1; }
+          fi
+          # Informational: a bare executable is not an app, so spctl may say so.
+          spctl -a -t install -vv outfit || true
+          lipo -archs outfit | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "macOS signature verified (notarization requested: $HAVE_NOTARY)." | tee -a "$GITHUB_STEP_SUMMARY"

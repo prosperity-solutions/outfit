@@ -1,0 +1,77 @@
+# Installing outfit
+
+outfit is one static binary: Linux (amd64, arm64) and macOS (universal, so Apple
+Silicon and Intel). It needs git 2.36 or newer.
+
+## While the repository is private
+
+The release files are only readable with a GitHub token that can read the
+repository. If you use the GitHub CLI (`gh auth login` once):
+
+```sh
+curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
+  https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
+```
+
+The first token is for fetching the script itself; the script then looks for a token
+on its own, in this order: `OUTFIT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, then
+`gh auth token`. It uses the first one it finds to ask the GitHub API for the
+release and to download its files. The token is never printed, and is sent to the
+API host only, not to wherever GitHub redirects the download.
+
+## Once the repository is public
+
+No token needed:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
+```
+
+With no token the script uses the public `releases/latest/download/…` URLs.
+
+## What the script does
+
+1. Picks the build for this machine (`linux_amd64`, `linux_arm64` or `darwin_all`; on
+   anything else it stops and says so).
+2. Downloads the archive, `checksums.txt` and `checksums.txt.minisig` into a temporary
+   folder that is removed on exit.
+3. Checks the archive's SHA-256 against `checksums.txt`. A mismatch stops everything.
+4. If `minisign` is installed, checks the signature of `checksums.txt` against the
+   release key built into the script (the same key `outfit update` uses, kept in
+   [`internal/update/keys.txt`](../internal/update/keys.txt)). A bad signature stops
+   everything. Without `minisign` it says it only checked the checksum.
+5. Looks inside the archive and accepts only `outfit`, `LICENSE`, `README.md` and
+   `NOTICE`, as plain files.
+6. Puts `outfit` next to the existing one (the folder `command -v outfit` finds), or
+   in `OUTFIT_INSTALL_DIR`, or in `~/.local/bin`. It writes a temporary file in that
+   folder and renames it into place, so a failed install never leaves half a binary.
+   It never uses `sudo`.
+7. Prints the PATH line to add if the folder is not on your PATH, then runs
+   `outfit version`.
+
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `OUTFIT_VERSION` | Install this release (`0.3.1` or `v0.3.1`) instead of the latest. |
+| `OUTFIT_INSTALL_DIR` | Where to put the binary on a first install (default `~/.local/bin`). |
+| `OUTFIT_GITHUB_TOKEN` | A GitHub token with read access to the repository. |
+| `OUTFIT_BASE_URL` | Public download base. For tests. |
+| `OUTFIT_API_URL` | API base. For tests. |
+| `OUTFIT_MINISIGN_PUBKEY` | Replaces the built-in signing key(s). For tests. |
+
+`tests/validate-install-contract.sh` fails CI if this table and the script's header
+ever disagree.
+
+## Checking a download by hand
+
+```sh
+gh release download v0.1.0 -R prosperity-solutions/outfit -p 'checksums.txt*' -p 'outfit_*_linux_amd64.tar.gz'
+sha256sum -c --ignore-missing checksums.txt
+minisign -Vm checksums.txt -P RWQwzESR8TzokwCh60NclFts0vEw5Co4E72Bdf8LX03rafQUTVhhKUWU
+```
+
+## Uninstalling
+
+`outfit uninstall` in each repository removes what `outfit init` added, then delete
+the binary (`rm "$(command -v outfit)"`).

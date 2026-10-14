@@ -116,11 +116,11 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - name: shellcheck
         run: |
-          files=$(git ls-files 'install.sh' 'scripts/**/*.sh' | grep -E '(^install\.sh$|shim)' || true)
-          if [ -n "$files" ]; then printf '%s\n' "$files" | xargs shellcheck -s sh; fi
-          shellcheck -s sh scripts/ci/*.sh
-          # The ported bash helpers are bash, not POSIX sh.
-          shellcheck -S warning -s bash scripts/dev/*.sh tests/*.sh
+          # POSIX sh: the installer and the CI helpers that are sh.
+          shellcheck -s sh install.sh scripts/ci/install-git.sh
+          # The hook shim is generated Go text, tested through the hooks tests.
+          # Everything else is bash.
+          shellcheck -S warning -s bash scripts/dev/*.sh scripts/release/*.sh scripts/ci/signing-smoke.sh scripts/demo.sh tests/*.sh
       - name: actionlint
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
       - name: Workflows do not run on draft PRs
@@ -130,11 +130,7 @@ jobs:
           python3 tests/validate-workflow-gates.py
       - name: goreleaser check
         run: |
-          if [ -f .goreleaser.yaml ]; then
-            go run github.com/goreleaser/goreleaser/v2@v2.12.0 check
-          else
-            echo ".goreleaser.yaml not present yet; skipping"
-          fi
+          go run github.com/goreleaser/goreleaser/v2@v2.18.3 check
 
   unit:
     name: Unit (${{ matrix.os }})
@@ -214,13 +210,72 @@ jobs:
       - name: go test (integration and e2e)
         run: go test -race -count=1 ./...
 
+  # install.sh against a fake local release (the public and the API layout, a
+  # pinned version, a bad checksum, an unsupported platform, a hostile archive,
+  # good and bad signatures), the contract between install.sh, its docs and the
+  # committed keys, and publish.sh against a stub gh.
+  install:
+    name: Installer (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-24.04","macos-latest"]' || '["ubuntu-24.04"]') }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install minisign
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then brew install minisign; else sudo apt-get update -qq && sudo apt-get install -y -qq minisign; fi
+      - name: install.sh tests
+        run: REQUIRE_MINISIGN=1 bash tests/install-test.sh
+      - name: install.sh contract
+        run: bash tests/validate-install-contract.sh
+      - name: publish.sh tests
+        if: runner.os == 'Linux'
+        run: bash tests/publish-test.sh
+
+  # The scripted walkthrough, run with a freshly built binary.
+  demo:
+    name: Demo (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-24.04","macos-latest"]' || '["ubuntu-24.04"]') }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+      - run: go build -o "$RUNNER_TEMP/outfit" ./cmd/outfit
+      - run: scripts/demo.sh --quick --outfit "$RUNNER_TEMP/outfit"
+
+  # The macOS signing path, exercised on every PR with a throwaway certificate
+  # chain: GoReleaser (quill) must sign BOTH slices of the universal binary.
+  signing:
+    name: Signing smoke
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+      - name: Install goreleaser and quill
+        run: |
+          go install github.com/goreleaser/goreleaser/v2@v2.18.3
+          go install github.com/anchore/quill/cmd/quill@v0.7.1
+      - run: scripts/ci/signing-smoke.sh
+
   # The single required check. Fails unless every needed job SUCCEEDED. The
   # `commits` and `ship` jobs only exist on pull requests, so on a push to main
   # they are expected to be skipped; nothing else may be.
   all-green:
     name: all-green
     runs-on: ubuntu-24.04
-    needs: [commits, ship, lint, unit, plan, integration]
+    needs: [commits, ship, lint, unit, plan, integration, install, demo, signing]
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always()
     steps:
       - name: Every needed job must have succeeded
