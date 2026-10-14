@@ -5,7 +5,7 @@
 Not for the install path. Gatekeeper only checks files that carry the
 `com.apple.quarantine` attribute, which browsers and some other apps add to what
 they download. **`curl` never sets it**, so a binary installed by `install.sh` (or
-replaced by `outfit update` (coming in a later release), which downloads the same way) is never checked, signed or
+replaced by `outfit update`, which downloads the same way) is never checked, signed or
 not.
 
 Notarization could not be stapled to a bare executable anyway (stapling needs an app

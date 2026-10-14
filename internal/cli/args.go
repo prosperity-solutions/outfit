@@ -9,22 +9,42 @@ import (
 )
 
 // parse parses flags that may appear before OR after positional arguments
-// (`outfit get biome --json` works) and returns the positionals. All outfit
-// flags are booleans, so a flag never consumes the next argument.
+// (`outfit get biome --json` works) and returns the positionals. Boolean flags
+// never consume the next argument; a flag that takes a value (`--version v0.2.0`)
+// consumes it, so the value is not mistaken for a positional.
 func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	var flags, pos []string
-	for i, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch {
 		case a == "--":
 			pos = append(pos, args[i+1:]...)
 			return pos, fs.Parse(flags)
 		case strings.HasPrefix(a, "-") && a != "-":
 			flags = append(flags, a)
+			if takesValue(fs, a) && i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
 		default:
 			pos = append(pos, a)
 		}
 	}
 	return pos, fs.Parse(flags)
+}
+
+// takesValue reports whether a is a non-boolean flag spelled without "=value".
+func takesValue(fs *flag.FlagSet, a string) bool {
+	name := strings.TrimLeft(a, "-")
+	if strings.Contains(name, "=") {
+		return false
+	}
+	f := fs.Lookup(name)
+	if f == nil {
+		return false
+	}
+	b, ok := f.Value.(interface{ IsBoolFlag() bool })
+	return !ok || !b.IsBoolFlag()
 }
 
 // wantsJSON reports whether args ask for JSON output in any spelling the flag
@@ -40,7 +60,7 @@ func wantsJSON(args []string) bool {
 }
 
 // usageTail is each command's positional arguments, for `-h`.
-var usageTail = map[string]string{"get": " <key>", "set": " <key>=<val>…", "ls": "", "status": "", "version": ""}
+var usageTail = map[string]string{"get": " <key>", "set": " <key>=<val>…", "ls": "", "status": "", "version": "", "update": ""}
 
 // newFlags makes a FlagSet that prints nothing itself: errors go through report
 // (so --json callers get JSON) and -h through parseArgs.

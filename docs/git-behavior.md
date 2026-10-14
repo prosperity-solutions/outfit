@@ -43,3 +43,9 @@ test exists.
 | 29 | Tools resolve the hooks directory with `git rev-parse --git-path hooks`, which honours `core.hooksPath`: after `outfit init` that is outfit's shim directory. `lefthook install` (2.2.2) renames an existing shim to `<hook>.old` and writes its own hook there. | `hooks-adopt.txtar` (simulated) |
 | 30 | A hook's working directory is the worktree root for client-side hooks but `$GIT_DIR` (with `GIT_DIR=.`) for receive-side ones, so a dispatcher must not force a cwd. | `hooks` `Chain` (inherits the caller's cwd) |
 | 31 | `core.hooksPath` may be written with a leading `~/`, which git expands itself; a shell fallback must expand it too. | `hooks-tilde.txtar` |
+
+## Test tracing
+
+`OUTFIT_GIT_TRACE_FILE=<path>`: when set, `internal/gitx` appends one line per git
+process it starts (the test harness uses it to pin how many git processes a command
+may spawn). Unset in normal use.

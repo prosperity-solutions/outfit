@@ -47,7 +47,7 @@ With no token the script uses the public `releases/latest/download/…` URLs.
    This catches a damaged download. It does **not** catch a tampered release, because
    `checksums.txt` comes from the same place as the archive.
 4. If `minisign` is installed, checks the signature of `checksums.txt` against the
-   release key built into the script (the same key `outfit update` will use, kept in
+   release key built into the script (the same key `outfit update` uses, kept in
    [`internal/update/keys.txt`](../internal/update/keys.txt)). A bad signature stops
    everything. This is the check that catches tampering, so **install `minisign`
    first if you can** (`brew install minisign`, `apt install minisign`). Without it
@@ -88,6 +88,11 @@ gh release download v0.1.0 -R prosperity-solutions/outfit -p 'checksums.txt*' -p
 shasum -a 256 -c --ignore-missing checksums.txt     # Linux: sha256sum -c --ignore-missing checksums.txt
 minisign -Vm checksums.txt -P RWQwzESR8TzokwCh60NclFts0vEw5Co4E72Bdf8LX03rafQUTVhhKUWU
 ```
+
+## Updating
+
+`outfit update` (see [update.md](update.md)). If outfit lives in a folder you cannot
+write to, it prints the install command to run instead.
 
 ## Uninstalling
 

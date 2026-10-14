@@ -51,6 +51,8 @@ to the one you already have; on a Mac that folder is not on your PATH yet, and t
 installer prints the line to add to `~/.zshrc`). It checks a SHA-256 (which catches a broken download) and, if
 `minisign` is installed, the release signature (which catches a tampered release), so
 install `minisign` first if you can. Options, and checking a download by hand: [docs/install.md](docs/install.md).
+Later, `outfit update` installs the newest release itself (after checking its
+signature); see [docs/update.md](docs/update.md).
 To see it work first, `scripts/demo.sh` in a clone of this repository
 (`gh repo clone prosperity-solutions/outfit`) walks through it all in a throwaway repo.
 
@@ -66,6 +68,7 @@ outfit set hook.pre-commit=               # take the override away again
 outfit set biome=off --global             # a free-form toggle (only hooks that ask for it)
 outfit status                    # the active profile, and where every value comes from
 outfit ls                        # the profiles you can switch to
+outfit update                    # install the latest release (--check only looks)
 ```
 
 Every command takes `--json`, never asks a question, and can be run twice safely.
@@ -92,7 +95,7 @@ profile, then the team's committed defaults in `.outfit/config`. Keys the team
 ## Status
 
 Under construction, one pull request at a time: toggles, the hook dispatcher and
-the release pipeline are in; `outfit update` and profile file swaps are next. How a
+the release pipeline and `outfit update` are in; profile file swaps are next. How a
 release is built and checked: [docs/release.md](docs/release.md). The plan is
 [docs/HANDOVER.md](docs/HANDOVER.md); how git actually behaves, pinned by tests, is
 [docs/git-behavior.md](docs/git-behavior.md).

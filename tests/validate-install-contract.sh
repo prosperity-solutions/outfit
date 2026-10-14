@@ -6,7 +6,10 @@
 #      ignores, no silent knob);
 #   3. the signing key(s) embedded in install.sh are exactly the ones in
 #      internal/update/keys.txt, so `outfit update` and `curl | sh` trust the
-#      same keys.
+#      same keys;
+#   4. the variables the updater shares with the installer (token, base and API
+#      URLs) are read by the Go code too, and every OUTFIT_* variable the Go code
+#      reads is documented (docs/*.md other than the spec, README.md, AGENTS.md).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -34,6 +37,24 @@ embedded=$(sed -n 's/^PUBKEYS="\(.*\)"$/\1/p' install.sh | tr ' ' '\n' | sort)
 committed=$(grep -vE '^(#|untrusted comment:|$)' internal/update/keys.txt | tr -d '\r ' | sort)
 [ -n "$embedded" ] || bad "no PUBKEYS line in install.sh"
 [ "$embedded" = "$committed" ] || bad "keys in install.sh differ from internal/update/keys.txt"
+
+# 4. Go side. Test-only code (internal/testkit, *_test.go) is not the product.
+gofiles=$(find cmd internal -name '*.go' ! -name '*_test.go' ! -path 'internal/testkit/*')
+# shellcheck disable=SC2086
+govars=$(cat $gofiles | vars)
+corpus=$(cat README.md AGENTS.md)
+for f in docs/*.md; do
+  [ "$f" = docs/HANDOVER.md ] || corpus="$corpus$(cat "$f")"
+done
+for v in $govars; do
+  # OUTFIT_BIN is a variable inside the generated hook shim's own text, not environment.
+  [ "$v" = OUTFIT_BIN ] && continue
+  grep -qF "$v" <<<"$corpus" || bad "the Go code reads $v but no document (docs/*.md, README.md, AGENTS.md) mentions it"
+done
+for v in OUTFIT_GITHUB_TOKEN OUTFIT_BASE_URL OUTFIT_API_URL; do
+  grep -qx "$v" <<<"$header" || bad "$v is not in install.sh's header"
+  grep -qx "$v" <<<"$govars" || bad "install.sh reads $v but the updater (Go) does not"
+done
 
 [ "$fail" = 0 ] && echo "install contract OK ($(wc -w <<<"$header" | tr -d ' ') variables, $(wc -l <<<"$embedded" | tr -d ' ') key(s))"
 exit "$fail"

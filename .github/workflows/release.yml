@@ -317,12 +317,29 @@ jobs:
         run: scripts/release/check-macos-signature.sh "$OUTFIT_BIN"
       - name: Run the demo with the installed binary
         run: scripts/demo.sh --quick --outfit "$OUTFIT_BIN"
-      - name: outfit update --check against the fake server
+      # The real updater against the fake server, with the real key: it must find this
+      # version, verify the real signature on this native architecture, and replace a
+      # copy of the installed binary by the release's own (the macOS one signed).
+      - name: outfit update against the fake server
         run: |
-          if "$OUTFIT_BIN" --help 2>&1 | grep -q '^  update'; then
-            OUTFIT_BASE_URL=http://127.0.0.1:8123 "$OUTFIT_BIN" update --check
-          else
-            echo "outfit has no update command in this release yet: skipped"
+          set -e
+          # The server from the install step may not have outlived it: start it again if so.
+          if ! curl -fs http://127.0.0.1:8123/releases/latest/download/checksums.txt >/dev/null; then
+            python3 -m http.server 8123 --bind 127.0.0.1 --directory site >server2.log 2>&1 &
+            for _ in $(seq 1 30); do curl -fs http://127.0.0.1:8123/releases/latest/download/checksums.txt >/dev/null && break; sleep 1; done
+          fi
+          export OUTFIT_BASE_URL=http://127.0.0.1:8123 OUTFIT_NO_UPDATE_CHECK=1
+          unset GH_TOKEN GITHUB_TOKEN OUTFIT_GITHUB_TOKEN
+          "$OUTFIT_BIN" update --check | tee check.log
+          grep -q "up to date" check.log
+          mkdir "$RUNNER_TEMP/upd"
+          cp "$OUTFIT_BIN" "$RUNNER_TEMP/upd/outfit"
+          "$RUNNER_TEMP/upd/outfit" update --version "$VERSION" | tee update.log
+          grep -q "Reinstalled outfit $VERSION" update.log
+          got=$("$RUNNER_TEMP/upd/outfit" version | awk '{print $2}')
+          [ "$got" = "$VERSION" ] || { echo "::error::after update, outfit is '$got', expected $VERSION"; exit 1; }
+          if [ "$RUNNER_OS" = macOS ] && [ "$HAVE_P12" = true ]; then
+            scripts/release/check-macos-signature.sh "$RUNNER_TEMP/upd/outfit"
           fi
 
   # ── 3b. Main's own CI must be green for this commit ──────────────────────

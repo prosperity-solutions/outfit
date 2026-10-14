@@ -146,3 +146,12 @@ additions working.
 - **A moved repository** keeps an absolute `core.hooksPath` pointing at the old place,
   which makes git skip every hook. `outfit status` says so (exit 4) and `outfit init`
   fixes it; `outfit sync` will repair it automatically in a later release.
+
+## Environment variables
+
+- `OUTFIT_HOOK_ACTIVE=<hook>@<common-dir>`: set by `outfit hook` while it runs the
+  team's hook, so a hook that runs `git commit` (and so the same hook again) is not
+  chained twice. It names the hook and the repository, so another repository's hooks
+  are not skipped. Never set it yourself.
+- `OUTFIT_ALLOW=1`: lets one commit through the pre-commit guard that refuses to
+  commit a swapped file (see the guard section above).

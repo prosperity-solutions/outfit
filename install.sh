@@ -6,7 +6,7 @@
 #     https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
 #
 # While the repository is private the download needs a GitHub token that can read
-# it. The script finds one the way `outfit update` will: OUTFIT_GITHUB_TOKEN,
+# it. The script finds one the way `outfit update` does: OUTFIT_GITHUB_TOKEN,
 # GH_TOKEN, GITHUB_TOKEN, then `gh auth token`. With none, it uses the public
 # release URLs, which work once the repository is public.
 #

@@ -8,12 +8,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 
+	"aead.dev/minisign"
+
 	"github.com/prosperity-solutions/outfit/internal/gitx"
+	"github.com/prosperity-solutions/outfit/internal/update"
 )
 
 // Build carries the release build's identity, set by ldflags in package main.
@@ -34,6 +38,15 @@ type Env struct {
 	Stdin io.Reader
 	// Exe is the absolute path of the running binary, recorded in hook shims.
 	Exe string
+	// IsTTY reports whether stderr is a terminal (the update banner only shows
+	// there).
+	IsTTY bool
+	// GHToken returns the output of `gh auth token`; nil means do not look.
+	GHToken func() string
+	// HTTP and UpdateKeys are for tests of `update`; nil means the defaults (the
+	// system client, the keys compiled in from internal/update/keys.txt).
+	HTTP       *http.Client
+	UpdateKeys []minisign.PublicKey
 }
 
 // Main runs the CLI against the real process environment and returns the exit
@@ -48,7 +61,13 @@ func Run(ctx context.Context, b Build, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return report(stdout, stderr, false, Errorf("cannot determine the working directory: %v", err))
 	}
-	return Execute(ctx, Env{Build: b, Dir: dir, Getenv: os.Getenv, Stdout: stdout, Stderr: stderr, Stdin: os.Stdin, Exe: stableExe()}, args)
+	return Execute(ctx, Env{Build: b, Dir: dir, Getenv: os.Getenv, Stdout: stdout, Stderr: stderr, Stdin: os.Stdin,
+		Exe: stableExe(), IsTTY: isTTY(os.Stderr), GHToken: update.GHAuthToken}, args)
+}
+
+func isTTY(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 // stableExe is the path recorded in hook shims. Package managers install a
@@ -86,17 +105,34 @@ commands:
   set <key>=<val>…       personal toggle override; key= unsets   [--here | --global]
   ls                     list profiles across the three tiers
   status                 the active profile and where every value comes from
+  update                 install the latest release (or --version vX.Y.Z); --check only looks
   version                version, commit, build date, git version found
 
 every command accepts --json (plumbing: "outfit hook <name>", run by git). Run 'outfit <command> -h' for its flags.`
 
-// Execute runs one command and returns its exit code.
+// Execute runs one command and returns its exit code. Human-facing commands may
+// then print the update banner (HANDOVER.md §5), never the ones git hooks run.
 func Execute(ctx context.Context, e Env, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(e.Stderr, usage)
 		return ExitUsage
 	}
+	if !update.BannerCommands[args[0]] || !bannerEnabled(e, args) {
+		return dispatch(ctx, e, args)
+	}
+	b := newBanner(e)
+	b.Start(ctx)
+	code := dispatch(ctx, e, args)
+	if line := b.Finish(); line != "" {
+		fmt.Fprintln(e.Stderr, line)
+	}
+	return code
+}
+
+func dispatch(ctx context.Context, e Env, args []string) int {
 	switch args[0] {
+	case "update":
+		return cmdUpdate(ctx, e, args[1:])
 	case "version":
 		return cmdVersion(ctx, e, args[1:])
 	case "get":
