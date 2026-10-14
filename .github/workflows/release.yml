@@ -424,7 +424,6 @@ jobs:
         run: |
           for attempt in $(seq 1 11); do
             if curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -o "$RUNNER_TEMP/install.sh" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh; then
-              { sha256sum "$RUNNER_TEMP/install.sh" 2>/dev/null || shasum -a 256 "$RUNNER_TEMP/install.sh"; } | tee -a "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             echo "attempt $attempt of 11 failed; retrying in 60s"
@@ -432,6 +431,11 @@ jobs:
           done
           echo "::error::could not download install.sh from raw.githubusercontent.com within ten minutes"
           exit 1
+      - name: Record the downloaded script's SHA-256
+        run: |
+          if command -v sha256sum >/dev/null 2>&1; then sum=$(sha256sum "$RUNNER_TEMP/install.sh"); else sum=$(shasum -a 256 "$RUNNER_TEMP/install.sh"); fi
+          echo "$sum"
+          echo "$sum" >> "$GITHUB_STEP_SUMMARY"
 
       # The release list can lag a moment behind the flip, so retry once a minute for ten.
       - name: Install this release and check the version
