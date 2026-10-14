@@ -415,25 +415,34 @@ jobs:
       PREVIOUS: ${{ needs.version.outputs.previous }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      # raw.githubusercontent.com caches for about five minutes, and the release
-      # list can lag a moment behind the flip, so retry once a minute for ten.
-      - name: Install through the real URL and check the version
+      # The script is fetched in one step and run in another, never piped from
+      # curl into a shell, and its SHA-256 is logged in between. (Piping is what the
+      # README tells people to do; tests/install-test.sh runs that form against a
+      # fake release. Here the point is the real URL and the real release.)
+      # raw.githubusercontent.com caches for about five minutes, so retry.
+      - name: Download install.sh from the real URL
+        run: |
+          for attempt in $(seq 1 11); do
+            if curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -o "$RUNNER_TEMP/install.sh" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh; then
+              { sha256sum "$RUNNER_TEMP/install.sh" 2>/dev/null || shasum -a 256 "$RUNNER_TEMP/install.sh"; } | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "attempt $attempt of 11 failed; retrying in 60s"
+            sleep 60
+          done
+          echo "::error::could not download install.sh from raw.githubusercontent.com within ten minutes"
+          exit 1
+
+      # The release list can lag a moment behind the flip, so retry once a minute for ten.
+      - name: Install this release and check the version
         run: |
           export OUTFIT_INSTALL_DIR="$RUNNER_TEMP/bin"
-          script="$RUNNER_TEMP/install.sh"
           for attempt in $(seq 1 11); do
             rm -rf "$OUTFIT_INSTALL_DIR"
-            # The script is downloaded to a file and its SHA-256 logged before it
-            # runs, not piped straight into a shell. Piping is what the README
-            # tells people to do, and tests/install-test.sh runs that form against a
-            # fake release; here the point is the real URL and the real release.
-            if curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -o "$script" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh &&
-              { sha256sum "$script" 2>/dev/null || shasum -a 256 "$script"; } &&
-              sh "$script"; then
+            if sh "$RUNNER_TEMP/install.sh"; then
               got=$("$OUTFIT_INSTALL_DIR/outfit" version | awk '{print $2}')
               if [ "$got" = "${TAG#v}" ]; then
                 echo "outfit $got installed from the real URL on $RUNNER_OS/$RUNNER_ARCH"
-                echo "OUTFIT_BIN=$OUTFIT_INSTALL_DIR/outfit" >> "$GITHUB_ENV"
                 exit 0
               fi
               echo "installed $got, waiting for $TAG"
@@ -441,7 +450,7 @@ jobs:
             echo "attempt $attempt of 11 failed; retrying in 60s"
             sleep 60
           done
-          echo "::error::could not install $TAG through raw.githubusercontent.com within ten minutes"
+          echo "::error::could not install $TAG within ten minutes"
           exit 1
 
       # Only once the previous release itself has `outfit update`; until then it is
@@ -453,9 +462,7 @@ jobs:
             exit 0
           fi
           dir="$RUNNER_TEMP/previous"
-          script="$RUNNER_TEMP/install-previous.sh"
-          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -o "$script" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh
-          OUTFIT_INSTALL_DIR="$dir" OUTFIT_VERSION="${PREVIOUS#v}" sh "$script"
+          OUTFIT_INSTALL_DIR="$dir" OUTFIT_VERSION="${PREVIOUS#v}" sh "$RUNNER_TEMP/install.sh"
           [ -x "$dir/outfit" ] || { echo "::error::could not install $PREVIOUS"; exit 1; }
           if ! "$dir/outfit" --help 2>&1 | grep -q '^  update'; then
             echo "$PREVIOUS has no 'outfit update': update path not verified." | tee -a "$GITHUB_STEP_SUMMARY"
