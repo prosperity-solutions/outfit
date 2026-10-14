@@ -114,6 +114,10 @@ A purely internal change says so in the PR body.
   the stable exit codes (0 ok, 1 error, 2 usage/unknown, 3 needs a human, 4 out of
   sync/stale). `--json` errors carry `"fix"` and `"retryable"`. Error text names
   the exact fix.
+- **Dependencies are the latest versions**, indirect ones and pinned tools and
+  action SHAs included, and **Wiz scanner comments on a PR are fixed, not
+  ignored** (`docs/ship.md` Steps 2 and 6.4). A merge is not clean while Wiz still
+  reports a finding.
 - **Never overwrite user bytes.** Quarantine, don't delete.
 - **Never `include.path` a committed file**; parse committed config yourself and
   accept only `outfit.*` keys.

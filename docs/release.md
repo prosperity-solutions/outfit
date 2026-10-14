@@ -44,7 +44,8 @@ version → build → smoke (4 runners) ┐
    state, flip to published, read it back. Any failure leaves a draft, which users
    cannot see; re-running the job tops it up.
 5. **verify.** On the same four runners, the real install exactly as a teammate runs
-   it (`curl … raw.githubusercontent.com/…/install.sh | sh` with the workflow token),
+   it (the script downloaded from raw.githubusercontent.com with the workflow token, its
+   SHA-256 logged, then run; the `curl | sh` pipe form is covered by `tests/install-test.sh`),
    retried every minute for up to ten minutes because raw.githubusercontent.com caches
    for about five. It asserts `outfit version` equals the tag.
 

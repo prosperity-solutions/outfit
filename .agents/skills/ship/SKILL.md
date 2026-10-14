@@ -221,7 +221,7 @@ they are:
 |---|---|
 | Review depth | `standard` — `SPAWNS: 14` (max 6 opus), `ROUNDS: auto` (2 low-risk / 3 default / 5 stakes-elevated). A diff under 50 lines with no stakes paths may use the trivia clause (§11); stakes paths always get the full loop. *Deep* (`SPAWNS: 24`, `ROUNDS: 5`) and *Light* (`SPAWNS: 6`, `ROUNDS: 2`) exist for a maintainer who asks for them |
 | Checkpoints | `none`. Instead of a hand-over, drive the CLI yourself against a fixture repo and paste the terminal transcript into the PR body under **"Driven by hand"** |
-| Merge policy | `bypass-on-green` — `gh pr merge --squash --delete-branch` once the ready run's CI jobs are *actually* green (Step 6.3). Use `--admin` only once a ruleset exists on `main`, and only after reading the `ship` job's own conclusion |
+| Merge policy | `bypass-on-green` — `gh pr merge --squash --delete-branch` once the ready run's CI jobs are *actually* green (Step 6.3) and the Wiz scanner's findings are fixed (Step 6.4). Use `--admin` only once a ruleset exists on `main`, and only after reading the `ship` job's own conclusion |
 | Docs & tests | `per-checklist` — walk AGENTS.md's documentation checklist |
 
 The stakes override (docs/agentic-review.md §3.3) is **not** downgradable by the
@@ -310,6 +310,13 @@ Three rules that make it worth the spend rather than theatre:
   gofmt -l . && go vet ./... && golangci-lint run && go test -race ./...
   ```
 
+- **Dependencies are always the latest.** Whenever the change touches `go.mod`, a
+  pinned tool (`go install …@vX`, `go run …@vX`) or a GitHub Action SHA, move it to
+  the latest release rather than the oldest that works, and check the indirect
+  ones too (`go get -u ./... && go mod tidy`, then `go list -m -u all`). A
+  dependency you add drags its own old dependencies in: look at what `go.mod` ends
+  up with, not just what you asked for. Check `govulncheck ./...` locally before
+  the PR, because the Wiz scanner will read `go.mod` and every workflow.
 - **Leave the worktree clean before you stop.** Experiment scaffolding lands
   untracked, and a worktree carrying uncommitted changes or untracked files
   cannot be removed with `git worktree remove`. Before a draft and before
@@ -472,13 +479,31 @@ PR is ready, so waiting on a draft's checks is an infinite wait, not patience.
 
    If *no* checks appear at all a minute or two after marking ready, the PR is
    probably `CONFLICTING` — that stops `pull_request` events firing entirely.
-4. When a check fails, read the failing job's log and fix the real cause; don't
+4. **Read the Wiz scanner's comments, and fix them.** Wiz posts a summary comment
+   and inline comments on the PR a few minutes after it opens, and it is not one of
+   the required checks, so a green CI says nothing about it. Before you merge:
+
+   ```sh
+   gh pr view --json comments --jq '.comments[] | select(.author.login | startswith("wiz")) | .body' | head -40
+   gh api repos/{owner}/{repo}/pulls/<N>/comments --paginate \
+     --jq '.[] | select(.user.login | startswith("wiz")) | "\(.path):\(.line)  \(.body | gsub("<[^>]*>";"") | .[0:400])"'
+   ```
+
+   Fix every finding at its root: a vulnerable dependency is upgraded (to the
+   latest, not merely the version Wiz names), a flagged workflow step is rewritten.
+   Do **not** reply `#wiz_ignore` or add a `.wiz` exception on your own: an
+   exception is a maintainer's decision, so if a finding is genuinely intended,
+   say why in the PR body under "Decisions made unattended" and leave the thread
+   open. Push the fix, wait for Wiz to rescan, and read its comments again: the
+   summary's counts must be gone. A finding that still stands is a reason not to
+   merge.
+5. When a check fails, read the failing job's log and fix the real cause; don't
    retry blind (a rerun re-runs the same commit). **A failure you did not cause is
    still yours to fix** — check the same job on `main` to find out which it is, and
    either way the answer is a fix, not a hand-back (see *Shipping means fixing
    what you hit on the way*). Pushing the fix fires `synchronize`, and since the
    PR is now ready, that re-runs CI normally. Stamp the fix commit.
-5. Then apply the Step 0 merge policy:
+6. Then apply the Step 0 merge policy:
    - *Merge on green* → `gh pr merge --squash --delete-branch`, confirm merged,
      report the merge commit. While `main` has no ruleset, no `--admin`. Once a
      ruleset exists, `--admin` is allowed, but **it overrides required status
@@ -490,7 +515,7 @@ PR is ready, so waiting on a draft's checks is an infinite wait, not patience.
      reused is a branch whose next PR starts with commits CI has already seen.
    - If the maintainer asked to *stop for human*, report the PR link and the CI
      result, then stop. Leave it ready, not draft.
-6. After a merge, update `notes/progress.md` (gitignored) and, during a
+7. After a merge, update `notes/progress.md` (gitignored) and, during a
    HANDOVER run, the 🌅 Run report.
 
 ## Shipping means fixing what you hit on the way

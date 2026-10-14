@@ -165,6 +165,14 @@ check "  without a PATH hint" bash -c '! grep -q "not on your PATH" "$1"' _ "$WO
 check "  and says where OUTFIT_INSTALL_DIR went" out_has "already installed in $D"
 check "  the other dir was never created" bash -c '[ ! -e "$1" ]' _ "$WORK/elsewhere"
 
+# `curl | sh`: the script arrives on stdin, so nothing in it may read stdin.
+D=$WORK/pipe
+env -i HOME="$H" PATH="$WORK/bin" TMPDIR="$WORK" OUTFIT_BASE_URL="file://$REL/pub" OUTFIT_INSTALL_DIR="$D" \
+  sh -c "cat '$ROOT/install.sh' | sh" >"$WORK/out" 2>&1
+RC=$?
+check "installing through a pipe (curl | sh) works" rc_is 0
+check "  and installs the binary" installed "$D"
+
 # An existing install in a folder we cannot write to (never as root, where nothing is read-only).
 if [ "$(id -u)" != 0 ]; then
   RO=$WORK/ro
