@@ -83,8 +83,9 @@ ever disagree.
 ## Checking a download by hand
 
 ```sh
-gh release download v0.1.0 -R prosperity-solutions/outfit -p 'checksums.txt*' -p 'outfit_*_linux_amd64.tar.gz'
-sha256sum -c --ignore-missing checksums.txt
+# platform: linux_amd64, linux_arm64 or darwin_all (macOS)
+gh release download v0.1.0 -R prosperity-solutions/outfit -p 'checksums.txt*' -p 'outfit_*_darwin_all.tar.gz'
+shasum -a 256 -c --ignore-missing checksums.txt     # Linux: sha256sum -c --ignore-missing checksums.txt
 minisign -Vm checksums.txt -P RWQwzESR8TzokwCh60NclFts0vEw5Co4E72Bdf8LX03rafQUTVhhKUWU
 ```
 

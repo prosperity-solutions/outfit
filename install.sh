@@ -58,17 +58,19 @@ platform() {
 }
 
 find_token() {
+  token_source=""
   for name in OUTFIT_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN; do
     eval "token=\${$name:-}"
-    [ -z "$token" ] || break
+    if [ -n "$token" ]; then token_source=$name; break; fi
   done
   if [ -z "$token" ] && command -v gh >/dev/null 2>&1; then
     token=$(gh auth token --hostname github.com 2>/dev/null || true)
+    [ -z "$token" ] || token_source="gh auth token"
   fi
   # Tokens are [A-Za-z0-9_] plus dots and dashes. Anything else would break out of
   # the curl config line below, so treat it as no token.
   case "$token" in
-    *[!A-Za-z0-9_.-]*) say "ignoring a GitHub token with unexpected characters" >&2; token="" ;;
+    *[!A-Za-z0-9_.-]*) say "ignoring the GitHub token from $token_source: it has unexpected characters" >&2; token="" ;;
   esac
 }
 
@@ -84,7 +86,7 @@ fetch_public() {
 fetch_api() {
   printf 'header = "Authorization: Bearer %s"\n' "$token" |
     curl -fsSL --retry 3 --retry-delay 2 -K - -H "Accept: $3" -H "X-GitHub-Api-Version: 2022-11-28" -o "$2" "$1" ||
-    err "could not download $1 with your GitHub token (does it have read access to $REPO?)"
+    err "could not download $1 with the GitHub token from $token_source (does it have read access to $REPO? A stale GH_TOKEN or GITHUB_TOKEN wins over \`gh auth\`: unset it, or set OUTFIT_GITHUB_TOKEN to the one you want)"
 }
 
 # asset_list JSON prints "<id> <name>" for each release asset.
@@ -170,7 +172,11 @@ main() {
   [ $# -eq 0 ] || err "unknown argument '$1' (the installer takes none; options are environment variables, see the top of this script)"
   command -v curl >/dev/null 2>&1 || err "curl is required"
   command -v tar >/dev/null 2>&1 || err "tar is required"
-  trap cleanup EXIT INT TERM HUP
+  # In POSIX sh a trapped signal does not end the script by itself.
+  trap cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
 
   plat=$(platform)
   ver=${OUTFIT_VERSION:-}
@@ -243,7 +249,11 @@ main() {
 
   case ":$PATH:" in
     *":$dir:"*) ;;
-    *) say "note: $dir is not on your PATH. Add it with:  export PATH=\"$dir:\$PATH\"" ;;
+    *)
+      rc=~/.profile
+      case "${SHELL:-}" in */zsh) rc=~/.zshrc ;; */bash) rc=~/.bashrc ;; esac
+      say "note: $dir is not on your PATH. For this terminal:  export PATH=\"$dir:\$PATH\""
+      say "      To keep it, add that line to $rc" ;;
   esac
   "$dir/outfit" version
 }

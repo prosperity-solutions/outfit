@@ -17,7 +17,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --quick) quick=1 ;;
     --outfit) shift; bin=${1:?--outfit needs a path} ;;
-    -h | --help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
   esac
   shift
@@ -35,7 +35,8 @@ if [ -z "$bin" ]; then
     (cd "$root" && go build -o "$work/outfit-bin" ./cmd/outfit)
     bin=$work/outfit-bin
   else
-    echo "outfit is not installed. See the README for the one-line install." >&2
+    echo "outfit was not found on PATH. If you just installed it, add ~/.local/bin to PATH (the installer printed the line)" >&2
+    echo "or pass the binary: scripts/demo.sh --outfit ~/.local/bin/outfit. Not installed yet? See the README." >&2
     exit 1
   fi
 fi

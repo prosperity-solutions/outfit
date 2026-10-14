@@ -71,26 +71,47 @@ done
 topup=0
 release_field() { cap 60 gh release view "$TAG" --json "$1" --jq ".$1" 2>/dev/null || true; }
 
-# The probe and the create are GitHub calls too, so they retry like the uploads.
-open_release() {
-  local attempt delay=5 notes=(--generate-notes)
-  [ -z "$NOTES" ] || notes=(--notes-file "$NOTES")
+# What state is the release in? Prints draft, published or absent. "absent" is
+# only ever concluded from GitHub saying the release does not exist: any other
+# failure (a 5xx, a rate limit) is retried and then fatal, because mistaking an
+# error for "no such release" would create a second draft with the same tag.
+probe_release() {
+  local attempt delay=5 got
   for attempt in 1 2 3; do
-    if cap 60 gh release view "$TAG" >/dev/null 2>&1; then
-      echo "Release $TAG already exists, topping it up."
-      # Only a draft is replaced wholesale; a published release is left alone.
-      [ "$(release_field isDraft)" = true ] && topup=1
+    if got=$(cap 60 gh release view "$TAG" --json isDraft --jq .isDraft 2>"$work/err"); then
+      case "$got" in
+        true) echo draft; return 0 ;;
+        false) echo published; return 0 ;;
+      esac
+    elif grep -qi 'release not found' "$work/err"; then
+      echo absent
       return 0
     fi
-    if cap 120 gh release create "$TAG" --draft --verify-tag --title "$TAG" "${notes[@]}"; then
-      return 0
-    fi
-    echo "Could not open a release for $TAG (attempt $attempt/3)."
+    echo "Could not read the state of $TAG (attempt $attempt/3)." >&2
     if [ "$attempt" -lt 3 ]; then nap "$delay"; delay=$((delay * 3)); fi
   done
   return 1
 }
-open_release || die "could not create or find a release for $TAG"
+
+open_release() {
+  local attempt delay=5 notes=(--generate-notes)
+  [ -z "$NOTES" ] || notes=(--notes-file "$NOTES")
+  state=$(probe_release) || return 1
+  for attempt in 1 2 3; do
+    case "$state" in
+      draft) echo "Draft $TAG already exists, topping it up."; topup=1; return 0 ;;
+      published) echo "Release $TAG is already published."; return 0 ;;
+    esac
+    cap 120 gh release create "$TAG" --draft --verify-tag --title "$TAG" "${notes[@]}" && return 0
+    echo "Could not create a release for $TAG (attempt $attempt/3)."
+    if [ "$attempt" -lt 3 ]; then nap "$delay"; delay=$((delay * 3)); fi
+    # The create may have landed even though it reported failure.
+    state=$(probe_release) || return 1
+  done
+  return 1
+}
+state=absent
+open_release || die "could not create or find a release for $TAG (and will not guess: leaving GitHub as it is)"
 
 # A failed read must never degrade to "assume nothing is missing".
 read_assets() {
@@ -122,6 +143,18 @@ refresh_missing() {
     if [ "${have["$name"]-}" != "$size" ]; then missing+=("$f"); fi
   done
 }
+
+# A published release is never uploaded to. A re-run against one only confirms it
+# is complete; if anything differs, something is wrong that a person must look at.
+if [ "$state" = published ]; then
+  refresh_missing
+  if [ "${#missing[@]}" -eq 0 ]; then
+    echo "$TAG is published and complete; nothing to do."
+    exit 0
+  fi
+  printf '  %s\n' "${missing[@]}"
+  die "$TAG is already published but these assets do not match this build; refusing to change a published release"
+fi
 
 backoff=15
 for attempt in 1 2 3 4 5; do

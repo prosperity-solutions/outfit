@@ -47,6 +47,13 @@ bin=dist/outfit-darwin_darwin_all/outfit
   { echo "FAIL: the minisign signature does not verify"; exit 1; }
 echo "ok:   checksums.txt is signed and verifies"
 
+# The names install.sh looks for. A renamed archive template would otherwise only
+# fail after merge, in the release's smoke legs.
+for plat in linux_amd64 linux_arm64 darwin_all; do
+  ls dist/outfit_*_"$plat".tar.gz >/dev/null 2>&1 || { echo "FAIL: no archive named outfit_<version>_$plat.tar.gz in dist/ (install.sh needs exactly that)"; exit 1; }
+done
+echo "ok:   the three archive names install.sh expects"
+
 desc=$(quill describe "$bin" 2>&1)
 fail=0
 want() { # want DESCRIPTION PATTERN COUNT

@@ -47,10 +47,12 @@ curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/in
 
 It is a single static binary for Linux (amd64, arm64) and macOS (universal), needs
 git 2.36 or newer, and never uses `sudo`: it puts `outfit` in `~/.local/bin` (or next
-to the one you already have). It checks a SHA-256 (which catches a broken download) and, if
+to the one you already have; on a Mac that folder is not on your PATH yet, and the
+installer prints the line to add to `~/.zshrc`). It checks a SHA-256 (which catches a broken download) and, if
 `minisign` is installed, the release signature (which catches a tampered release), so
 install `minisign` first if you can. Options, and checking a download by hand: [docs/install.md](docs/install.md).
-`scripts/demo.sh` walks through it all in a throwaway repository.
+To see it work first, `scripts/demo.sh` in a clone of this repository
+(`gh repo clone prosperity-solutions/outfit`) walks through it all in a throwaway repo.
 
 ## Use it
 

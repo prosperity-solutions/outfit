@@ -64,15 +64,35 @@ jobs:
           # The latest PUBLISHED release: what installed clients are on, and what the
           # update check in `verify` starts from. (Not the latest tag: a tag whose
           # release never got published must not be treated as a release.)
-          previous=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
+          # Only a 404 means "none": any other failure must stop the run, since an empty
+          # `previous` silently skips the key-rotation guard and the update check.
+          previous=""
+          if out=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>"$RUNNER_TEMP/err"); then
+            previous=$out
+          elif ! grep -q 'HTTP 404' "$RUNNER_TEMP/err"; then
+            cat "$RUNNER_TEMP/err"
+            echo "::error::could not read the latest release; not guessing"
+            exit 1
+          fi
           echo "current=$current next=$next previous=${previous:-none}"
           if [ "$next" = "$current" ]; then
             # No new releasable commit. But if THIS commit already carries the
             # tag and its release never got published (publish failed after
             # the tag was pushed), this is a re-run that must finish the job,
             # not a run with nothing to do.
-            if [ "$current" != v0.0.0 ] && [ "$(git rev-list -n1 "$current")" = "$GITHUB_SHA" ] &&
-              ! gh api "repos/$REPO/releases/tags/$current" >/dev/null 2>&1; then
+            published=unknown
+            if [ "$current" != v0.0.0 ] && [ "$(git rev-list -n1 "$current")" = "$GITHUB_SHA" ]; then
+              if gh api "repos/$REPO/releases/tags/$current" >/dev/null 2>"$RUNNER_TEMP/err"; then
+                published=yes
+              elif grep -q 'HTTP 404' "$RUNNER_TEMP/err"; then
+                published=no
+              else
+                cat "$RUNNER_TEMP/err"
+                echo "::error::could not tell whether $current is published; not guessing"
+                exit 1
+              fi
+            fi
+            if [ "$published" = no ]; then
               echo "$current is tagged on this commit but not published: resuming it."
             else
               echo "Nothing releasable since $current (only docs/chore/ci commits). Stopping."
@@ -97,6 +117,7 @@ jobs:
     env:
       TAG: ${{ needs.version.outputs.tag }}
       PREVIOUS: ${{ needs.version.outputs.previous }}
+      ALLOW_UNTRUSTED_PREVIOUS_KEYS: ${{ vars.ALLOW_UNTRUSTED_PREVIOUS_KEYS }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -197,12 +218,29 @@ jobs:
         run: |
           if [ -z "$PREVIOUS" ]; then echo "No previous release."; exit 0; fi
           git show "$PREVIOUS:internal/update/keys.txt" > "$RUNNER_TEMP/previous-keys.txt"
-          go run ./internal/tools/verifysig dist/checksums.txt dist/checksums.txt.minisig "$RUNNER_TEMP/previous-keys.txt" ||
-            { echo "::error::this release is signed with a key that $PREVIOUS does not trust, so installed clients would reject it. Ship the new key in a feat:/fix: release first (docs/release.md, 'Rotating the update key')."; exit 1; }
+          if go run ./internal/tools/verifysig dist/checksums.txt dist/checksums.txt.minisig "$RUNNER_TEMP/previous-keys.txt"; then exit 0; fi
+          # Break glass for a LEAKED key (docs/release.md): the owner sets the
+          # repository variable, ships the replacement, and deletes the variable.
+          if [ "$ALLOW_UNTRUSTED_PREVIOUS_KEYS" = true ]; then
+            echo "::warning::ALLOW_UNTRUSTED_PREVIOUS_KEYS is set: releasing a build that clients of $PREVIOUS cannot verify. They must reinstall."
+            exit 0
+          fi
+          echo "::error::this release is signed with a key that $PREVIOUS does not trust, so installed clients would reject it. Ship the new key in a feat:/fix: release first (docs/release.md, 'Rotating the update key'). If the old key LEAKED, see 'If the signing key leaks' there."
+          exit 1
 
       - name: Gather the release files
         run: |
           set -e
+          # A new kind of asset (an SBOM, another archive format) must be added here,
+          # to scripts/release/publish.sh and to install.sh on purpose, not dropped.
+          unknown=$(find dist -maxdepth 1 -type f \
+            ! -name 'outfit_*_linux_amd64.tar.gz' ! -name 'outfit_*_linux_arm64.tar.gz' ! -name 'outfit_*_darwin_all.tar.gz' \
+            ! -name checksums.txt ! -name checksums.txt.minisig ! -name CHANGELOG.md ! -name config.yaml ! -name metadata.json ! -name artifacts.json)
+          if [ -n "$unknown" ]; then
+            echo "::error::GoReleaser produced files this workflow does not publish:"; echo "$unknown"
+            echo "Add them to release.yml, scripts/release/publish.sh and install.sh deliberately."
+            exit 1
+          fi
           mkdir -p out
           cp dist/outfit_*.tar.gz dist/checksums.txt dist/checksums.txt.minisig out/
           ls -l out
@@ -333,6 +371,10 @@ jobs:
         with:
           name: release-notes
           path: notes
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+          cache: false
       # The files travelled through artifact storage and four runners that
       # installed third-party packages. Check them again, with the committed key,
       # right before they become public.

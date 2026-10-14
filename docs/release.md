@@ -57,13 +57,29 @@ Only `release.yml` references them, and only it runs with them (push to `main`).
 | Name | Kind | Used for |
 |---|---|---|
 | `MINISIGN_SECRET_KEY`, `MINISIGN_PASSWORD` | secrets | signing `checksums.txt` |
-| `MINISIGN_PUBLIC_KEY` | variable | must equal the key in `internal/update/keys.txt` |
+| `MINISIGN_PUBLIC_KEY` | variable | must be one of the keys in `internal/update/keys.txt` (the `.pub` file, or just its second line) |
+| `ALLOW_UNTRUSTED_PREVIOUS_KEYS` | variable | break glass for a leaked key only (below); normally absent |
 | `MACOS_SIGN_P12`, `MACOS_SIGN_PASSWORD` | secrets | Developer ID signing |
 | `MACOS_NOTARY_KEY`, `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_ISSUER_ID` | secrets | notarization |
 | `MACOS_TEAM_ID` | variable | the team the signature must show |
 
 The minisign key is written to a `0600` temporary file for the one signing step and
 deleted afterwards, even when the step fails. Secret values are never printed.
+
+## Creating a key pair (step 0)
+
+```sh
+go install aead.dev/minisign/cmd/minisign@v0.3.0     # or: brew install minisign
+minisign -G -p outfit.pub -s outfit.key              # asks for a password
+```
+
+- `MINISIGN_SECRET_KEY`: the **whole contents** of `outfit.key` (both lines).
+- `MINISIGN_PASSWORD`: its password.
+- `MINISIGN_PUBLIC_KEY` (variable): `outfit.pub`, or just its second line.
+- `internal/update/keys.txt` and the `PUBKEYS` line of `install.sh`: the same
+  second line (the contract test checks they agree).
+
+Keep the secret key and its password in a password manager, not on disk.
 
 ## Rotating the update key
 
@@ -82,11 +98,22 @@ Doing step 2 first would ship a release no installed client can verify. The rele
 refuses that: it verifies the fresh signature against the keys of the previous release
 (`git show <previous tag>:internal/update/keys.txt`) and fails if they do not accept it.
 
-If the signing key **leaks**, do not wait for the order above: remove it from the
-`PUBKEYS` line of `install.sh` at once (the script is fetched fresh from `main`, so new
-installs stop trusting it with one commit), put the new key in `keys.txt` and ship a
-`fix:` release signed with the new key. Clients that only know the old key cannot verify
-that release and must reinstall with `install.sh`; say so in the release notes.
+### If the signing key leaks
+
+Do not wait for the order above; it would keep trusting the leaked key for another
+release. The previous-release key check would also refuse the replacement, so it has a
+break-glass switch. In one go:
+
+1. Generate a new pair (step 0) and set `MINISIGN_SECRET_KEY`, `MINISIGN_PASSWORD` and
+   `MINISIGN_PUBLIC_KEY` to it. Keep the old values until the release below is out.
+2. Set the repository variable `ALLOW_UNTRUSTED_PREVIOUS_KEYS` to `true`.
+3. In **one commit**, replace the leaked key with the new one in both
+   `internal/update/keys.txt` and the `PUBKEYS` line of `install.sh` (the contract test
+   fails if only one changes), titled `fix!: …`. Merge it.
+4. When the release is published, delete the variable. New installs trust only the new
+   key as soon as `install.sh` on `main` is served (raw.githubusercontent.com caches it for
+   about five minutes). Clients that only know the leaked key cannot verify the new release
+   and must reinstall with `install.sh`; say so in the release notes.
 
 ## When a release run fails
 

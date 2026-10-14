@@ -25,7 +25,8 @@ mkdir -p "$S/assets" "$S/state"
 inc() { n=$(cat "$S/$1" 2>/dev/null || echo 0); echo $((n + 1)) >"$S/$1"; }
 case "$1 $2" in
   "release view")
-    [ -f "$S/exists" ] || exit 1
+    [ -f "$S/probe_fail" ] && { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
+    [ -f "$S/exists" ] || { echo "release not found" >&2; exit 1; }
     case "$*" in
       *"--json databaseId"*) echo 4242 ;;
       *"--json isDraft"*) [ -f "$S/draft" ] && echo true || echo false ;;
@@ -136,6 +137,22 @@ tr 'a-z' 'A-Z' <"$REL/checksums.txt" >"$S/assets/checksums.txt"
 run "$S" -- v$VER "$REL"
 check "a draft with a stale same-size asset is topped up with the right bytes" cmp -s "$S/assets/checksums.txt" "$REL/checksums.txt"
 check "  and published" is_public "$S"
+
+# An error while looking for the release is not "no such release".
+S=$WORK/s8c; mkdir -p "$S"; touch "$S/probe_fail" "$S/exists" "$S/draft"; run "$S" -- v$VER "$REL"
+check "a failed probe never creates a second release" bash -c '[ ! -e "$1/creates" ]' _ "$S"
+check "  and fails the job" rc 1
+
+# A published release is never modified.
+S=$WORK/s8d; mkdir -p "$S/assets" "$S/state"; touch "$S/exists"
+for f in "$REL"/*; do n=$(basename "$f"); cp "$f" "$S/assets/$n"; echo uploaded >"$S/state/$n"; done
+run "$S" -- v$VER "$REL"
+check "re-running on a complete published release changes nothing" rc 0
+check "  and uploads nothing" bash -c '[ ! -e "$1/uploads" ] && [ ! -e "$1/patches" ]' _ "$S"
+echo different >"$S/assets/outfit_${VER}_darwin_all.tar.gz"
+run "$S" -- v$VER "$REL"
+check "a published release whose assets differ is refused" rc 1
+check "  and not touched" bash -c '[ ! -e "$1/uploads" ]' _ "$S"
 
 S=$WORK/s9; mkdir -p "$S"; touch "$S/create_fail"; run "$S" -- v$VER "$REL"
 check "a release that cannot be created fails" rc 1
