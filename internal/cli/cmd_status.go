@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -84,7 +85,7 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 			st.Files = append(st.Files, statusFile{Path: f, Profile: l.Profile.Name, Tier: st.Tier})
 		}
 	}
-	st.Dispatcher = dispatcherHealth(ctx, l)
+	st.Dispatcher = dispatcherHealth(ctx, l, e.Getenv("HOME"))
 	var outOfSync bool
 	if st.Dispatcher.Installed && !st.Dispatcher.OK {
 		outOfSync = true
@@ -168,30 +169,58 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 }
 
 // dispatcherHealth checks that, if init ran, this worktree still points at
-// outfit's shims. A moved repository or a deleted .git/outfit leaves a dangling
-// core.hooksPath, which makes git skip EVERY hook without a word.
-func dispatcherHealth(ctx context.Context, l *loaded) dispatcherInfo {
-	if _, err := state.ReadInstall(l.Repo.CommonDir); err != nil {
-		return dispatcherInfo{} // never installed (or unreadable: not our business here)
-	}
+// outfit's shims and they are all intact. A moved repository or a deleted
+// .git/outfit leaves a dangling core.hooksPath, which makes git skip EVERY hook
+// without a word; a tool that renamed our pre-commit shim bypasses the guard.
+func dispatcherHealth(ctx context.Context, l *loaded, home string) dispatcherInfo {
 	ours := hooks.Dir(l.Repo.CommonDir)
-	info := dispatcherInfo{Installed: true}
 	var got string
 	for _, h := range l.Cfg.HooksPaths {
 		if h.Scope == config.ScopeWorktree {
 			got = h.Value
 		}
 	}
+	_, installErr := state.ReadInstall(l.Repo.CommonDir)
+	abs := ""
+	if got != "" {
+		abs = hooks.ExpandPath(got, l.Repo.WorkTree, home)
+	}
+	// Installed: init left its record, or the worktree still points at an outfit
+	// directory (possibly one that is gone: exactly what a lost record looks like).
+	if installErr != nil && (abs == "" || !hooks.IsOutfitDir(abs)) {
+		return dispatcherInfo{}
+	}
+	info := dispatcherInfo{Installed: true}
 	switch {
 	case got == "":
 		info.Problem = "core.hooksPath is not set for this worktree"
-	case !hooks.SameDir(hooks.ExpandPath(got, l.Repo.WorkTree, ""), ours):
+	case !hooks.SameDir(abs, ours):
 		info.Problem = "core.hooksPath points at " + got + " (outfit's shims are in " + ours + "; was the repository moved?)"
 	case len(hooks.Generated(ours)) == 0:
 		info.Problem = "the shim directory " + ours + " is empty or missing"
 	default:
-		info.OK = true
+		for _, n := range hooks.Triggers {
+			if !hooks.IsOurs(filepath.Join(ours, n)) {
+				info.Problem = "the " + n + " shim was replaced or removed (lefthook install does this)"
+				break
+			}
+		}
+		if info.Problem == "" {
+			if f := hooks.Foreign(ours); len(f) > 0 {
+				info.Problem = "another tool put hooks into outfit's directory: " + strings.Join(f, ", ")
+			}
+		}
+		if info.Problem == "" {
+			orig := hooks.OriginalDir(l.Cfg, ours, l.Repo.WorkTree, l.Repo.CommonDir, home)
+			for _, n := range hooks.ShimNames(orig) {
+				if !hooks.IsOurs(filepath.Join(ours, n)) {
+					info.Problem = "the team has a " + n + " hook with no shim"
+					break
+				}
+			}
+		}
 	}
+	info.OK = info.Problem == ""
 	return info
 }
 

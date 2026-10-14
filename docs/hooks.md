@@ -123,8 +123,24 @@ additions working.
 
 ## Limits
 
-- `init` refuses for bare repositories.
+- `init` refuses for bare repositories, and when `config.worktree` already holds
+  settings (turning the extension on would start applying them).
 - Hooks another tool (husky, lefthook) adds later work immediately; a **new git hook
   name** git itself invents is shimmed the next time you run `outfit init`.
-- `outfit sync` (a later release) will repair a moved repository automatically; until
-  then `outfit status` tells you and `outfit init` fixes it.
+- **Tools that install hooks where git says hooks live** (`git rev-parse --git-path
+  hooks`, which is outfit's directory after `init`) fail or misplace them:
+  - `lefthook install` renames our shim to `<hook>.old` and writes its own; `outfit
+    init` (and `outfit status`, which exits 4) notices, moves lefthook's hooks to your
+    hooks directory and removes the leftover.
+  - `git lfs install` refuses ("Hook already exists") because every hook has a shim.
+    Run it as `git -c core.hooksPath=<your hooks dir> lfs install --local`, or
+    `outfit uninstall && git lfs install && outfit init`.
+  - pre-commit.com's `pre-commit install` refuses while `core.hooksPath` is set: use
+    `outfit uninstall && pre-commit install && outfit init`.
+- The guard covers **command-line git**. A GUI or IDE client that runs hooks itself
+  (JGit, libgit2 front ends) may ignore `config.worktree` and skip the dispatcher, and
+  `git commit --no-verify` skips every hook by design; the sparse-checkout config
+  that hides swapped files from `git add` is the line of defence there.
+- **A moved repository** keeps an absolute `core.hooksPath` pointing at the old place,
+  which makes git skip every hook. `outfit status` says so (exit 4) and `outfit init`
+  fixes it; `outfit sync` will repair it automatically in a later release.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/prosperity-solutions/outfit/internal/config"
 	"github.com/prosperity-solutions/outfit/internal/gitx"
@@ -26,14 +27,13 @@ import (
 //     silently skipping it (a secret scan must not vanish because a config read
 //     failed); the guard, which protects history, fails closed instead.
 func cmdHook(ctx context.Context, e Env, args []string) int {
-	if len(args) == 0 || !hooks.IsKnown(args[0]) {
+	if len(args) == 0 {
 		return report(e.Stdout, e.Stderr, false, Usagef("usage: outfit hook <git-hook-name> [args…] (run by git, not by hand)"))
 	}
-	name, rest := args[0], args[1:]
-	if e.Getenv(hooks.ActiveEnv) == name {
-		fmt.Fprintf(e.Stderr, "outfit: the %s hook chains back into outfit (a team hook that is a symlink to a shim, or a core.hooksPath that loops): not running it again\n", name)
-		return 0
+	if !hooks.IsKnown(args[0]) {
+		return report(e.Stdout, e.Stderr, false, Usagef("%q is not a git hook name; git's hooks are: %s", args[0], strings.Join(hooks.Known, ", ")))
 	}
+	name, rest := args[0], args[1:]
 	stdin := e.Stdin
 	if stdin == nil {
 		stdin = os.Stdin
@@ -45,12 +45,17 @@ func cmdHook(ctx context.Context, e Env, args []string) int {
 		// do from here is the repository's own hooks directory.
 		fmt.Fprintf(e.Stderr, "outfit: cannot locate the repository (%v); running the team's %s hook from $GIT_DIR/hooks if there is one\n", derr, name)
 		if gd := e.Getenv("GIT_DIR"); gd != "" {
-			code, _ := hooks.Chain(ctx, filepath.Join(absFrom(e.Dir, gd), "hooks"), name, rest, stdin, e.Stdout, e.Stderr)
+			code, _ := hooks.Chain(ctx, filepath.Join(absFrom(e.Dir, gd), "hooks"), name, name+"@", rest, stdin, e.Stdout, e.Stderr)
 			return code
 		}
 		return 0
 	}
 	home := e.Getenv("HOME")
+	active := hooks.ActiveKey(name, r.CommonDir)
+	if e.Getenv(hooks.ActiveEnv) == active {
+		fmt.Fprintf(e.Stderr, "outfit: the %s hook chains back into outfit (a team hook that is a symlink to a shim, or a core.hooksPath that loops): not running it again\n", name)
+		return 0
+	}
 
 	l, lerr := load(ctx, e)
 	var gc config.GitConfig
@@ -62,7 +67,7 @@ func cmdHook(ctx context.Context, e Env, args []string) int {
 	} else {
 		fmt.Fprintf(e.Stderr, "outfit: %v; running the team's %s hook anyway\n", lerr, name)
 		origDir = filepath.Join(r.CommonDir, "hooks")
-		if p := hooks.HooksPathFromFiles(filepath.Join(r.CommonDir, "config"), globalGitConfig(e)); p != "" {
+		if p := hooks.HooksPathFromFiles(filepath.Join(r.CommonDir, "config"), globalGitConfig(e), xdgGitConfig(e), "/etc/gitconfig"); p != "" {
 			origDir = hooks.ExpandPath(p, r.WorkTree, home)
 		}
 	}
@@ -75,7 +80,7 @@ func cmdHook(ctx context.Context, e Env, args []string) int {
 		}
 	}
 	if !skip {
-		if code, _ := hooks.Chain(ctx, origDir, name, rest, stdin, e.Stdout, e.Stderr); code != 0 {
+		if code, _ := hooks.Chain(ctx, origDir, name, active, rest, stdin, e.Stdout, e.Stderr); code != 0 {
 			return code
 		}
 	}
@@ -101,6 +106,14 @@ func absFrom(dir, p string) string {
 		return p
 	}
 	return filepath.Join(dir, p)
+}
+
+// xdgGitConfig is $XDG_CONFIG_HOME/git/config (or ~/.config/git/config).
+func xdgGitConfig(e Env) string {
+	if x := e.Getenv("XDG_CONFIG_HOME"); x != "" {
+		return filepath.Join(x, "git", "config")
+	}
+	return filepath.Join(e.Getenv("HOME"), ".config", "git", "config")
 }
 
 // globalGitConfig is the user-level git config file, for reading core.hooksPath

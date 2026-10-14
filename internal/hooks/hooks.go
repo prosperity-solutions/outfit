@@ -12,6 +12,34 @@
 // today. git only runs hooks that exist in core.hooksPath, so a fixed set chosen at
 // init would silently skip any hook added later (a merged PR adding a secret scan,
 // or `npm install` creating husky's directory after `outfit init`).
+//
+// # Design decisions (each has a test that pins it)
+//
+//   - Every client hook is shimmed, not the ones the team has today
+//     (TestShimsCoverEveryClientHookNotJustTheOnesTheTeamHasToday, hooks-later.txtar).
+//   - The shim bakes only the BINARY path. The team's hook directory is resolved
+//     at run time, in sh, by the same rule as OriginalDir, because husky may set
+//     core.hooksPath after `outfit init` and a baked directory would silently skip
+//     the team's hook (hooks-tilde.txtar). The rule is re-implemented in sh
+//     because the fallback exists precisely for when outfit cannot run.
+//   - Per-worktree config is written with `git config --file <git-dir>/config.worktree`,
+//     never by running git inside a checkout, so a worktree whose directory is gone
+//     cannot block init or uninstall (hooks-worktrees.txtar).
+//   - install.json (repo-wide, written BEFORE the first change, never rewritten)
+//     versus state.json (per worktree, rewritten by init): uninstall's exactness
+//     depends on the first surviving a half-finished init (hooks-lifecycle.txtar,
+//     hooks-worktrees.txtar). Do not merge them.
+//   - `outfit hook` runs the team hook FIRST and the guard after it passed, so the
+//     guard sees what a formatter hook staged; the team hook fails toward running,
+//     the guard fails CLOSED (TestGuardFailsClosed, hooks-guard.txtar).
+//   - Hot hooks are shimmed only when the team has one: a shim per ref update is a
+//     process per ref update, and push-to-checkout's mere existence changes git.
+//   - Chain sets ActiveEnv=<hook>@<repo> so a shim chained into itself stops
+//     instead of forking forever, without skipping another repository's hook
+//     (hooks-recursion.txtar, hooks-nested.txtar).
+//   - A worktree-scope core.hooksPath shaped like `.../outfit/hooks` is outfit's
+//     own, even when stale (a moved repository): init rewrites it, uninstall unsets
+//     it (hooks-moved.txtar).
 package hooks
 
 import (
@@ -36,10 +64,13 @@ var Known = []string{
 	"proc-receive", "pre-receive", "update", "post-receive", "post-update",
 }
 
-// Hot are the hooks git runs on (nearly) every ref update, index write or status:
-// a shim would cost a process each time, so they are shimmed only when the team
-// actually has one at init time.
-var Hot = []string{"reference-transaction", "post-index-change", "fsmonitor-watchman"}
+// Hot are the hooks that are shimmed only when the team has one: those git runs
+// on (nearly) every ref update, index write or status (a shim would cost a process
+// each time), and those whose mere EXISTENCE changes what git does
+// (push-to-checkout takes over updating the worktree on `updateInstead`, so an
+// empty shim would leave the checkout stale). `outfit status` warns when the team
+// adds one after init; `outfit init` shims it.
+var Hot = []string{"reference-transaction", "post-index-change", "fsmonitor-watchman", "push-to-checkout", "proc-receive"}
 
 // Triggers are the hooks outfit itself needs, with or without a team hook of the
 // same name: pre-commit for the guard, the post-* trio to run `sync`.
@@ -96,7 +127,7 @@ echo "outfit: binary not found at $OUTFIT_BIN; running the team's %[2]s hook dir
 here=$(cd "$(dirname "$0")" && pwd -P)
 orig=
 for scope in --local --global --system; do
-  p=$(git config "$scope" --get core.hooksPath 2>/dev/null) || continue
+  p=$(git config --includes "$scope" --get core.hooksPath 2>/dev/null) || continue
   [ -n "$p" ] || continue
   # shellcheck disable=SC2088  # git stores a literal ~/ and expands it itself
   case $p in
@@ -141,7 +172,7 @@ func OriginalDir(gc config.GitConfig, ours, worktree, commonDir, home string) st
 			continue
 		}
 		abs := expand(val, worktree, home)
-		if sameDir(abs, ours) {
+		if sameDir(abs, ours) || IsOutfitDir(abs) {
 			continue
 		}
 		return abs
@@ -181,14 +212,30 @@ func IsOurs(path string) bool {
 	return err == nil && strings.Contains(string(b), ShimMarker)
 }
 
+// IsOutfitDir reports whether dir looks like an outfit hooks directory: named
+// `.../outfit/hooks`, and either gone (a moved repository leaves exactly that) or
+// holding outfit shims. Such a value is outfit's own, possibly stale: init
+// rewrites it, uninstall removes it, and it is never a team's hooks directory.
+func IsOutfitDir(dir string) bool {
+	dir = filepath.Clean(dir)
+	if filepath.Base(dir) != "hooks" || filepath.Base(filepath.Dir(dir)) != "outfit" {
+		return false
+	}
+	if _, err := os.Stat(dir); err != nil {
+		return true
+	}
+	return len(Generated(dir)) > 0
+}
+
 // Generated lists the outfit-generated shims directly inside dir.
 func Generated(dir string) []string {
 	return filter(dir, func(p string) bool { return IsOurs(p) })
 }
 
-// Foreign lists the regular files directly inside dir that are named like a git
-// hook but were NOT generated by outfit: hooks another tool (lefthook install,
-// for one: it writes into `git rev-parse --git-path hooks`) put there.
+// Foreign lists the entries directly inside dir (files AND symlinks: `ln -sf
+// scripts/pre-commit .git/hooks/pre-commit` is a common setup step) that are named
+// like a git hook but were NOT generated by outfit: hooks another tool (lefthook
+// install, for one: it writes into `git rev-parse --git-path hooks`) put there.
 func Foreign(dir string) []string {
 	return filter(dir, func(p string) bool { return !IsOurs(p) })
 }
@@ -200,7 +247,7 @@ func filter(dir string, keep func(path string) bool) []string {
 	}
 	var out []string
 	for _, e := range ents {
-		if !e.Type().IsRegular() || !IsKnown(e.Name()) {
+		if (!e.Type().IsRegular() && e.Type()&os.ModeSymlink == 0) || !IsKnown(e.Name()) {
 			continue
 		}
 		if keep(filepath.Join(dir, e.Name())) {
@@ -248,3 +295,19 @@ func ExpandPath(p, worktree, home string) string { return expand(p, worktree, ho
 
 // SameDir reports whether a and b are the same directory (by inode, not spelling).
 func SameDir(a, b string) bool { return sameDir(a, b) }
+
+// Leftovers lists `<hook>.old` files in dir that are outfit shims: what lefthook
+// leaves behind when it renames our shim out of the way.
+func Leftovers(dir string) []string {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range ents {
+		if base, ok := strings.CutSuffix(e.Name(), ".old"); ok && IsKnown(base) && e.Type().IsRegular() && IsOurs(filepath.Join(dir, e.Name())) {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}

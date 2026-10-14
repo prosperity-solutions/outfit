@@ -64,6 +64,7 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 		if len(res.Adopted) > 0 {
 			fmt.Fprintf(e.Stdout, "  moved hooks another tool installed into outfit's directory to %s: %s\n", res.OriginalDir, strings.Join(res.Adopted, ", "))
 		}
+		fmt.Fprintln(e.Stdout, "  to skip a hook on this machine: outfit set hook.<name>=off --global   (e.g. hook.pre-commit)")
 		if len(res.MissingWorktrees) > 0 {
 			fmt.Fprintf(e.Stdout, "  worktrees whose directory is gone (configured anyway; `git worktree prune` removes them): %s\n", strings.Join(res.MissingWorktrees, ", "))
 		}
@@ -107,7 +108,18 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 		fmt.Fprintln(e.Stdout, "nothing to uninstall")
 		return ExitOK
 	}
-	fmt.Fprintf(e.Stdout, "uninstalled (%d items removed)\n", len(res.Removed))
+	var shims, state, cfgs int
+	for _, r := range res.Removed {
+		switch {
+		case strings.HasPrefix(r, "shim "):
+			shims++
+		case strings.HasPrefix(r, "state "), r == "install record":
+			state++
+		default:
+			cfgs++
+		}
+	}
+	fmt.Fprintf(e.Stdout, "uninstalled: %d shims, %d config entries, %d state files removed\n", shims, cfgs, state)
 	if len(res.Adopted) > 0 {
 		fmt.Fprintf(e.Stdout, "  moved hooks another tool had installed back to the team's hooks directory: %s\n", strings.Join(res.Adopted, ", "))
 	}

@@ -31,16 +31,42 @@ stdout 'moved hooks another tool had installed'
 exists .git/hooks/commit-msg
 ! exists .git/outfit
 
-# Both exist: refuse and say so (never overwrite a hook).
+# A symlinked team hook (`ln -sf scripts/pre-commit .git/hooks/pre-commit`, a common
+# setup step) is adopted as the link it is, never overwritten by a shim.
+outfit init
+exec ln -sf $WORK/lefthook-hook $WORK/linked-hook
+rm .git/outfit/hooks/post-merge
+exec ln -s $WORK/linked-hook .git/outfit/hooks/post-merge
+outfit init
+stdout 'post-merge'
+exec readlink .git/hooks/post-merge
+stdout 'linked-hook$'
+exec git commit --allow-empty -qm 'feat: with a symlinked hook'
+
+# lefthook renames our shim to <hook>.old: init removes the leftover (it would make
+# every later `lefthook install` fail) and an identical duplicate is simply dropped.
+exec cp .git/outfit/hooks/pre-commit .git/outfit/hooks/pre-commit.old
+cp $WORK/lefthook-hook .git/hooks/post-checkout
+chmod 755 .git/hooks/post-checkout
+cp $WORK/lefthook-hook .git/outfit/hooks/post-checkout
+outfit init
+! exists .git/outfit/hooks/pre-commit.old
+exec grep -c outfit-generated .git/outfit/hooks/post-checkout
+stdout '^1$'
+
+# Both exist and differ: refuse and say so (never overwrite a hook).
 outfit init
 cp $WORK/lefthook-hook .git/outfit/hooks/pre-merge-commit
 chmod 755 .git/outfit/hooks/pre-merge-commit
-cp $WORK/lefthook-hook .git/hooks/pre-merge-commit
+cp $WORK/team-hook .git/hooks/pre-merge-commit
 chmod 755 .git/hooks/pre-merge-commit
 ! outfit init
-stderr 'both .* exist'
+stderr 'both .* exist and differ'
 
 -- lefthook-hook --
 #!/bin/sh
 echo 'lefthook ran' >&2
 exit 0
+-- team-hook --
+#!/bin/sh
+echo 'the team hook' >&2

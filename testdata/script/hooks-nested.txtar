@@ -1,0 +1,25 @@
+# The marker that stops a hook from chaining into itself is keyed by repository: a
+# team hook that commits in ANOTHER outfit repository must not get that
+# repository's hooks (and guard) skipped.
+fixture a plain hooks
+fixture b plain hooks
+cd b
+outfit init
+exec sh -c 'echo 1 > "$OUTFIT_TEST_HOOKLOG.exit.pre-commit"'
+cd ../a
+outfit init
+cp $WORK/commit-in-b .git/hooks/pre-commit
+chmod 755 .git/hooks/pre-commit
+# a's pre-commit commits in b, whose own pre-commit fails: that must stay a failure.
+! exec git commit --allow-empty -qm 'feat: outer'
+stderr 'b commit refused'
+exec git -C ../b log --format=%s -1
+! stdout 'nested'
+
+-- commit-in-b --
+#!/bin/sh
+if git -C ../b commit --allow-empty -qm nested 2>/dev/null; then
+  exit 0
+fi
+echo 'b commit refused' >&2
+exit 1

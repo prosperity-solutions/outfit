@@ -13,8 +13,8 @@ lefthook, plain `.git/hooks`).
 
 ## What it is for
 
-- **A heavy hook on a small laptop.** One check eats 5 GB of RAM. Turn it off here,
-  nowhere else: `outfit set biome=off --global`.
+- **A heavy hook on a small laptop.** One pre-commit check eats 5 GB of RAM. Turn that
+  hook off here, nowhere else: `outfit init`, then `outfit set hook.pre-commit=off --global`.
 - **Trying your own agent instructions.** Edit your `AGENTS.md` without a diff in
   everyone's way, and when it is good, share it as a profile colleagues can opt into.
 - **A permanent personal setup.** A `yolo` profile that skips most local checks. Local
@@ -34,10 +34,11 @@ needs git 2.36 or newer, and updates itself with `outfit update`.
 ```sh
 outfit init                      # put outfit in front of your git hooks (see docs/hooks.md)
 outfit get biome                 # is a check on? prints on/off, exit 1 when unset
-outfit set biome=off --global    # my machine, every repo
-outfit set biome=off             # this clone only
-outfit set biome=off --here      # this worktree only
-outfit set biome=                # take the override away again
+outfit set hook.pre-commit=off --global   # skip that hook on my machine, every repo
+outfit set hook.pre-commit=off            # ...this clone only
+outfit set hook.pre-commit=off --here     # ...this worktree only
+outfit set hook.pre-commit=               # take the override away again
+outfit set biome=off --global             # a free-form toggle (only hooks that ask for it)
 outfit status                    # the active profile, and where every value comes from
 outfit ls                        # the profiles you can switch to
 ```
@@ -45,9 +46,9 @@ outfit ls                        # the profiles you can switch to
 Every command takes `--json`, never asks a question, and can be run twice safely.
 Errors say the exact command that fixes them.
 
-`outfit set hook.pre-commit=off` skips that hook for you, with no change to the team's
-hooks. Other toggles only change a hook that asks for them; your team can add this to
-any hook:
+`hook.<name>=off` (any git hook name) skips that hook for you, with no change to the
+team's hooks. Other toggles, like `biome` above, only change a hook that asks for
+them; your team can add this to any hook:
 
 ```sh
 v=$(outfit get biome 2>/dev/null || git config -f .outfit/config --get outfit.biome)

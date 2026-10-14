@@ -33,6 +33,19 @@ chmod 755 .husky/_/pre-commit
 ! exec git commit --allow-empty -qm 'feat: z'
 stderr 'secret found'
 
+# Through an include (the includeIf setup of a company-wide hooks dir): the shell
+# fallback must follow includes exactly like git does.
+exec git config --global --unset core.hooksPath
+cp $WORK/inc.cfg $HOME/inc.cfg
+exec git config --global include.path $HOME/inc.cfg
+exec git config --local --unset core.hooksPath
+env PATH=$PATHNOOUTFIT
+! exec git commit --allow-empty -qm 'feat: via include'
+stderr 'secret found'
+
+-- inc.cfg --
+[core]
+	hooksPath = ~/.githooks
 -- failing-hook --
 #!/bin/sh
 echo 'secret found' >&2

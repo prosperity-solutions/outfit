@@ -1,0 +1,47 @@
+# The review's critical finding: after the repository is moved (or .git/outfit is
+# deleted) core.hooksPath dangles, git skips EVERY hook silently, and the obvious
+# fix must work: `outfit status` says so, `outfit init` heals it, `outfit
+# uninstall` removes the stale value.
+fixture repo husky
+cd repo
+outfit init
+exec git commit --allow-empty -qm 'feat: before'
+
+# 1. The repository is moved.
+cd $WORK
+exec mv repo moved
+cd moved
+! outfit status
+stderr 'was the repository moved'
+stdout 'dispatcher BROKEN'
+# (the dead path silently disables the team's hooks:)
+rm $OUTFIT_TEST_HOOKLOG
+exec git commit --allow-empty -qm 'feat: hooks are dead'
+! exists $OUTFIT_TEST_HOOKLOG
+# init heals it instead of refusing and sending the user in circles.
+outfit init
+stdout 'installed'
+outfit status
+stdout 'dispatcher installed'
+rm $OUTFIT_TEST_HOOKLOG
+exec git commit --allow-empty -qm 'feat: hooks are back'
+hooklog
+stdout 'hook=pre-commit'
+
+# 2. .git/outfit is deleted by hand.
+exec rm -rf .git/outfit
+! outfit status
+stdout 'dispatcher BROKEN'
+outfit init
+outfit status
+stdout 'dispatcher installed'
+
+# 3. Uninstall also removes a stale value left by a moved repository, and, with
+# the install record gone, never touches personal settings.
+outfit set biome=off
+exec rm .git/outfit/install.json
+exec git config --worktree core.hooksPath /old/place/.git/outfit/hooks
+outfit uninstall
+exec git config --local --get outfit.biome
+stdout '^off$'
+! exec git config --worktree --get core.hooksPath

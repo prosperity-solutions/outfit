@@ -139,7 +139,7 @@ func TestChainPassesArgsStdinAndExactExitCode(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "pre-push"), "#!/bin/sh\necho \"args=$*\"; cat; exit 42\n", 0o755)
 	var out, errb bytes.Buffer
-	code, ran := Chain(context.Background(), dir, "pre-push", []string{"origin", "u r l"}, strings.NewReader("stdin-data"), &out, &errb)
+	code, ran := Chain(context.Background(), dir, "pre-push", "pre-push@x", []string{"origin", "u r l"}, strings.NewReader("stdin-data"), &out, &errb)
 	if !ran || code != 42 || out.String() != "args=origin u r l\nstdin-data" {
 		t.Fatalf("code=%d ran=%v out=%q err=%q", code, ran, out.String(), errb.String())
 	}
@@ -149,13 +149,13 @@ func TestChainMissingOrNonExecutableIsNotAnError(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "commit-msg"), "#!/bin/sh\nexit 1\n", 0o644)
 	for _, name := range []string{"commit-msg", "pre-push"} {
-		if code, ran := Chain(context.Background(), dir, name, nil, nil, os.Stdout, os.Stderr); code != 0 || ran {
+		if code, ran := Chain(context.Background(), dir, name, name+"@x", nil, nil, os.Stdout, os.Stderr); code != 0 || ran {
 			t.Errorf("%s: code=%d ran=%v", name, code, ran)
 		}
 	}
 	// A hook that cannot start is reported like git does: 126.
 	write(t, filepath.Join(dir, "post-merge"), "#!/no/such/interpreter\n", 0o755)
-	if code, ran := Chain(context.Background(), dir, "post-merge", nil, nil, os.Stdout, os.Stderr); !ran || code != 126 {
+	if code, ran := Chain(context.Background(), dir, "post-merge", "post-merge@x", nil, nil, os.Stdout, os.Stderr); !ran || code != 126 {
 		t.Errorf("code=%d ran=%v", code, ran)
 	}
 }
@@ -163,7 +163,7 @@ func TestChainMissingOrNonExecutableIsNotAnError(t *testing.T) {
 func TestChainReportsSignalDeathAs128PlusSignal(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "pre-commit"), "#!/bin/sh\nkill -TERM $$\n", 0o755)
-	if code, _ := Chain(context.Background(), dir, "pre-commit", nil, nil, os.Stdout, os.Stderr); code != 128+15 {
+	if code, _ := Chain(context.Background(), dir, "pre-commit", "pre-commit@x", nil, nil, os.Stdout, os.Stderr); code != 128+15 {
 		t.Fatalf("code=%d", code)
 	}
 }
@@ -196,7 +196,7 @@ func TestChainRefusesOurOwnShims(t *testing.T) {
 		t.Fatal(err)
 	}
 	var errb bytes.Buffer
-	if code, ran := Chain(context.Background(), dir, "pre-commit", nil, nil, os.Stdout, &errb); ran || code != 0 || !strings.Contains(errb.String(), "outfit shim") {
+	if code, ran := Chain(context.Background(), dir, "pre-commit", "pre-commit@x", nil, nil, os.Stdout, &errb); ran || code != 0 || !strings.Contains(errb.String(), "outfit shim") {
 		t.Fatalf("code=%d ran=%v err=%q", code, ran, errb.String())
 	}
 }
@@ -232,5 +232,55 @@ func TestHooksPathFromFilesWorksWithoutGit(t *testing.T) {
 	write(t, filepath.Join(dir, "empty-section"), "[]\n[ ]\n", 0o644)
 	if got := HooksPathFromFiles(filepath.Join(dir, "empty-section")); got != "" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestIsOutfitDirRecognisesOwnAndStaleDirectories(t *testing.T) {
+	dir := t.TempDir()
+	gone := filepath.Join(dir, "old", ".git", "outfit", "hooks") // a moved repository leaves exactly this
+	if !IsOutfitDir(gone) {
+		t.Fatal("a missing .../outfit/hooks is outfit's stale value")
+	}
+	live := filepath.Join(dir, "r", ".git", "outfit", "hooks")
+	write(t, filepath.Join(live, "pre-commit"), Shim("pre-commit", "/bin/outfit"), 0o755)
+	if !IsOutfitDir(live) {
+		t.Fatal("a directory holding outfit shims is outfit's")
+	}
+	// A team directory that merely has the same last components, but real team hooks.
+	team := filepath.Join(dir, "t", "outfit", "hooks")
+	write(t, filepath.Join(team, "pre-commit"), "#!/bin/sh\n", 0o755)
+	if IsOutfitDir(team) {
+		t.Fatal("a directory with team hooks and no shims is not outfit's")
+	}
+	if IsOutfitDir(filepath.Join(dir, "husky", "_")) {
+		t.Fatal("other names never are")
+	}
+}
+
+func TestLeftoversAreOurShimsRenamedOut(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "pre-commit.old"), Shim("pre-commit", "/bin/outfit"), 0o755)
+	write(t, filepath.Join(dir, "pre-push.old"), "#!/bin/sh\n# lefthook's own\n", 0o755)
+	write(t, filepath.Join(dir, "notahook.old"), Shim("pre-commit", "/bin/outfit"), 0o755)
+	if got := Leftovers(dir); !reflect.DeepEqual(got, []string{"pre-commit.old"}) {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestOriginalDirNeverReturnsAnOutfitDirectory(t *testing.T) {
+	dir := t.TempDir()
+	stale := filepath.Join(dir, "old", ".git", "outfit", "hooks")
+	gc := config.GitConfig{HooksPaths: []config.Entry{{Scope: "local", Key: "core.hookspath", Value: stale}, {Scope: "global", Key: "core.hookspath", Value: "/g"}}}
+	if got := OriginalDir(gc, filepath.Join(dir, "new", ".git", "outfit", "hooks"), dir, filepath.Join(dir, ".git"), "/h"); got != "/g" {
+		t.Fatalf("a stale outfit path someone copied into --local must be skipped: %q", got)
+	}
+}
+
+func TestActiveKeyIsPerRepository(t *testing.T) {
+	if ActiveKey("pre-commit", "/a/.git") == ActiveKey("pre-commit", "/b/.git") || ActiveKey("pre-commit", "/a/.git") == ActiveKey("pre-push", "/a/.git") {
+		t.Fatal("the marker must distinguish repositories and hooks")
+	}
+	if ActiveKey("pre-commit", "/a/.git/") != ActiveKey("pre-commit", "/a/.git") {
+		t.Fatal("spelling of the path must not matter")
 	}
 }

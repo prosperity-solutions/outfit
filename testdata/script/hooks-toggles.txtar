@@ -2,7 +2,12 @@
 # case: "yolo works for real"), --global, and a one-off `git -c`.
 fixture repo husky
 cd repo
+# A hook toggle set before init says it needs init.
+outfit set hook.pre-commit=off
+stderr 'only takes effect after `outfit init`'
+outfit set hook.pre-commit=
 outfit init
+stdout 'to skip a hook on this machine: outfit set hook'
 
 # A profile's [outfit "hook"] toggle.
 exec git config --local outfit.profile yolo
@@ -30,6 +35,14 @@ rm $OUTFIT_TEST_HOOKLOG
 exec git commit --allow-empty -qm 'feat: back to normal'
 hooklog
 stdout 'hook=pre-commit'
+
+# Typos are caught, not stored: a mistyped hook name would silently do nothing.
+! outfit set hook.precommit=off
+stderr 'did you mean hook.pre-commit'
+! outfit set hook.pre-commit=maybe
+stderr 'must be on or off'
+! outfit set pre-commit=off
+! exec git config --local --get outfit.hook.precommit
 
 # When outfit cannot read the git config, the team's hook still runs, from the
 # husky hooksPath (read straight from the config files) and with its exit code.

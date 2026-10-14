@@ -19,6 +19,13 @@ exec git config --local --unset extensions.worktreeConfig
 exec git config --list
 cmp stdout $WORK/before.txt
 
+# A dormant config.worktree (ignored while the extension is off) would start
+# applying when init turns the extension on: refuse, say what is in it.
+exec sh -c 'printf "[user]\n\temail = dormant@example.com\n" > .git/config.worktree'
+! outfit init
+stderr 'already holds per-worktree settings \(user.email\)'
+rm .git/config.worktree
+
 # A worktree whose directory was deleted by hand (not yet pruned) does not break init.
 exec rm -rf ../repo-wt2
 outfit init

@@ -156,8 +156,21 @@ func Install(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitConfi
 	// Refuse a foreign worktree-scope hooksPath in ANY worktree: outfit needs
 	// that scope, and silently replacing it would drop that worktree's hooks.
 	for _, w := range wts {
-		if v, ok := hooksPathIn(ctx, cg, w.ConfigFile()); ok && !sameDir(expand(v, w.Path, opt.Home), ours) {
+		// A value that is outfit's own (a moved repository leaves a stale one) is
+		// not foreign: it is rewritten below.
+		if v, ok := hooksPathIn(ctx, cg, w.ConfigFile()); ok && !ownsHooksPath(expand(v, w.Path, opt.Home), ours) {
 			return nil, fmt.Errorf("core.hooksPath is already set to %q at worktree scope in the %s, which outfit needs for itself: move it to --local (git -C %s config --worktree --unset core.hooksPath; git config --local core.hooksPath %s)", v, w.Name(), shArg(w.Path), shArg(v))
+		}
+	}
+
+	// Turning the extension on activates any config.worktree that already exists:
+	// a dormant file would start applying (core.sparseCheckout, user.email…), and
+	// uninstall could never get back to the same `git config --list`.
+	if !gc.WorktreeConfig {
+		for _, w := range wts {
+			if keys := dormantKeys(ctx, cg, w, ours, opt.Home); len(keys) > 0 {
+				return nil, fmt.Errorf("%s already holds per-worktree settings (%s) that git ignores while extensions.worktreeConfig is off; enabling it would start applying them. Review %s, move what you want into .git/config, then rerun `outfit init`", w.ConfigFile(), strings.Join(keys, ", "), w.ConfigFile())
+			}
 		}
 	}
 
@@ -200,6 +213,14 @@ func Install(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitConfi
 			if err := adopt(filepath.Join(ours, n), filepath.Join(origDir, n)); err != nil {
 				return nil, err
 			}
+		}
+	}
+	// `<hook>.old` is our own shim, renamed out of the way by lefthook: it would
+	// make every later `lefthook install` fail.
+	for _, n := range Leftovers(ours) {
+		out.Changed = true
+		if !opt.DryRun {
+			_ = os.Remove(filepath.Join(ours, n))
 		}
 	}
 
@@ -276,14 +297,34 @@ func Install(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitConfi
 	return out, nil
 }
 
-// adopt moves src to dst unless dst exists (then src stays and the caller's next
-// run reports it). Falls back to copy+remove across devices.
+// adopt moves a hook (file or symlink) from outfit's directory to the team's. An
+// identical file already there is simply dropped; a different one is never
+// overwritten. A symlink moves as a symlink, its target made absolute first so a
+// relative one keeps pointing at the same place.
 func adopt(src, dst string) error {
-	if _, err := os.Lstat(dst); err == nil {
-		return fmt.Errorf("both %s and %s exist: another tool installed a hook into outfit's directory, and the team already has one of that name; merge them by hand, then rerun `outfit init`", src, dst)
+	if dfi, err := os.Lstat(dst); err == nil {
+		same := false
+		if sfi, serr := os.Lstat(src); serr == nil && sfi.Mode().IsRegular() && dfi.Mode().IsRegular() {
+			a, _ := os.ReadFile(src)
+			b, _ := os.ReadFile(dst)
+			same = string(a) == string(b)
+		}
+		if same {
+			return os.Remove(src)
+		}
+		return fmt.Errorf("both %s and %s exist and differ: another tool installed a hook into outfit's directory, and the team already has one of that name; merge them by hand (keep the right one in %s), then rerun `outfit init`", src, dst, dst)
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
+	}
+	if target, err := os.Readlink(src); err == nil {
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(src), target)
+		}
+		if err := os.Symlink(filepath.Clean(target), dst); err != nil {
+			return err
+		}
+		return os.Remove(src)
 	}
 	if err := os.Rename(src, dst); err == nil {
 		return nil
@@ -309,6 +350,28 @@ func adopt(src, dst string) error {
 		return err
 	}
 	return os.Remove(src)
+}
+
+// ownsHooksPath reports whether a core.hooksPath value at worktree scope is
+// outfit's: this repository's directory, or a stale one (a moved repository).
+func ownsHooksPath(abs, ours string) bool { return sameDir(abs, ours) || IsOutfitDir(abs) }
+
+// dormantKeys lists settings in a worktree's config.worktree other than outfit's
+// own hooksPath.
+func dormantKeys(ctx context.Context, g gitx.Client, w Worktree, ours, home string) []string {
+	res, err := cfg(ctx, g, w.ConfigFile(), false, "--list", "-z")
+	if err != nil {
+		return nil
+	}
+	var keys []string
+	for _, rec := range strings.Split(string(res.Stdout), "\x00") {
+		k, v, _ := strings.Cut(rec, "\n")
+		if k == "" || (strings.EqualFold(k, "core.hookspath") && ownsHooksPath(expand(v, w.Path, home), ours)) {
+			continue
+		}
+		keys = append(keys, strings.ToLower(k))
+	}
+	return keys
 }
 
 func sortedNames(m map[string]string) []string {
@@ -356,7 +419,7 @@ func Uninstall(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitCon
 
 	// 1. hooksPath first, everywhere.
 	for _, w := range wts {
-		if v, ok := hooksPathIn(ctx, cg, w.ConfigFile()); ok && sameDir(expand(v, w.Path, home), ours) {
+		if v, ok := hooksPathIn(ctx, cg, w.ConfigFile()); ok && ownsHooksPath(expand(v, w.Path, home), ours) {
 			if _, err := cfg(ctx, cg, w.ConfigFile(), true, "--unset-all", "core.hooksPath"); err != nil {
 				fail("core.hooksPath in the "+w.Name(), err)
 				continue
@@ -377,16 +440,19 @@ func Uninstall(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitCon
 	}
 
 	// 3. Shims and the (now empty) directories; never anything else.
-	for _, n := range Generated(ours) {
+	for _, n := range append(Generated(ours), Leftovers(ours)...) {
 		if err := os.Remove(filepath.Join(ours, n)); err != nil {
 			fail("shim "+n, err)
 			continue
 		}
 		note("shim " + n)
 	}
-	_ = os.Remove(ours)
+	if err := os.Remove(ours); err != nil && !os.IsNotExist(err) {
+		fail("directory "+ours, fmt.Errorf("not empty (something else put files there): %w", err))
+	}
 
-	// 4. outfit.* settings, except what existed before init.
+	// 4. outfit.* settings, except what existed before init. Without an install
+	// record we cannot tell which are ours: remove none.
 	keep := map[state.Setting]bool{}
 	if inst != nil {
 		for _, s := range inst.Preexisting {
@@ -400,7 +466,7 @@ func Uninstall(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitCon
 	for _, t := range targets {
 		seen := map[string]bool{}
 		for _, s := range outfitSettings(ctx, cg, t.file, t.where) {
-			if keep[s] || seen[s.Key] {
+			if inst == nil || keep[s] || seen[s.Key] {
 				continue
 			}
 			seen[s.Key] = true
