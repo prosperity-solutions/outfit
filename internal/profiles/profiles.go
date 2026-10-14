@@ -121,8 +121,12 @@ func List(ctx context.Context, g gitx.Client, r repo.Repo) Listing {
 
 	committed := map[string]bool{}
 	if committedSafe(r) {
-		committed = dirNames(TierDir(r, Committed))
-	} else if exists(filepath.Join(r.WorkTree, ".outfit")) {
+		var bad []string
+		committed, bad = dirNames(TierDir(r, Committed))
+		for _, b := range bad {
+			l.Warnings = append(l.Warnings, config.Warning{Source: ".outfit/profiles/" + esc(b), Message: "not a valid profile name (lowercase letters, digits, dots, dashes, underscores): ignored"})
+		}
+	} else if unsafePath(filepath.Join(r.WorkTree, ".outfit")) || unsafePath(TierDir(r, Committed)) {
 		l.Warnings = append(l.Warnings, config.Warning{Source: ".outfit", Message: "not read from disk: .outfit and .outfit/profiles must be real directories, not symlinks"})
 	}
 	for _, n := range headProfileNames(ctx, g) {
@@ -132,7 +136,8 @@ func List(ctx context.Context, g gitx.Client, r repo.Repo) Listing {
 		add(Profile{Name: n, Tier: Committed, Dir: filepath.Join(TierDir(r, Committed), n)})
 	}
 	for _, t := range []Tier{Local, Worktree} {
-		for n := range dirNames(TierDir(r, t)) {
+		names, _ := dirNames(TierDir(r, t))
+		for _, n := range sortedKeys(names) {
 			add(Profile{Name: n, Tier: t, Dir: filepath.Join(TierDir(r, t), n)})
 		}
 	}
@@ -151,7 +156,9 @@ func Locate(r repo.Repo, name string) (Profile, bool) {
 			continue
 		}
 		d := filepath.Join(TierDir(r, t), name)
-		if RealDir(d) {
+		// On a case-insensitive filesystem (APFS) "Yolo" would answer to "yolo";
+		// require the exact on-disk spelling so macOS and Linux agree.
+		if RealDir(d) && hasEntry(filepath.Dir(d), name) {
 			return Profile{Name: name, Tier: t, Dir: d}, true
 		}
 	}
@@ -227,37 +234,69 @@ func HeadConfig(ctx context.Context, g gitx.Client, name string) *config.File {
 }
 
 func headProfileNames(ctx context.Context, g gitx.Client) []string {
-	res, err := g.Read(ctx, "ls-tree", "--name-only", "-z", "HEAD", CommittedRoot+"/")
+	// Default ls-tree output: "<mode> <type> <sha>\t<path>". Only TREES are
+	// profiles: a committed file, or a symlink (mode 120000, type blob), is not.
+	res, err := g.Read(ctx, "ls-tree", "-z", "HEAD", CommittedRoot+"/")
 	if err != nil { // unborn HEAD, or no .outfit/ at all
 		return nil
 	}
 	var out []string
-	for _, f := range strings.Split(string(res.Stdout), "\x00") {
-		if n := filepath.Base(f); f != "" && ValidName(n) == nil {
+	for _, rec := range strings.Split(string(res.Stdout), "\x00") {
+		meta, path, ok := strings.Cut(rec, "\t")
+		if !ok || !strings.HasPrefix(meta, "040000 tree ") {
+			continue
+		}
+		if n := filepath.Base(path); ValidName(n) == nil {
 			out = append(out, n)
 		}
 	}
 	return out
 }
 
-func exists(path string) bool {
+// unsafePath reports a path that exists but is not a real directory.
+func unsafePath(path string) bool {
 	_, err := os.Lstat(path)
-	return err == nil
+	return err == nil && !RealDir(path)
 }
 
-func dirNames(dir string) map[string]bool {
-	out := map[string]bool{}
+// hasEntry reports whether dir lists an entry spelled exactly name.
+func hasEntry(dir, name string) bool {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
-		return out
+		return false
 	}
 	for _, e := range ents {
-		if e.IsDir() && ValidName(e.Name()) == nil {
-			out[e.Name()] = true
+		if e.Name() == name {
+			return true
 		}
 	}
-	return out
+	return false
 }
+
+// dirNames lists the real subdirectories of dir that are valid profile names,
+// and (separately) the directories whose names are not valid. DirEntry types are
+// lstat-based, so a symlink is never a directory here.
+func dirNames(dir string) (valid map[string]bool, invalid []string) {
+	valid = map[string]bool{}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return valid, nil
+	}
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		if ValidName(e.Name()) == nil {
+			valid[e.Name()] = true
+		} else {
+			invalid = append(invalid, e.Name())
+		}
+	}
+	return valid, invalid
+}
+
+// esc makes an untrusted name safe to print.
+func esc(s string) string { return strings.Trim(strconv.Quote(s), `"`) }
 
 func sortedKeys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))

@@ -51,6 +51,18 @@ continuation), so outfit users and teammates running
 `git config -f .outfit/config --get …` see the same values; a test compares the two
 over a corpus.
 
+## Values
+
+A toggle is a string. By convention it is exactly `on` or `off`, and hooks compare
+against the literal `off`. So `outfit set` turns `OFF`, `false`, `no` and `0` into
+`off` (and `ON`, `true`, `yes`, `1` into `on`); any other value (`fast`) is kept as
+typed. In a committed file nothing is rewritten, because teammates without outfit
+read the raw text: `OFF`, `false`, `no`, `0`, `true`, `yes`, `1` and a bare key get
+a warning telling you to write `on` or `off`.
+
+Until the hook dispatcher ships (the next release), a toggle only affects hooks
+that call `outfit get` themselves (see the snippet at the end).
+
 ## Where a value comes from
 
 `outfit get <key>` returns the first hit, highest first:
@@ -63,11 +75,14 @@ over a corpus.
 4. the active profile's `profile.config`
 5. `.outfit/config`
 
-The system scope (`/etc/gitconfig`) is **ignored**. `set` writes one key at a
+The system scope (`/etc/gitconfig`) is **ignored** (with a warning), and so is
+`outfit.profile` given through `git -c` or set globally. `set` writes one key at a
 time and is not atomic: if the third write fails, the first two stay.
 
 **Locked keys** always resolve from `.outfit/config`. Every other source is ignored
-and `status` warns about it. `outfit set` refuses to set a locked key. A locked key
+and `status` warns about it. `outfit set` refuses to set a locked key. Write the lock for a hook toggle as
+`locked = hook.pre-push`, not `locked = pre-push` (the parser warns about the
+second spelling: it would lock a key nobody sets). A locked key
 with no team value stays unset (`status` shows `(unset)`).
 
 The **active profile** is `outfit.profile`: `--worktree`, then `--local`, else
@@ -79,7 +94,7 @@ A profile name that no longer exists is treated as `base`, with a warning.
 | Command | What it does |
 |---|---|
 | `outfit get <key>` | prints the value. Unset: prints nothing and exits **1** (like `git config --get`). One git process, no writes. |
-| `outfit set <key>=<val>… [--here\|--global]` | personal override in git config; `key=` unsets. `--here` needs `extensions.worktreeConfig` (`outfit init` will enable it; until then run `git config extensions.worktreeConfig true`). |
+| `outfit set <key>=<val>… [--here\|--global]` | personal override in git config; `key=` unsets (in that scope only: it prints which scopes still set the key). `--global` works outside a repo. `--here` needs `extensions.worktreeConfig` (`outfit init` will enable it; until then run `git config extensions.worktreeConfig true`). Note that git copies a worktree's `config.worktree` into every worktree created afterwards, so `--here` in the main worktree leaks into new ones until outfit strips the copies on `worktree add`. |
 | `outfit ls` | profiles across the three tiers (`committed`, `local`, `worktree`), their keys and files; `*` marks the active one. |
 | `outfit status` | the active profile, where every toggle comes from, the files it swaps, and warnings. Enforces git ≥ 2.36. |
 
@@ -107,3 +122,16 @@ v=$(outfit get biome 2>/dev/null || git config -f .outfit/config --get outfit.bi
 ```
 
 Works with outfit installed and without it.
+
+## Deviations from `docs/HANDOVER.md`
+
+Decisions made while building, kept here so the reason outlives the PR:
+
+| Spec | What outfit does | Why |
+|---|---|---|
+| §3.2 lists worktree, local, global, profile, team | adds the **command** scope (`git -c`, `GIT_CONFIG_COUNT`) on top | hooks inherit it; the natural way to skip one check once. A locked key still wins. |
+| §3.1 `<git-dir>/outfit/profiles/` for worktree profiles | `<git-dir>/outfit/worktree-profiles/` | in the main worktree the git dir *is* the common dir, so the two tiers would share a directory. |
+| §3.1 example `hook.pre-commit = off` in `[outfit]` | accepted, with a warning | git rejects that line and so does every teammate's `git config -f`; the subsection form is valid for both. |
+| §4 exit 2 = "unknown profile/key" | `get` of an unset key exits **1** | there is no registry of keys; it mirrors `git config --get`, which the §3.0 fallback chains with `||`. |
+| §2 `version` floor check | `version` warns and exits 0 on old git | `install.sh` prints it last; it must not fail after a good install. |
+| (unspecified) | a committed profile wins a name clash, even on the hot path (`get`) | per spec §3.1; `status` and `ls` warn. |

@@ -49,7 +49,10 @@ func Discover(start string, getenv func(string) string) (Repo, error) {
 		default:
 			// A linked worktree's git dir records where its checkout is.
 			if b, err := os.ReadFile(filepath.Join(gd, "gitdir")); err == nil {
-				if p := strings.TrimSpace(string(b)); filepath.IsAbs(p) {
+				if p := strings.TrimSpace(string(b)); p != "" {
+					if !filepath.IsAbs(p) { // worktree.useRelativePaths
+						p = filepath.Join(gd, p)
+					}
 					r.WorkTree = filepath.Dir(filepath.Clean(p))
 				}
 			}

@@ -353,3 +353,193 @@ func TestStatusShowsLockedWithoutValueAndMissingProfile(t *testing.T) {
 		t.Fatalf("%d\n%s", code, out)
 	}
 }
+
+// Review finding: a repo with only .outfit/config (no profiles/) is the normal
+// §3.0 layout and must not look like a symlink attack.
+func TestNoProfilesDirectoryIsNotAWarning(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	if err := os.RemoveAll(f.Path(".outfit/profiles")); err != nil {
+		t.Fatal(err)
+	}
+	f.Git("add", "-A")
+	f.Git("commit", "-qm", "chore: no profiles")
+	for _, cmd := range []string{"status", "ls"} {
+		code, _, errs := outfit(t, f, f.Dir, cmd)
+		if code != 0 || errs != "" {
+			t.Fatalf("%s: code=%d stderr=%q", cmd, code, errs)
+		}
+	}
+}
+
+func TestSetNormalizesBooleansAndReportsScopes(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	for in, want := range map[string]string{"OFF": "off", "false": "off", "No": "off", "0": "off", "TRUE": "on", "yes": "on", "fast": "fast"} {
+		outfit(t, f, f.Dir, "set", "biome="+in)
+		if got := f.Git("config", "--local", "outfit.biome"); got != want {
+			t.Errorf("set biome=%s stored %q, want %q", in, got, want)
+		}
+	}
+	// Undo is scope-aware and says so.
+	outfit(t, f, f.Dir, "set", "biome=off", "--global")
+	_, out, _ := outfit(t, f, f.Dir, "set", "biome=")
+	if out != "biome unset (local); still set in: global\n" {
+		t.Fatalf("got %q", out)
+	}
+	_, out, _ = outfit(t, f, f.Dir, "set", "biome=")
+	if out != "biome was not set (local); still set in: global\n" {
+		t.Fatalf("second unset: %q", out)
+	}
+	_, out, _ = outfit(t, f, f.Dir, "set", "nonexistent=")
+	if out != "nonexistent was not set (local)\n" {
+		t.Fatalf("%q", out)
+	}
+	// JSON is an object with stable fields.
+	_, out, _ = outfit(t, f, f.Dir, "set", "tests=off", "--json")
+	var r struct {
+		Changes  []map[string]any
+		Warnings []any
+	}
+	if err := json.Unmarshal([]byte(out), &r); err != nil || len(r.Changes) != 1 || r.Warnings == nil {
+		t.Fatalf("%v %q", err, out)
+	}
+	for _, k := range []string{"key", "value", "unset", "scope", "changed", "still_set_in"} {
+		if _, ok := r.Changes[0][k]; !ok {
+			t.Errorf("change is missing field %q: %v", k, r.Changes[0])
+		}
+	}
+}
+
+func TestSetConvergesWhenAKeyHoldsSeveralValues(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	f.Git("config", "--local", "--add", "outfit.biome", "a")
+	f.Git("config", "--local", "--add", "outfit.biome", "b")
+	if code, _, errs := outfit(t, f, f.Dir, "set", "biome=off"); code != 0 {
+		t.Fatalf("code=%d %q", code, errs)
+	}
+	if got := f.Git("config", "--local", "--get-all", "outfit.biome"); got != "off" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSetGlobalNeedsNoRepository(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	elsewhere := t.TempDir()
+	code, out, errs := outfit(t, f, elsewhere, "set", "biome=off", "--global")
+	if code != 0 || out != "biome=off (global)\n" {
+		t.Fatalf("code=%d out=%q err=%q", code, out, errs)
+	}
+	if f.Git("config", "--global", "outfit.biome") != "off" {
+		t.Fatal("not written")
+	}
+	// ...but a repo-scoped write outside a repo still says what to do.
+	code, _, errs = outfit(t, f, elsewhere, "set", "biome=off")
+	if code != 1 || !strings.Contains(errs, "fix: cd into your repository") {
+		t.Fatalf("code=%d %q", code, errs)
+	}
+}
+
+func TestSetReportsRetryableLockContention(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	if err := os.WriteFile(f.Path(".git/config.lock"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := outfit(t, f, f.Dir, "set", "biome=off", "--json")
+	var e struct {
+		Retryable bool
+		Fix       string
+	}
+	if code != 1 || json.Unmarshal([]byte(out), &e) != nil || !e.Retryable || e.Fix == "" {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+}
+
+// Review finding: when git refuses to read the repo's config (safe.directory),
+// `get` must fail loudly instead of returning the team value.
+func TestDubiousOwnershipFailsLoudly(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	f.Git("config", "--local", "outfit.biome", "mine")
+	t.Setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+	code, _, errs := outfit(t, f, f.Dir, "get", "biome")
+	if code != 1 || !strings.Contains(errs, "safe.directory") {
+		t.Fatalf("code=%d err=%q", code, errs)
+	}
+}
+
+// Review finding: a hook's GIT_DIR may be relative to a cwd we have since left.
+func TestRelativeGitDirFromSubdirectory(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	f.Git("config", "--local", "outfit.biome", "mine")
+	for k, v := range testkit.EnvMap(f.Home) {
+		t.Setenv(k, v)
+	}
+	var out, errb bytes.Buffer
+	code := cli.Execute(context.Background(), cli.Env{
+		Dir: f.Dir + "/apps/web",
+		Getenv: func(k string) string {
+			if k == "GIT_DIR" {
+				return "../../.git"
+			}
+			return os.Getenv(k)
+		},
+		Stdout: &out, Stderr: &errb,
+	}, []string{"get", "biome"})
+	if code != 0 || strings.TrimSpace(out.String()) != "mine" {
+		t.Fatalf("code=%d out=%q err=%q: the local override must be seen", code, out.String(), errb.String())
+	}
+}
+
+func TestLsOnlyListsRealCommittedTrees(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	outside := t.TempDir()
+	if err := os.WriteFile(outside+"/profile.config", []byte("[outfit]\n secret = outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.Write(".outfit/profiles/readme.md", "not a profile\n")
+	if err := os.Symlink(outside, f.Path(".outfit/profiles/evil")); err != nil {
+		t.Fatal(err)
+	}
+	f.Git("add", "-A")
+	f.Git("commit", "-qm", "chore: junk in profiles")
+	// Hide both from disk like an inactive profile, so ls must go through HEAD.
+	_ = os.RemoveAll(f.Path(".outfit/profiles/evil"))
+	_ = os.Remove(f.Path(".outfit/profiles/readme.md"))
+	_, out, _ := outfit(t, f, f.Dir, "ls")
+	if strings.Contains(out, "evil") || strings.Contains(out, "readme") || strings.Contains(out, "outside") {
+		t.Fatalf("only trees are profiles:\n%s", out)
+	}
+}
+
+func TestInvalidProfileDirectoryNamesAreReported(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	f.Write(".outfit/profiles/Has Space/profile.config", "[outfit]\n x = on\n")
+	_, out, errs := outfit(t, f, f.Dir, "ls")
+	if strings.Contains(out, "Has Space") || !strings.Contains(errs, "not a valid profile name") {
+		t.Fatalf("out=%q err=%q", out, errs)
+	}
+}
+
+func TestLockWarningsAreInStableOrder(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	f.Write(".outfit/config", "[outfit]\n locked = a, b, c, d\n a = on\n b = on\n c = on\n d = on\n")
+	for _, k := range []string{"d", "b", "a", "c"} {
+		f.Git("config", "--local", "outfit."+k, "off")
+	}
+	var first string
+	for i := 0; i < 8; i++ {
+		_, _, errs := outfit(t, f, f.Dir, "status")
+		if i == 0 {
+			first = errs
+		} else if errs != first {
+			t.Fatalf("warning order changed:\n%s\n---\n%s", first, errs)
+		}
+	}
+}
+
+func TestExtensionWorktreeConfigOnlyCountsInTheRepoConfig(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	f.Git("config", "--global", "extensions.worktreeConfig", "true")
+	code, _, errs := outfit(t, f, f.Dir, "set", "biome=off", "--here")
+	if code != 1 || !strings.Contains(errs, "extensions.worktreeConfig") {
+		t.Fatalf("code=%d err=%q", code, errs)
+	}
+}

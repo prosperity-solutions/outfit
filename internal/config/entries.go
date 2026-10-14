@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 )
 
@@ -29,8 +30,13 @@ type GitConfig struct {
 	// Entries are the outfit.* settings in git's own order, so a later entry of
 	// the same scope overrides an earlier one.
 	Entries []Entry
-	// WorktreeConfig reports extensions.worktreeConfig=true.
+	// WorktreeConfig reports extensions.worktreeConfig=true IN THE REPO'S OWN
+	// config: git ignores the extension anywhere else.
 	WorktreeConfig bool
+	// SawLocal reports that git printed at least one `local`-scope entry. A repo
+	// always has some (core.repositoryformatversion): none means git refused to
+	// read this repository's config, e.g. safe.directory "dubious ownership".
+	SawLocal bool
 	// Warnings lists outfit.* keys that were not valid.
 	Warnings []Warning
 }
@@ -54,9 +60,14 @@ func ParseGitList(out []byte) GitConfig {
 		if !hasVal {
 			val = "true"
 		}
+		if string(scope) == ScopeLocal {
+			gc.SawLocal = true
+		}
 		lk := strings.ToLower(key)
 		if lk == "extensions.worktreeconfig" {
-			gc.WorktreeConfig = gitBool(val)
+			if string(scope) == ScopeLocal {
+				gc.WorktreeConfig = gitBool(val)
+			}
 			continue
 		}
 		name, ok := strings.CutPrefix(key, "outfit.")
@@ -65,6 +76,12 @@ func ParseGitList(out []byte) GitConfig {
 			continue
 		}
 		nk, err := NormalizeKey(name)
+		// git lowercases section and variable names but keeps the subsection's
+		// case, so an upper-case letter here means `outfit.Hook.x`, a different
+		// key from `outfit.hook.x` that `outfit set` could never unset.
+		if err == nil && nk != name {
+			err = fmt.Errorf("keys must be lowercase")
+		}
 		if err != nil {
 			gc.Warnings = append(gc.Warnings, Warning{Source: string(scope) + " git config", Message: "ignored " + key + ": " + err.Error()})
 			continue
@@ -93,4 +110,21 @@ func gitBool(v string) bool {
 		return true
 	}
 	return false
+}
+
+// Has reports whether key is set in scope.
+func (gc GitConfig) Has(scope, key string) bool {
+	_, ok := gc.last(scope, key)
+	return ok
+}
+
+// OtherScopes lists the scopes other than scope that set key, highest first.
+func (gc GitConfig) OtherScopes(scope, key string) []string {
+	out := []string{}
+	for _, sc := range []string{ScopeCommand, ScopeWorktree, ScopeLocal, ScopeGlobal} {
+		if sc != scope && gc.Has(sc, key) {
+			out = append(out, sc)
+		}
+	}
+	return out
 }

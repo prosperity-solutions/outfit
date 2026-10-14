@@ -39,7 +39,7 @@ func cmdLs(ctx context.Context, e Env, args []string) int {
 	for _, p := range listing.Profiles {
 		ent := lsEntry{Name: p.Name, Tier: string(p.Tier), Active: p.Name == l.Result.Profile.Name, Keys: []string{}, Files: []string{}}
 		var cfg *config.File
-		if p.Tier == profiles.Committed && !exists(p.Dir) {
+		if p.Tier == profiles.Committed && !profiles.RealDir(p.Dir) {
 			// Hidden from disk (inactive): read it as committed at HEAD.
 			cfg = profiles.HeadConfig(ctx, l.Git, p.Name)
 			ent.Files = profiles.HeadFiles(ctx, l.Git, p.Name)
@@ -54,7 +54,9 @@ func cmdLs(ctx context.Context, e Env, args []string) int {
 			sort.Strings(ent.Keys)
 			// A broken or malicious inactive profile is worth knowing about
 			// before somebody switches to it.
-			inactiveWarnings = append(inactiveWarnings, cfg.Warnings...)
+			if !ent.Active { // the active profile's warnings are already in the Result
+				inactiveWarnings = append(inactiveWarnings, cfg.Warnings...)
+			}
 		}
 		if ent.Files == nil {
 			ent.Files = []string{}

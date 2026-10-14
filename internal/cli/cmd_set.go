@@ -7,13 +7,18 @@ import (
 	"strings"
 
 	"github.com/prosperity-solutions/outfit/internal/config"
+	"github.com/prosperity-solutions/outfit/internal/gitx"
 )
 
 type setChange struct {
 	Key   string `json:"key"`
-	Value string `json:"value,omitempty"`
-	Unset bool   `json:"unset,omitempty"`
+	Value string `json:"value"`
+	Unset bool   `json:"unset"`
 	Scope string `json:"scope"`
+	// Changed is false when the request was already satisfied (idempotent).
+	Changed bool `json:"changed"`
+	// StillSetIn lists the other sources of the key after an unset.
+	StillSetIn []string `json:"still_set_in"`
 }
 
 // cmdSet writes personal overrides into git config: --local by default (this
@@ -47,16 +52,20 @@ func cmdSet(ctx context.Context, e Env, args []string) int {
 			return fail(Usagef("%v", err))
 		}
 		if config.IsReserved(nk) {
-			fix := "outfit use <profile>"
+			fix := "git config --local outfit.profile <name>"
 			if nk == config.KeyLocked {
 				fix = "edit .outfit/config in a PR"
 			}
 			return fail(Usagef("%q is not a personal toggle", nk).WithFix(fix))
 		}
-		todo = append(todo, kv{nk, v, v == ""})
+		todo = append(todo, kv{nk, normalizeBool(v), v == ""})
 	}
 
 	l, err := load(ctx, e)
+	if err == errNotInRepo && *global {
+		// --global is machine-wide: it needs no repository (and so no lock check).
+		l, err = &loaded{Git: gitx.Client{Dir: e.Dir}}, nil
+	}
 	if err != nil {
 		return fail(err)
 	}
@@ -77,31 +86,80 @@ func cmdSet(ctx context.Context, e Env, args []string) int {
 		}
 	}
 
-	var changes []setChange
+	changes := []setChange{}
 	for _, t := range todo {
 		name := "outfit." + t.key
+		ch := setChange{Key: t.key, Value: t.val, Unset: t.unset, Scope: scope}
 		if t.unset {
 			// Exit 5 means "nothing to unset": already as requested.
+			ch.Changed = l.Cfg.Has(scope, t.key)
 			if res, err := l.Git.Write(ctx, "config", flagName, "--unset-all", name); err != nil && res.ExitCode != 5 {
-				return fail(Errorf("%v", err))
+				return fail(partial(err, changes))
 			}
-		} else if _, err := l.Git.Write(ctx, "config", flagName, name, t.val); err != nil {
-			return fail(Errorf("%v", err))
+			// Unsetting one scope does not unset the others: say who still sets it.
+			ch.StillSetIn = l.Cfg.OtherScopes(scope, t.key)
+		} else {
+			// --replace-all converges even when the key holds several values.
+			if _, err := l.Git.Write(ctx, "config", flagName, "--replace-all", name, t.val); err != nil {
+				return fail(partial(err, changes))
+			}
+			ch.Changed = true
 		}
-		changes = append(changes, setChange{Key: t.key, Value: t.val, Unset: t.unset, Scope: scope})
+		changes = append(changes, ch)
 	}
 
 	if *asJSON {
-		out, _ := json.Marshal(changes)
+		out, _ := json.Marshal(struct {
+			Changes  []setChange      `json:"changes"`
+			Warnings []config.Warning `json:"warnings"`
+		}{changes, []config.Warning{}})
 		fmt.Fprintln(e.Stdout, string(out))
 		return ExitOK
 	}
 	for _, c := range changes {
-		if c.Unset {
-			fmt.Fprintf(e.Stdout, "%s unset (%s)\n", c.Key, c.Scope)
-		} else {
-			fmt.Fprintf(e.Stdout, "%s=%s (%s)\n", c.Key, c.Value, c.Scope)
+		switch {
+		case c.Unset && !c.Changed:
+			fmt.Fprintf(e.Stdout, "%s was not set (%s)", c.Key, c.Scope)
+		case c.Unset:
+			fmt.Fprintf(e.Stdout, "%s unset (%s)", c.Key, c.Scope)
+		default:
+			fmt.Fprintf(e.Stdout, "%s=%s (%s)", c.Key, show(c.Value), c.Scope)
 		}
+		if len(c.StillSetIn) > 0 {
+			fmt.Fprintf(e.Stdout, "; still set in: %s", strings.Join(c.StillSetIn, ", "))
+		}
+		fmt.Fprintln(e.Stdout)
 	}
 	return ExitOK
+}
+
+// partial turns a git failure into an error that says what was already applied
+// (set is not atomic across keys) and marks lock contention retryable.
+func partial(err error, applied []setChange) *Error {
+	msg := err.Error()
+	if len(applied) > 0 {
+		var done []string
+		for _, c := range applied {
+			done = append(done, c.Key)
+		}
+		msg += " (already applied: " + strings.Join(done, ", ") + ")"
+	}
+	e := Errorf("%s", msg)
+	if strings.Contains(msg, "could not lock config file") {
+		e.Retryable = true
+		e.Fix = "rerun the same command"
+	}
+	return e
+}
+
+// normalizeBool maps git's boolean spellings to the two strings hooks compare
+// against. Anything else is a free-form value and stays as typed.
+func normalizeBool(v string) string {
+	switch strings.ToLower(v) {
+	case "on", "true", "yes", "1":
+		return "on"
+	case "off", "false", "no", "0":
+		return "off"
+	}
+	return v
 }

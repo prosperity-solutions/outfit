@@ -18,7 +18,8 @@ outfit ls                        # profiles in the committed / local / worktree 
 outfit version
 ```
 
-See [docs/config.md](docs/config.md). Profile switching, hooks and self-update land
+See [docs/config.md](docs/config.md). A toggle only affects hooks that call
+`outfit get` until the hook dispatcher ships; profile switching and self-update land
 in the next releases.
 
 ## Develop

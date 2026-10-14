@@ -23,6 +23,12 @@ const (
 )
 
 // A toggle key is `name` or `hook.name`; names are lowercase, digits and dashes.
+//
+// `hook.name` is a dotted key. In a committed FILE git itself only accepts it as
+// the subsection form `[outfit "hook"] name = …`, but HANDOVER.md §3.1's own
+// example writes `hook.pre-commit = off` inside [outfit]. So the parser accepts
+// both spellings and WARNS on the dotted one (see ParseFile): rejecting it would
+// break the spec's example, accepting it silently would break non-users.
 var keyRE = regexp.MustCompile(`^(hook\.)?[a-z][a-z0-9-]*$`)
 
 // NormalizeKey lowercases k and reports whether it is a valid toggle key.

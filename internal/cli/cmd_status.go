@@ -57,7 +57,7 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 	// overrides of it are ignored, and it stays unset.
 	for _, k := range res.Locked {
 		if _, ok := res.Toggles[k]; !ok {
-			st.Toggles = append(st.Toggles, config.Toggle{Key: k, Source: config.SourceTeam, Locked: true, Unset: true})
+			st.Toggles = append(st.Toggles, config.Toggle{Key: k, Source: config.SourceTeam, Locked: true, Unset: true, Shadowed: []config.Candidate{}})
 		}
 	}
 	sort.Slice(st.Toggles, func(i, j int) bool { return st.Toggles[i].Key < st.Toggles[j].Key })

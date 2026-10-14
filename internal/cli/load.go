@@ -21,24 +21,39 @@ type loaded struct {
 	Result  config.Result
 }
 
+// errNotInRepo is load's answer outside a repository; `set --global` tolerates it.
+var errNotInRepo = Errorf("not inside a git repository").WithFix("cd into your repository, then rerun")
+
 // load finds the repo WITHOUT git, makes the one `git config --list` call, and
 // reads .outfit/config and the active profile.config from disk. This is the
 // whole cost of `outfit get`: exactly one git process.
 func load(ctx context.Context, e Env) (*loaded, error) {
 	r, err := repo.Discover(e.Dir, e.Getenv)
 	if err != nil {
-		return nil, Errorf("not inside a git repository").WithFix("cd into your repository, then rerun")
+		return nil, errNotInRepo
 	}
 	if r.WorkTree == "" {
 		return nil, Errorf("this is a bare repository: outfit works on checkouts").WithFix("cd into a working tree")
 	}
 	l := &loaded{Repo: r, Git: gitx.Client{Dir: r.WorkTree}}
+	if e.Getenv("GIT_DIR") != "" {
+		// Hooks export GIT_DIR (possibly relative to a cwd we have left): run git
+		// against the directory we resolved, so both agree on the repository.
+		l.Git.Env = []string{"GIT_DIR=" + r.GitDir}
+	}
 
 	res, err := l.Git.Read(ctx, "config", "--list", "--show-scope", "-z")
 	if err != nil {
 		return nil, Errorf("cannot read git config: %v", err).WithFix("git config --list")
 	}
 	l.Cfg = config.ParseGitList(res.Stdout)
+	if !l.Cfg.SawLocal {
+		// git prints no local-scope entry at all when it refuses to read the
+		// repository's config (safe.directory "dubious ownership"): without this
+		// check `get` would quietly return the team value and ignore overrides.
+		return nil, Errorf("git cannot read this repository's own config (is it owned by another user?)").
+			WithFix("git config --global --add safe.directory " + r.WorkTree)
+	}
 
 	var warns []config.Warning
 	var team *config.File
@@ -60,7 +75,7 @@ func load(ctx context.Context, e Env) (*loaded, error) {
 			}
 		} else {
 			warns = append(warns, config.Warning{Source: "profile " + choice.Name,
-				Message: "the active profile does not exist on disk; treating it as base. Fix: outfit ls, then outfit use <profile>"})
+				Message: "the active profile does not exist on disk; treating it as base. Fix: outfit ls, then git config --local outfit.profile <name>"})
 		}
 	}
 

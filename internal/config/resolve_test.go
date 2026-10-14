@@ -177,3 +177,44 @@ func TestParseGitList(t *testing.T) {
 	_ = ParseGitList([]byte("local\x00outfit.x"))
 	_ = ParseGitList([]byte("local"))
 }
+
+func TestGitListFlagsSawLocalAndLocalOnlyWorktreeConfig(t *testing.T) {
+	gc := ParseGitList([]byte("global\x00extensions.worktreeconfig\ntrue\x00"))
+	if gc.WorktreeConfig || gc.SawLocal {
+		t.Fatalf("worktreeConfig only counts from the repo's own config: %+v", gc)
+	}
+	gc = ParseGitList([]byte("local\x00core.bare\nfalse\x00local\x00extensions.worktreeconfig\nTrue\x00"))
+	if !gc.WorktreeConfig || !gc.SawLocal {
+		t.Fatalf("%+v", gc)
+	}
+	// git keeps the subsection's case: `outfit.Hook.x` is a different key.
+	gc = ParseGitList([]byte("local\x00outfit.Hook.pre-commit\noff\x00"))
+	if len(gc.Entries) != 0 || len(gc.Warnings) != 1 {
+		t.Fatalf("%+v", gc)
+	}
+}
+
+func TestWarningsAreDeterministic(t *testing.T) {
+	team := file(KindTeam, "[outfit]\n locked = a, b, c, d, e, f\n a = 1\n b = 1\n c = 1\n d = 1\n e = 1\n f = 1\n")
+	var es []Entry
+	for _, k := range []string{"f", "a", "e", "b", "d", "c"} {
+		es = append(es, Entry{ScopeLocal, k, "x"})
+	}
+	first := Resolve(Input{Git: entries(es...), Team: team}).Warnings
+	for i := 0; i < 20; i++ {
+		got := Resolve(Input{Git: entries(es...), Team: team}).Warnings
+		if !reflect.DeepEqual(got, first) {
+			t.Fatalf("warnings order changed:\n%v\n%v", first, got)
+		}
+	}
+}
+
+func TestSystemScopeAndCommandProfileWarn(t *testing.T) {
+	res := Resolve(Input{Git: entries(Entry{ScopeSystem, "biome", "off"}, Entry{ScopeCommand, "profile", "yolo"})})
+	if _, ok := res.Get("biome"); ok {
+		t.Fatal("system scope must not resolve")
+	}
+	if res.Profile.Name != Base || len(res.Warnings) != 2 {
+		t.Fatalf("%+v %v", res.Profile, res.Warnings)
+	}
+}

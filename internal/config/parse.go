@@ -7,6 +7,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // MaxFileSize bounds a committed config file. Nothing legitimate comes close.
@@ -90,7 +91,7 @@ func ParseFile(r io.Reader, source string, kind Kind) *File {
 		if line[0] == '[' {
 			name, sub, rest, err := parseHeader(line)
 			if err != nil {
-				warn(start, "%v: line ignored", err)
+				warn(start, "%v: line ignored%s", err, gitRejects)
 				section, subsection, accepted = "", "", false
 				continue
 			}
@@ -108,11 +109,11 @@ func ParseFile(r io.Reader, source string, kind Kind) *File {
 
 		key, val, hasVal, err := parseKeyValue(line)
 		if err != nil {
-			warn(start, "%v: line ignored", err)
+			warn(start, "%v: line ignored%s", err, gitRejects)
 			continue
 		}
 		if section == "" {
-			warn(start, "key %q appears before any section header: ignored", key)
+			warn(start, "key %q appears before any section header: put it under [outfit]: ignored%s", esc(key), gitRejects)
 			continue
 		}
 		if !accepted {
@@ -124,15 +125,15 @@ func ParseFile(r io.Reader, source string, kind Kind) *File {
 		}
 		nk, err := NormalizeKey(key)
 		if err != nil {
-			warn(start, "%v: ignored", err)
+			warn(start, "%v: ignored%s", err, gitRejects)
 			continue
 		}
 		key = nk
 		if !hasVal {
 			val = "true" // git semantics: a bare key is true
 		}
-		if strings.ContainsFunc(val, isControl) {
-			warn(start, "value of %s contains control characters: ignored", key)
+		if strings.ContainsFunc(val, isControl) || !utf8.ValidString(val) {
+			warn(start, "value of %s contains control characters or invalid UTF-8: ignored", key)
 			continue
 		}
 		if subsection == "" && strings.HasPrefix(key, HookPrefix) {
@@ -141,7 +142,7 @@ func ParseFile(r io.Reader, source string, kind Kind) *File {
 
 		switch key {
 		case KeyProfile:
-			warn(start, "`profile` is not allowed in committed config (the active profile is personal; use `outfit use`): ignored")
+			warn(start, "`profile` is not allowed in committed config (the active profile is personal; choose one with `git config --local outfit.profile <name>`): ignored")
 		case KeyLocked:
 			if kind != KindTeam {
 				warn(start, "`locked` is only valid in .outfit/config: ignored")
@@ -156,11 +157,23 @@ func ParseFile(r io.Reader, source string, kind Kind) *File {
 				f.Locked = append(f.Locked, lk)
 			}
 		default:
+			if hint := spellingHint(val, hasVal); hint != "" {
+				warn(start, "%s = %s: %s", key, esc(val), hint)
+			}
 			f.Keys[key] = val
 		}
 	}
 	if err := sc.Err(); err != nil {
 		warn(lineNo, "cannot read line: %v", err)
+	}
+	// `locked = pre-push` locks the key "pre-push", not the hook toggle
+	// "hook.pre-push": the natural spelling for a hook protects nothing.
+	for _, l := range f.Locked {
+		if _, ok := f.Keys[l]; !ok {
+			if _, hook := f.Keys[HookPrefix+l]; hook {
+				warn(0, "locked = %s locks the key %q, which this file never sets; the hook toggle is %q: write `locked = %s%s`", l, l, HookPrefix+l, HookPrefix, l)
+			}
+		}
 	}
 	return f
 }
@@ -174,6 +187,31 @@ func sectionLabel(name, sub string) string {
 
 // esc makes untrusted text safe to print: no raw control characters.
 func esc(s string) string { return strings.Trim(strconv.Quote(s), `"`) }
+
+// gitRejects is appended to warnings about lines git's own parser also refuses:
+// there `git config -f .outfit/config` (the non-user fallback of §3.0) dies on
+// the WHOLE file, so the author must fix the line, not just read the warning.
+const gitRejects = " (git rejects this line too: teammates' `git config -f` fallback fails on the whole file)"
+
+// spellingHint explains a value that looks like a boolean but is not exactly
+// `on` or `off`. Hooks compare against the literal string `off`, so `OFF`,
+// `false` or `no` would silently keep a check running; a bare key reads as
+// `true` for outfit but as the empty string for `git config --get`.
+func spellingHint(val string, hasVal bool) string {
+	switch strings.ToLower(val) {
+	case "on", "off":
+		if val == "on" || val == "off" {
+			return ""
+		}
+	case "true", "false", "yes", "no", "1", "0":
+	default:
+		return ""
+	}
+	if !hasVal {
+		return "a bare key reads as `true` here but as an empty value for `git config --get`: write `key = on` or `key = off`"
+	}
+	return "toggles are compared as the exact strings `on` and `off`: write `on` or `off`"
+}
 
 // isControl reports a byte that has no business in a toggle value: NUL, ESC,
 // backspace, CR... (tab is fine). Such values could spoof terminal output.
@@ -285,14 +323,14 @@ func parseKeyValue(line string) (key, val string, hasVal bool, err error) {
 	}
 	key = strings.ToLower(line[:i])
 	if key == "" || key[0] < 'a' || key[0] > 'z' {
-		return "", "", false, fmt.Errorf("bad key name in %q", line)
+		return "", "", false, fmt.Errorf("bad key name in %q (keys are lowercase letters, digits and dashes: no underscores)", esc(line))
 	}
 	rest := strings.TrimSpace(line[i:])
 	if rest == "" || rest[0] == '#' || rest[0] == ';' {
 		return key, "", false, nil
 	}
 	if rest[0] != '=' {
-		return "", "", false, fmt.Errorf("expected = after key %q", key)
+		return "", "", false, fmt.Errorf("unexpected %q after key %q: keys are lowercase letters, digits and dashes (no underscores), followed by `=`", esc(rest[:1]), esc(key))
 	}
 	val, err = parseValue(strings.TrimSpace(rest[1:]))
 	if err != nil {
@@ -309,6 +347,13 @@ func isKeyChar(c byte) bool {
 
 func parseValue(s string) (string, error) {
 	var b strings.Builder
+	keep := 0 // length of b up to the last character that must stay
+	write := func(c byte, quoted bool) {
+		b.WriteByte(c)
+		if quoted || (c != ' ' && c != '\t') {
+			keep = b.Len()
+		}
+	}
 	inQuote := false
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -320,28 +365,29 @@ func parseValue(s string) (string, error) {
 			}
 			switch s[i] {
 			case 'n':
-				b.WriteByte('\n')
+				write('\n', true)
 			case 't':
-				b.WriteByte('\t')
+				write('\t', true)
 			case 'b':
-				b.WriteByte('\b')
+				write('\b', true)
 			case '\\', '"':
-				b.WriteByte(s[i])
+				write(s[i], true)
 			default:
 				return "", fmt.Errorf("bad escape \\%c", s[i])
 			}
 		case c == '"':
 			inQuote = !inQuote
+			keep = b.Len() // a quote, even an empty "", ends the trimmable tail
 		case !inQuote && (c == '#' || c == ';'):
-			return strings.TrimRight(b.String(), " \t"), nil
+			return b.String()[:keep], nil
 		default:
-			b.WriteByte(c)
+			write(c, inQuote)
 		}
 	}
 	if inQuote {
 		return "", fmt.Errorf("unterminated quote")
 	}
-	return strings.TrimRight(b.String(), " \t"), nil
+	return b.String()[:keep], nil
 }
 
 // unquote parses a "double quoted" subsection name.

@@ -12,8 +12,8 @@ type getResult struct {
 	Key    string `json:"key"`
 	Found  bool   `json:"found"`
 	Value  string `json:"value"`
-	Source string `json:"source,omitempty"`
-	Locked bool   `json:"locked,omitempty"`
+	Source string `json:"source"`
+	Locked bool   `json:"locked"`
 }
 
 // cmdGet is the hot path hooks call: one git process, no writes, no warnings.

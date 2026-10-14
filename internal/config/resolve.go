@@ -35,10 +35,10 @@ type Toggle struct {
 	Locked bool   `json:"locked"`
 	// Unset marks a locked key the team never gave a value: personal overrides
 	// of it are ignored and it stays unset.
-	Unset bool `json:"unset,omitempty"`
+	Unset bool `json:"unset"`
 	// Shadowed lists lower-precedence values that lost (or, for a locked key,
 	// the overrides that were ignored).
-	Shadowed []Candidate `json:"shadowed,omitempty"`
+	Shadowed []Candidate `json:"shadowed"`
 }
 
 // Input is everything Resolve needs; it does no I/O.
@@ -75,7 +75,7 @@ type Result struct {
 func ChooseProfile(gc GitConfig) (ProfileChoice, []Warning) {
 	var warns []Warning
 	if _, ok := gc.last(ScopeGlobal, KeyProfile); ok {
-		warns = append(warns, Warning{Source: "global git config", Message: "outfit.profile is set globally and ignored: profile names are per repo (use `outfit use <profile>` inside a repo, then `git config --global --unset outfit.profile`)"})
+		warns = append(warns, Warning{Source: "global git config", Message: "outfit.profile is set globally and ignored: profile names are per repo (choose one inside a repo with `git config --local outfit.profile <name>`, then run `git config --global --unset outfit.profile`)"})
 	}
 	wt, hasWT := gc.last(ScopeWorktree, KeyProfile)
 	lc, hasLC := gc.last(ScopeLocal, KeyProfile)
@@ -135,13 +135,29 @@ func Resolve(in Input) Result {
 	}
 	delete(keys, KeyProfile)
 	delete(keys, KeyLocked)
+	// The system scope (/etc/gitconfig, MDM) is deliberately not consulted, and a
+	// profile chosen with `git -c` is a per-call toggle, not a profile choice.
+	if sc := firstScope(in.Git, ScopeSystem); sc {
+		res.Warnings = append(res.Warnings, Warning{Source: "system git config", Message: "outfit.* values in the system git config are ignored: set them with `outfit set`"})
+	}
+	if _, ok := in.Git.last(ScopeCommand, KeyProfile); ok {
+		res.Warnings = append(res.Warnings, Warning{Source: "command line", Message: "outfit.profile given with `git -c` is ignored: choose a profile with `git config --local outfit.profile <name>`"})
+	}
 	for _, sc := range []string{ScopeCommand, ScopeWorktree, ScopeLocal, ScopeGlobal} {
 		if _, ok := in.Git.last(sc, KeyLocked); ok {
 			res.Warnings = append(res.Warnings, Warning{Source: sc + " git config", Message: "outfit.locked set personally: ignored (only .outfit/config can lock keys)"})
 		}
 	}
 
+	// Map iteration is random: walk the keys in order so warnings (and any golden
+	// test over them) are stable.
+	sortedKeyList := make([]string, 0, len(keys))
 	for k := range keys {
+		sortedKeyList = append(sortedKeyList, k)
+	}
+	sort.Strings(sortedKeyList)
+	var lockWarnings []Warning
+	for _, k := range sortedKeyList {
 		var cands []Candidate
 		for _, sc := range []string{ScopeCommand, ScopeWorktree, ScopeLocal, ScopeGlobal} {
 			if v, ok := in.Git.last(sc, k); ok {
@@ -167,12 +183,15 @@ func Resolve(in Input) Result {
 			for _, c := range cands {
 				if c.Source != SourceTeam {
 					ignored = append(ignored, c)
-					res.Warnings = append(res.Warnings, Warning{Source: c.Source, Message: fmt.Sprintf("%s=%s ignored: %q is locked by .outfit/config", k, c.Value, k)})
+					lockWarnings = append(lockWarnings, Warning{Source: c.Source, Message: fmt.Sprintf("%s=%s ignored: %q is locked by .outfit/config", esc(k), esc(c.Value), esc(k))})
 				}
 			}
 			if team == nil {
 				// Locked but the team set no value: nothing resolves.
 				continue
+			}
+			if ignored == nil {
+				ignored = []Candidate{}
 			}
 			res.Toggles[k] = Toggle{Key: k, Value: team.Value, Source: SourceTeam, Locked: true, Shadowed: ignored}
 			continue
@@ -180,8 +199,9 @@ func Resolve(in Input) Result {
 		if len(cands) == 0 {
 			continue
 		}
-		res.Toggles[k] = Toggle{Key: k, Value: cands[0].Value, Source: cands[0].Source, Shadowed: slices.Clone(cands[1:])}
+		res.Toggles[k] = Toggle{Key: k, Value: cands[0].Value, Source: cands[0].Source, Shadowed: append([]Candidate{}, cands[1:]...)}
 	}
+	res.Warnings = append(res.Warnings, lockWarnings...)
 	return res
 }
 
@@ -203,3 +223,13 @@ func (r Result) SortedKeys() []string {
 
 // IsLocked reports whether key is locked by the team.
 func (r Result) IsLocked(key string) bool { return slices.Contains(r.Locked, key) }
+
+// firstScope reports whether any outfit.* entry exists in scope.
+func firstScope(gc GitConfig, scope string) bool {
+	for _, e := range gc.Entries {
+		if e.Scope == scope {
+			return true
+		}
+	}
+	return false
+}

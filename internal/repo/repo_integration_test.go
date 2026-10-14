@@ -97,3 +97,28 @@ func TestHookInMainWorktreeWithRelativeGitDirFromSubdirectory(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+// git >= 2.48 can store worktree back-pointers as relative paths.
+func TestRelativeBackPointer(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo, testkit.WithWorktrees(1))
+	wt := f.Worktrees[0]
+	gitDir := f.GitIn(wt, "rev-parse", "--path-format=absolute", "--git-dir")
+	// Rewrite the back-pointer the way useRelativePaths does.
+	rel, err := filepath.Rel(gitDir, filepath.Join(eval(t, wt), ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "gitdir"), []byte(rel+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inner := filepath.Join(wt, "apps", "web")
+	got, err := repo.Discover(inner, func(k string) string {
+		if k == "GIT_DIR" {
+			return gitDir
+		}
+		return ""
+	})
+	if err != nil || eval(t, got.WorkTree) != eval(t, wt) {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}

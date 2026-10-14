@@ -26,18 +26,19 @@ func TestParseAcceptsOutfitKeys(t *testing.T) {
 two
 [outfit "hook"]
     pre-push = on
-[OUTFIT] shout = yes
+[OUTFIT] shout = loud
 `)
 	want := map[string]string{
 		"biome": "on", "tests": "off", "empty": "", "bare": "true",
 		"hook.pre-commit": "off", "path": `a "quoted" \ value`, "joined": "one two",
-		"hook.pre-push": "on", "shout": "yes",
+		"hook.pre-push": "on", "shout": "loud",
 	}
 	if !reflect.DeepEqual(f.Keys, want) {
 		t.Fatalf("keys = %#v\nwant   %#v\nwarnings: %v", f.Keys, want, f.Warnings)
 	}
-	// Only the dotted spelling warns (git rejects it; see docs/git-behavior.md row 21).
-	if len(f.Warnings) != 1 || f.Warnings[0].Line != 9 || !strings.Contains(f.Warnings[0].Message, `[outfit "hook"]`) {
+	// Exactly two warnings: the bare key (line 8) and the dotted spelling git
+	// rejects (line 9; docs/git-behavior.md row 21).
+	if len(f.Warnings) != 2 || f.Warnings[0].Line != 8 || f.Warnings[1].Line != 9 || !strings.Contains(f.Warnings[1].Message, `[outfit "hook"]`) {
 		t.Fatalf("unexpected warnings: %v", f.Warnings)
 	}
 }
@@ -228,9 +229,9 @@ func TestHeadersGitWouldReadDifferentlyAreRejected(t *testing.T) {
 }
 
 func TestControlCharactersInValuesAreRejected(t *testing.T) {
-	for _, v := range []string{"on\\b\\boff", "a\\x1bb", "x\\ry"} {
-		f := parse(t, KindTeam, "[outfit]\n biome = \""+v+"\"\n ok = 1\n")
-		if _, ok := f.Keys["biome"]; ok || f.Keys["ok"] != "1" || len(f.Warnings) != 1 {
+	for _, v := range []string{"on\b\boff", "a\x1bb", "x\ry", "nul\x00x", "caf\xe9"} {
+		f := parse(t, KindTeam, "[outfit]\n biome = \""+v+"\"\n ok = fine\n")
+		if _, ok := f.Keys["biome"]; ok || f.Keys["ok"] != "fine" || len(f.Warnings) != 1 {
 			t.Errorf("%q: keys=%v warnings=%v", v, f.Keys, f.Warnings)
 		}
 	}
@@ -239,6 +240,52 @@ func TestControlCharactersInValuesAreRejected(t *testing.T) {
 	for _, w := range f.Warnings {
 		if strings.ContainsRune(w.Message, 0x1b) {
 			t.Errorf("raw ESC in warning: %q", w.Message)
+		}
+	}
+}
+
+func TestToggleSpellingWarnings(t *testing.T) {
+	good := parse(t, KindTeam, "[outfit]\n a = on\n b = off\n c = fast\n")
+	if len(good.Warnings) != 0 {
+		t.Fatalf("on/off and free-form values are fine: %v", good.Warnings)
+	}
+	for _, v := range []string{"OFF", "On", "false", "no", "0", "true", "yes", "1"} {
+		f := parse(t, KindTeam, "[outfit]\n biome = "+v+"\n")
+		if len(f.Warnings) != 1 || !strings.Contains(f.Warnings[0].Message, "`on` and `off`") || f.Keys["biome"] != v {
+			t.Errorf("%q: %v", v, f.Warnings)
+		}
+	}
+}
+
+// `locked = pre-push` locks a key nobody sets: say so.
+func TestLockedHookSpellingHint(t *testing.T) {
+	f := parse(t, KindTeam, "[outfit]\n locked = pre-push\n[outfit \"hook\"]\n pre-push = on\n")
+	if len(f.Warnings) != 1 || !strings.Contains(f.Warnings[0].Message, "locked = hook.pre-push") {
+		t.Fatalf("%v", f.Warnings)
+	}
+	ok := parse(t, KindTeam, "[outfit]\n locked = hook.pre-push\n[outfit \"hook\"]\n pre-push = on\n")
+	if len(ok.Warnings) != 0 {
+		t.Fatalf("%v", ok.Warnings)
+	}
+}
+
+func TestQuotedTrailingWhitespaceIsKept(t *testing.T) {
+	f := parse(t, KindTeam, "[outfit]\n a = \"off \"\n b = off   \n c = \"\" \n d = x \"\"\n")
+	want := map[string]string{"a": "off ", "b": "off", "c": "", "d": "x "}
+	if !reflect.DeepEqual(f.Keys, want) {
+		t.Fatalf("%#v want %#v", f.Keys, want)
+	}
+}
+
+func TestFixTextsForCommonMistakes(t *testing.T) {
+	f := parse(t, KindTeam, "stray = 1\n[outfit]\n secrets_scan = on\n")
+	var msgs string
+	for _, w := range f.Warnings {
+		msgs += w.Message + "\n"
+	}
+	for _, want := range []string{"put it under [outfit]", "no underscores", "git rejects this line too"} {
+		if !strings.Contains(msgs, want) {
+			t.Errorf("missing %q in:\n%s", want, msgs)
 		}
 	}
 }
