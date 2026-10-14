@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/prosperity-solutions/outfit/internal/config"
@@ -86,6 +87,19 @@ type Listing struct {
 	Warnings []config.Warning
 }
 
+// RealDir reports whether path is a real directory: not missing, not a file and
+// NOT A SYMLINK. Committed paths are attacker-controlled, and a committed
+// symlink must never make outfit read (or later swap) files outside the repo.
+func RealDir(path string) bool {
+	fi, err := os.Lstat(path)
+	return err == nil && fi.IsDir()
+}
+
+// committedSafe reports whether .outfit and .outfit/profiles are real directories.
+func committedSafe(r repo.Repo) bool {
+	return RealDir(filepath.Join(r.WorkTree, ".outfit")) && RealDir(TierDir(r, Committed))
+}
+
 // List returns every profile across the tiers, sorted by name. Committed
 // profiles are the union of what is on disk and what HEAD holds (inactive ones
 // may be hidden from disk). A local or worktree profile whose name clashes with
@@ -105,7 +119,12 @@ func List(ctx context.Context, g gitx.Client, r repo.Repo) Listing {
 		l.Profiles = append(l.Profiles, p)
 	}
 
-	committed := dirNames(TierDir(r, Committed))
+	committed := map[string]bool{}
+	if committedSafe(r) {
+		committed = dirNames(TierDir(r, Committed))
+	} else if exists(filepath.Join(r.WorkTree, ".outfit")) {
+		l.Warnings = append(l.Warnings, config.Warning{Source: ".outfit", Message: "not read from disk: .outfit and .outfit/profiles must be real directories, not symlinks"})
+	}
 	for _, n := range headProfileNames(ctx, g) {
 		committed[n] = true
 	}
@@ -128,8 +147,11 @@ func Locate(r repo.Repo, name string) (Profile, bool) {
 		return Profile{}, false
 	}
 	for _, t := range []Tier{Committed, Local, Worktree} {
+		if t == Committed && !committedSafe(r) {
+			continue
+		}
 		d := filepath.Join(TierDir(r, t), name)
-		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+		if RealDir(d) {
 			return Profile{Name: name, Tier: t, Dir: d}, true
 		}
 	}
@@ -155,7 +177,9 @@ func ReadConfig(p Profile) (*config.File, error) {
 func Files(p Profile) []string {
 	var out []string
 	_ = filepath.WalkDir(p.Dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		// Regular files only: a symlink inside a committed profile could point
+		// anywhere, and this list is what file swaps are made from.
+		if err != nil || !d.Type().IsRegular() {
 			return nil
 		}
 		rel, _ := filepath.Rel(p.Dir, path)
@@ -189,6 +213,12 @@ func HeadFiles(ctx context.Context, g gitx.Client, name string) []string {
 // HeadConfig parses a committed profile's profile.config as committed at HEAD.
 func HeadConfig(ctx context.Context, g gitx.Client, name string) *config.File {
 	path := CommittedRoot + "/" + name + "/" + ProfileConfig
+	// Check the size first: gitx buffers a command's whole output.
+	if sz, err := g.Read(ctx, "cat-file", "-s", "HEAD:"+path); err == nil {
+		if n, perr := strconv.Atoi(strings.TrimSpace(string(sz.Stdout))); perr == nil && n > config.MaxFileSize {
+			return &config.File{Source: path, Keys: map[string]string{}, Warnings: []config.Warning{{Source: path, Message: "file is larger than the limit: ignored"}}}
+		}
+	}
 	res, err := g.Read(ctx, "show", "HEAD:"+path)
 	if err != nil {
 		return &config.File{Source: path, Keys: map[string]string{}}
@@ -208,6 +238,11 @@ func headProfileNames(ctx context.Context, g gitx.Client) []string {
 		}
 	}
 	return out
+}
+
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
 }
 
 func dirNames(dir string) map[string]bool {

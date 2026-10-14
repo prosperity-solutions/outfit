@@ -39,21 +39,36 @@ outfit **never** `include.path`s a committed file: a committed git config could 
 `core.fsmonitor`, `core.pager`, `core.hooksPath` or `includeIf`, which is code
 execution on every teammate's machine. outfit parses the two files itself and
 accepts **only** `outfit.*` keys. Everything else (other sections, includes, bad
-lines, a symlink or FIFO instead of a regular file, a file over 1 MiB) is ignored,
-and `outfit status` prints each one with its line number.
+lines, control characters in a value, a file over 1 MiB) is ignored, and
+`outfit status` / `outfit ls` print each one with its line number.
+
+It also never follows a committed symlink: `.outfit/`, `.outfit/profiles/`, a
+profile directory and `config`/`profile.config` must be real directories and
+regular files, and symlinks inside a profile are not swap sources.
+
+The parser reads the same syntax as git (BOM, CRLF, quoting, comments, backslash
+continuation), so outfit users and teammates running
+`git config -f .outfit/config --get …` see the same values; a test compares the two
+over a corpus.
 
 ## Where a value comes from
 
 `outfit get <key>` returns the first hit, highest first:
 
+0. the **command scope**: `git -c outfit.biome=off commit` (and `GIT_CONFIG_COUNT`),
+   which hooks inherit. The way to skip a check once. A locked key still wins.
 1. `--worktree` (`outfit set key=val --here`)
 2. `--local` (`outfit set key=val`, this clone: the default)
 3. `--global` (`outfit set key=val --global`, this machine)
 4. the active profile's `profile.config`
 5. `.outfit/config`
 
+The system scope (`/etc/gitconfig`) is **ignored**. `set` writes one key at a
+time and is not atomic: if the third write fails, the first two stay.
+
 **Locked keys** always resolve from `.outfit/config`. Every other source is ignored
-and `status` warns about it. `outfit set` refuses to set a locked key.
+and `status` warns about it. `outfit set` refuses to set a locked key. A locked key
+with no team value stays unset (`status` shows `(unset)`).
 
 The **active profile** is `outfit.profile`: `--worktree`, then `--local`, else
 `base`. A `--global` value is ignored with a warning (profile names are per repo).
@@ -64,14 +79,15 @@ A profile name that no longer exists is treated as `base`, with a warning.
 | Command | What it does |
 |---|---|
 | `outfit get <key>` | prints the value. Unset: prints nothing and exits **1** (like `git config --get`). One git process, no writes. |
-| `outfit set <key>=<val>… [--here\|--global]` | personal override in git config; `key=` unsets. `--here` needs `extensions.worktreeConfig` (`outfit init` enables it). |
+| `outfit set <key>=<val>… [--here\|--global]` | personal override in git config; `key=` unsets. `--here` needs `extensions.worktreeConfig` (`outfit init` will enable it; until then run `git config extensions.worktreeConfig true`). |
 | `outfit ls` | profiles across the three tiers (`committed`, `local`, `worktree`), their keys and files; `*` marks the active one. |
 | `outfit status` | the active profile, where every toggle comes from, the files it swaps, and warnings. Enforces git ≥ 2.36. |
 
 All of them accept `--json`. Failures carry `"fix"` and `"retryable"`.
 
-Exit codes: `0` ok, `1` error (or an unset `get`), `2` usage or unknown
-profile/key, `3` needs a human, `4` out of sync or stale (`status` only).
+Exit codes: `0` ok, `1` error (or an unset `get`: there is no registry of known
+keys, so an unset key is "not found", like `git config --get`, never "unknown"),
+`2` usage or unknown profile, `3` needs a human, `4` out of sync or stale (`status` only).
 
 ## Profile tiers
 

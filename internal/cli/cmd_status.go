@@ -3,8 +3,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/prosperity-solutions/outfit/internal/config"
@@ -32,11 +33,10 @@ type statusJSON struct {
 // one of the four commands that enforce the git floor (init, use, status,
 // version), and it never runs inside a hook.
 func cmdStatus(ctx context.Context, e Env, args []string) int {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	fs.SetOutput(e.Stderr)
+	fs := newFlags("status")
 	asJSON := fs.Bool("json", false, "print machine-readable output")
-	if _, err := parse(fs, args); err != nil {
-		return ExitUsage
+	if _, code, stop := parseArgs(e, fs, args); stop {
+		return code
 	}
 	fail := func(err error) int { return report(e.Stdout, e.Stderr, *asJSON, err) }
 
@@ -53,6 +53,14 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 	for _, k := range res.SortedKeys() {
 		st.Toggles = append(st.Toggles, res.Toggles[k])
 	}
+	// A locked key the team never gave a value still deserves a line: personal
+	// overrides of it are ignored, and it stays unset.
+	for _, k := range res.Locked {
+		if _, ok := res.Toggles[k]; !ok {
+			st.Toggles = append(st.Toggles, config.Toggle{Key: k, Source: config.SourceTeam, Locked: true, Unset: true})
+		}
+	}
+	sort.Slice(st.Toggles, func(i, j int) bool { return st.Toggles[i].Key < st.Toggles[j].Key })
 	if st.Toggles == nil {
 		st.Toggles = []config.Toggle{}
 	}
@@ -72,8 +80,11 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 	}
 
 	w := e.Stdout
-	line := res.Profile.Name
+	line := esc(res.Profile.Name)
 	var notes []string
+	if res.Profile.Name != config.Base && l.Profile == nil {
+		notes = append(notes, "not found: behaving as base")
+	}
 	if st.Tier != "" {
 		notes = append(notes, st.Tier)
 	}
@@ -103,7 +114,11 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 		if t.Locked {
 			src = "locked by team"
 		}
-		fmt.Fprintf(w, "%s%s=%s (%s)\n", label, t.Key, t.Value, src)
+		val := show(t.Value)
+		if t.Unset {
+			val = "(unset)"
+		}
+		fmt.Fprintf(w, "%s%s=%s (%s)\n", label, t.Key, val, src)
 	}
 	if len(st.Files) == 0 {
 		fmt.Fprintln(w, "files    (no swaps)")
@@ -126,4 +141,16 @@ func nonNilStrings(s []string) []string {
 		return []string{}
 	}
 	return s
+}
+
+// esc makes untrusted text safe to print: no raw control characters.
+func esc(s string) string { return strings.Trim(strconv.Quote(s), `"`) }
+
+// show prints a value verbatim when it is plain, quoted otherwise, so control
+// characters in a value can never reach the terminal.
+func show(v string) string {
+	if q := strconv.Quote(v); v != "" && !strings.ContainsAny(v, " \"\\") && q == `"`+v+`"` {
+		return v
+	}
+	return strconv.Quote(v)
 }

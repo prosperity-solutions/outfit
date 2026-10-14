@@ -2,8 +2,10 @@ package config
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 )
 
@@ -52,6 +54,10 @@ func ParseFile(r io.Reader, source string, kind Kind) *File {
 		return f
 	}
 
+	// Git accepts a UTF-8 byte order mark; a file with one must not lose its
+	// `locked` line to a "bad key" on line 1.
+	data = bytes.TrimPrefix(data, []byte("\xEF\xBB\xBF"))
+
 	var (
 		section    string // lowercased section name, "" before the first header
 		subsection string
@@ -71,8 +77,8 @@ func ParseFile(r io.Reader, source string, kind Kind) *File {
 		} else {
 			pendingStart = lineNo
 		}
-		if strings.HasSuffix(raw, "\\") && !strings.HasSuffix(raw, "\\\\") {
-			pending = strings.TrimSuffix(raw, "\\")
+		if continues(raw) {
+			pending = raw[:len(raw)-1]
 			continue
 		}
 		line := strings.TrimSpace(raw)
@@ -125,6 +131,13 @@ func ParseFile(r io.Reader, source string, kind Kind) *File {
 		if !hasVal {
 			val = "true" // git semantics: a bare key is true
 		}
+		if strings.ContainsFunc(val, isControl) {
+			warn(start, "value of %s contains control characters: ignored", key)
+			continue
+		}
+		if subsection == "" && strings.HasPrefix(key, HookPrefix) {
+			warn(start, "%s inside [outfit] is not valid git syntax: git, and so every teammate's `git config -f` fallback, rejects the WHOLE file. Write it as [outfit \"hook\"] %s = %s", key, strings.TrimPrefix(key, HookPrefix), val)
+		}
 
 		switch key {
 		case KeyProfile:
@@ -154,9 +167,54 @@ func ParseFile(r io.Reader, source string, kind Kind) *File {
 
 func sectionLabel(name, sub string) string {
 	if sub == "" {
-		return name
+		return esc(name)
 	}
-	return fmt.Sprintf("%s %q", name, sub)
+	return fmt.Sprintf("%s %q", esc(name), sub)
+}
+
+// esc makes untrusted text safe to print: no raw control characters.
+func esc(s string) string { return strings.Trim(strconv.Quote(s), `"`) }
+
+// isControl reports a byte that has no business in a toggle value: NUL, ESC,
+// backspace, CR... (tab is fine). Such values could spoof terminal output.
+func isControl(r rune) bool { return (r < 0x20 && r != '\t') || r == 0x7f }
+
+// continues reports whether a physical line ends in an ACTIVE backslash
+// continuation, the way git decides it: only inside a value, never inside a
+// comment (`# note \`), a header-only line, a bare key, or after an unquoted
+// `#`/`;`; and only for an odd number of trailing backslashes.
+func continues(raw string) bool {
+	line := strings.TrimSpace(raw)
+	if line == "" || line[0] == '#' || line[0] == ';' {
+		return false
+	}
+	if line[0] == '[' {
+		_, _, rest, err := parseHeader(line)
+		if err != nil {
+			return false
+		}
+		line = strings.TrimSpace(rest)
+	}
+	eq := strings.IndexByte(line, '=')
+	if eq < 0 {
+		return false // header-only line or bare key
+	}
+	value := line[eq+1:]
+	inQuote := false
+	for i := 0; i < len(value); i++ {
+		switch c := value[i]; {
+		case c == '\\':
+			if i+1 == len(value) {
+				return true
+			}
+			i++
+		case c == '"':
+			inQuote = !inQuote
+		case !inQuote && (c == '#' || c == ';'):
+			return false
+		}
+	}
+	return false
 }
 
 // parseHeader parses `[name]`, `[name "sub"]` or `[name.sub]` and returns what
@@ -180,11 +238,20 @@ func parseHeader(line string) (name, sub, rest string, err error) {
 	}
 	inner, rest := line[1:end], line[end+1:]
 	if q := strings.IndexByte(inner, '"'); q >= 0 {
+		// git requires whitespace before the quote and rejects an empty name;
+		// reading either differently would make outfit users and non-users
+		// disagree about the same committed file.
+		if q == 0 || (inner[q-1] != ' ' && inner[q-1] != '\t') {
+			return "", "", "", fmt.Errorf("a quoted subsection needs whitespace before it")
+		}
 		name = strings.ToLower(strings.TrimSpace(inner[:q]))
 		raw := inner[q:]
 		s, err := unquote(raw)
 		if err != nil {
 			return "", "", "", fmt.Errorf("bad subsection %s: %v", raw, err)
+		}
+		if s == "" {
+			return "", "", "", fmt.Errorf("empty subsection name")
 		}
 		sub = s
 	} else if dot := strings.IndexByte(inner, '.'); dot >= 0 { // deprecated [name.sub]

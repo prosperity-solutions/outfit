@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"sort"
 	"strings"
@@ -23,11 +22,10 @@ type lsEntry struct {
 
 // cmdLs lists the profiles across the three tiers.
 func cmdLs(ctx context.Context, e Env, args []string) int {
-	fs := flag.NewFlagSet("ls", flag.ContinueOnError)
-	fs.SetOutput(e.Stderr)
+	fs := newFlags("ls")
 	asJSON := fs.Bool("json", false, "print machine-readable output")
-	if _, err := parse(fs, args); err != nil {
-		return ExitUsage
+	if _, code, stop := parseArgs(e, fs, args); stop {
+		return code
 	}
 	l, err := load(ctx, e)
 	if err != nil {
@@ -35,7 +33,9 @@ func cmdLs(ctx context.Context, e Env, args []string) int {
 	}
 	listing := profiles.List(ctx, l.Git, l.Repo)
 
-	entries := []lsEntry{}
+	// base is built in and always first: "no swaps", what a non-user gets.
+	entries := []lsEntry{{Name: config.Base, Tier: "builtin", Active: l.Result.Profile.Name == config.Base, Keys: []string{}, Files: []string{}}}
+	var inactiveWarnings []config.Warning
 	for _, p := range listing.Profiles {
 		ent := lsEntry{Name: p.Name, Tier: string(p.Tier), Active: p.Name == l.Result.Profile.Name, Keys: []string{}, Files: []string{}}
 		var cfg *config.File
@@ -52,13 +52,16 @@ func cmdLs(ctx context.Context, e Env, args []string) int {
 				ent.Keys = append(ent.Keys, k+"="+v)
 			}
 			sort.Strings(ent.Keys)
+			// A broken or malicious inactive profile is worth knowing about
+			// before somebody switches to it.
+			inactiveWarnings = append(inactiveWarnings, cfg.Warnings...)
 		}
 		if ent.Files == nil {
 			ent.Files = []string{}
 		}
 		entries = append(entries, ent)
 	}
-	warnings := append(listing.Warnings, l.Result.Warnings...)
+	warnings := append(append(listing.Warnings, l.Result.Warnings...), inactiveWarnings...)
 
 	if *asJSON {
 		out, _ := json.Marshal(struct {
@@ -78,8 +81,6 @@ func cmdLs(ctx context.Context, e Env, args []string) int {
 		}
 		return ""
 	}
-	baseMark := mark(l.Result.Profile.Name == config.Base)
-	fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\n", config.Base, baseMark, "-", "-", "-")
 	for _, ent := range entries {
 		fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\n", ent.Name, mark(ent.Active), ent.Tier, dash(strings.Join(ent.Keys, " ")), dash(strings.Join(ent.Files, " ")))
 	}

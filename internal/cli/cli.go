@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -103,11 +102,10 @@ type gitInfo struct {
 // cmdVersion never fails because of git: install.sh prints it as its last step,
 // so a missing or old git is reported as a warning, not an error.
 func cmdVersion(ctx context.Context, e Env, args []string) int {
-	fs := flag.NewFlagSet("version", flag.ContinueOnError)
-	fs.SetOutput(e.Stderr)
+	fs := newFlags("version")
 	asJSON := fs.Bool("json", false, "print machine-readable output")
-	if err := fs.Parse(args); err != nil {
-		return ExitUsage
+	if _, code, stop := parseArgs(e, fs, args); stop {
+		return code
 	}
 
 	b := e.Build

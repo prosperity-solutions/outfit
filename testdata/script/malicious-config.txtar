@@ -27,6 +27,14 @@ stderr 'core.hookspath'
 exec git status --porcelain
 ! exists $WORK/pwned
 
+# A malicious profile.config is held to the same whitelist, and `ls` warns about
+# it even though the profile is not active.
+mkdir .outfit/profiles/evil
+cp $WORK/evil.cfg .outfit/profiles/evil/profile.config
+outfit ls
+stderr 'core.fsmonitor'
+! stdout 'leaked'
+
 # The committed file is never a symlink target: replace it with one.
 rm .outfit/config
 symlink .outfit/config -> $WORK/evil.cfg

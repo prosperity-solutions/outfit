@@ -145,3 +145,63 @@ func TestFilesExcludeProfileConfig(t *testing.T) {
 		t.Fatalf("cfg = %+v, %v", cfg, err)
 	}
 }
+
+// Review finding: a committed symlink must never make outfit read or list files
+// outside the repository.
+func TestCommittedSymlinksAreNeverFollowed(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	r := discover(t, f)
+	g := gitx.Client{Dir: f.Dir, Env: f.Env}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, profiles.ProfileConfig), []byte("[outfit]\n leaked = yes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A profile directory that is a symlink.
+	prof := filepath.Join(f.Dir, ".outfit", "profiles", "evil")
+	if err := os.Symlink(outside, prof); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := profiles.Locate(r, "evil"); ok {
+		t.Fatal("a symlinked profile dir must not be located")
+	}
+	for _, p := range profiles.List(context.Background(), g, r).Profiles {
+		if p.Name == "evil" {
+			t.Fatal("a symlinked profile dir must not be listed")
+		}
+	}
+
+	// A symlink INSIDE a real profile is not a swap source.
+	lean, _ := profiles.Locate(r, "lean")
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(lean.Dir, "LINK.md")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range profiles.Files(lean) {
+		if name == "LINK.md" {
+			t.Fatal("symlinks must not be listed as profile files")
+		}
+	}
+
+	// The whole .outfit/profiles directory replaced by a symlink.
+	if err := os.RemoveAll(filepath.Join(f.Dir, ".outfit", "profiles")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(f.Dir, ".outfit", "profiles")); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := profiles.Locate(r, "lean"); ok {
+		t.Fatal("nothing under a symlinked .outfit/profiles may be located")
+	}
+	l := profiles.List(context.Background(), g, r)
+	for _, p := range l.Profiles {
+		if strings.Contains(p.Dir, "secret") || p.Name == "secret.txt" {
+			t.Fatalf("listed outside content: %+v", p)
+		}
+	}
+	if len(l.Warnings) == 0 {
+		t.Fatal("a refused symlink must be reported")
+	}
+}

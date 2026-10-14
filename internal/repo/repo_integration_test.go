@@ -55,3 +55,45 @@ func TestHookStyleGitDir(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+// Review finding: inside a hook in a LINKED worktree git exports an absolute
+// GIT_DIR under <common>/worktrees/<n>, and a hook may have `cd`'d into a
+// package. The worktree root must come from the git dir's back-pointer, never
+// from the cwd, or the root .outfit/ (and its `locked` keys) would be skipped
+// and a nested pkg/.outfit/config would be read instead.
+func TestHookInLinkedWorktreeFromSubdirectory(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo, testkit.WithWorktrees(1))
+	wt := f.Worktrees[0]
+	gitDir := f.GitIn(wt, "rev-parse", "--path-format=absolute", "--git-dir")
+	sub := filepath.Join(wt, "apps", "web")
+
+	got, err := repo.Discover(sub, func(k string) string {
+		if k == "GIT_DIR" {
+			return gitDir
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eval(t, got.WorkTree) != eval(t, wt) {
+		t.Fatalf("WorkTree = %q, want %q", got.WorkTree, wt)
+	}
+}
+
+func TestHookInMainWorktreeWithRelativeGitDirFromSubdirectory(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	sub := filepath.Join(f.Dir, "apps", "web", "src")
+	got, err := repo.Discover(sub, func(k string) string {
+		if k == "GIT_DIR" {
+			return ".git" // exported relative to the worktree root, hook has since cd'd
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eval(t, got.WorkTree) != eval(t, f.Dir) || eval(t, got.GitDir) != eval(t, filepath.Join(f.Dir, ".git")) {
+		t.Fatalf("got %+v", got)
+	}
+}

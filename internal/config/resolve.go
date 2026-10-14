@@ -9,8 +9,11 @@ import (
 // Base is the profile that means "no swaps": what a non-user gets (§3.0).
 const Base = "base"
 
-// Where a value came from, highest precedence first (§3.2).
+// Where a value came from, highest precedence first (§3.2). SourceCommand is
+// `git -c outfit.x=y …` (and GIT_CONFIG_COUNT), which hooks inherit: the natural
+// way to skip a check once. It is not in the spec's list; see docs/config.md.
 const (
+	SourceCommand  = "command"
 	SourceWorktree = "worktree"
 	SourceLocal    = "local"
 	SourceGlobal   = "global"
@@ -30,6 +33,9 @@ type Toggle struct {
 	Value  string `json:"value"`
 	Source string `json:"source"`
 	Locked bool   `json:"locked"`
+	// Unset marks a locked key the team never gave a value: personal overrides
+	// of it are ignored and it stays unset.
+	Unset bool `json:"unset,omitempty"`
 	// Shadowed lists lower-precedence values that lost (or, for a locked key,
 	// the overrides that were ignored).
 	Shadowed []Candidate `json:"shadowed,omitempty"`
@@ -62,7 +68,8 @@ type Result struct {
 	Warnings []Warning
 }
 
-// ChooseProfile picks the active profile: --worktree, then --local, else base.
+// ChooseProfile picks the active profile: --worktree, then --local, else base
+// (the command scope is not used for the profile: it is a per-call toggle).
 // A --global `outfit.profile` is ignored with a warning: profile names are per
 // repo, so a machine-wide one is always a mistake.
 func ChooseProfile(gc GitConfig) (ProfileChoice, []Warning) {
@@ -128,7 +135,7 @@ func Resolve(in Input) Result {
 	}
 	delete(keys, KeyProfile)
 	delete(keys, KeyLocked)
-	for _, sc := range []string{ScopeWorktree, ScopeLocal, ScopeGlobal} {
+	for _, sc := range []string{ScopeCommand, ScopeWorktree, ScopeLocal, ScopeGlobal} {
 		if _, ok := in.Git.last(sc, KeyLocked); ok {
 			res.Warnings = append(res.Warnings, Warning{Source: sc + " git config", Message: "outfit.locked set personally: ignored (only .outfit/config can lock keys)"})
 		}
@@ -136,7 +143,7 @@ func Resolve(in Input) Result {
 
 	for k := range keys {
 		var cands []Candidate
-		for _, sc := range []string{ScopeWorktree, ScopeLocal, ScopeGlobal} {
+		for _, sc := range []string{ScopeCommand, ScopeWorktree, ScopeLocal, ScopeGlobal} {
 			if v, ok := in.Git.last(sc, k); ok {
 				cands = append(cands, Candidate{Source: sc, Value: v})
 			}

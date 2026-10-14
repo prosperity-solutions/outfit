@@ -36,7 +36,8 @@ two
 	if !reflect.DeepEqual(f.Keys, want) {
 		t.Fatalf("keys = %#v\nwant   %#v\nwarnings: %v", f.Keys, want, f.Warnings)
 	}
-	if len(f.Warnings) != 0 {
+	// Only the dotted spelling warns (git rejects it; see docs/git-behavior.md row 21).
+	if len(f.Warnings) != 1 || f.Warnings[0].Line != 9 || !strings.Contains(f.Warnings[0].Message, `[outfit "hook"]`) {
 		t.Fatalf("unexpected warnings: %v", f.Warnings)
 	}
 }
@@ -176,6 +177,68 @@ func TestNormalizeKey(t *testing.T) {
 	for _, bad := range []string{"", "1a", "-a", "a b", "a.b", "hook.", "hook.a.b", "a/b", "a=b", "../x", "a_b"} {
 		if _, err := NormalizeKey(bad); err == nil {
 			t.Errorf("NormalizeKey(%q) must fail", bad)
+		}
+	}
+}
+
+// Findings from the review loop: each of these made outfit read a committed file
+// differently from git, which for `locked` means failing open.
+func TestParserAgreesWithGitOnTrickyInput(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want map[string]string
+		lock []string
+	}{
+		{"BOM", "\xef\xbb\xbf[outfit]\n locked = biome\n biome = on\n", map[string]string{"biome": "on"}, []string{"biome"}},
+		{"CRLF", "[outfit]\r\n locked = biome\r\n biome = on\r\n", map[string]string{"biome": "on"}, []string{"biome"}},
+		{"comment ending in backslash does not swallow the next line",
+			"[outfit]\n# note \\\n locked = biome\n biome = on\n", map[string]string{"biome": "on"}, []string{"biome"}},
+		{"header-only line ending in backslash",
+			"[outfit] \\\n locked = biome\n", map[string]string{}, []string{"biome"}},
+		{"odd backslashes continue, even ones do not",
+			"[outfit]\n a = x\\\\\n b = y\n c = z\\\n w\n", map[string]string{"a": `x\`, "b": "y", "c": "z w"}, nil},
+		{"inline comment hides a trailing backslash",
+			"[outfit]\n a = x # c \\\n b = y\n", map[string]string{"a": "x", "b": "y"}, nil},
+		{"quoted hash is a value", "[outfit]\n a = \"x # y\"\n", map[string]string{"a": "x # y"}, nil},
+	}
+	for _, c := range cases {
+		f := parse(t, KindTeam, c.in)
+		if !reflect.DeepEqual(f.Keys, c.want) || !reflect.DeepEqual(f.Locked, c.lock) {
+			t.Errorf("%s: keys=%#v locked=%v warnings=%v\n  want keys=%#v locked=%v", c.name, f.Keys, f.Locked, f.Warnings, c.want, c.lock)
+		}
+	}
+}
+
+func TestHeadersGitWouldReadDifferentlyAreRejected(t *testing.T) {
+	for _, in := range []string{
+		"[outfit \"\"]\n x = 1\n",       // git reads outfit..x
+		"[outfit\"hook\"]\n x = 1\n",    // git: bad config line
+		"[outfit \"hook]\n x = 1\n",     // unterminated
+		"[outfit \"ho\\ok\"]\n x = 1\n", // odd escape is fine for git, never a hook
+	} {
+		f := parse(t, KindTeam, in)
+		if v, ok := f.Keys["hook.x"]; ok && v == "1" && strings.Contains(in, `""`) {
+			t.Errorf("%q: must not read an empty subsection as [outfit]", in)
+		}
+		if _, ok := f.Keys["x"]; ok {
+			t.Errorf("%q: x must not land in plain [outfit]: %v", in, f.Keys)
+		}
+	}
+}
+
+func TestControlCharactersInValuesAreRejected(t *testing.T) {
+	for _, v := range []string{"on\\b\\boff", "a\\x1bb", "x\\ry"} {
+		f := parse(t, KindTeam, "[outfit]\n biome = \""+v+"\"\n ok = 1\n")
+		if _, ok := f.Keys["biome"]; ok || f.Keys["ok"] != "1" || len(f.Warnings) != 1 {
+			t.Errorf("%q: keys=%v warnings=%v", v, f.Keys, f.Warnings)
+		}
+	}
+	// A warning never echoes a raw control character from a section name.
+	f := parse(t, KindTeam, "[co\x1bre]\n x = 1\n")
+	for _, w := range f.Warnings {
+		if strings.ContainsRune(w.Message, 0x1b) {
+			t.Errorf("raw ESC in warning: %q", w.Message)
 		}
 	}
 }

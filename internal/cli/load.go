@@ -29,8 +29,8 @@ func load(ctx context.Context, e Env) (*loaded, error) {
 	if err != nil {
 		return nil, Errorf("not inside a git repository").WithFix("cd into your repository, then rerun")
 	}
-	if r.WorkTree == "" { // inside a hook with only GIT_DIR: hooks run at the worktree root
-		r.WorkTree = e.Dir
+	if r.WorkTree == "" {
+		return nil, Errorf("this is a bare repository: outfit works on checkouts").WithFix("cd into a working tree")
 	}
 	l := &loaded{Repo: r, Git: gitx.Client{Dir: r.WorkTree}}
 
@@ -41,9 +41,13 @@ func load(ctx context.Context, e Env) (*loaded, error) {
 	l.Cfg = config.ParseGitList(res.Stdout)
 
 	var warns []config.Warning
-	team, err := config.ReadFile(filepath.Join(r.WorkTree, ".outfit", "config"), config.KindTeam)
-	if err != nil {
-		return nil, Errorf("cannot read .outfit/config: %v", err)
+	var team *config.File
+	if profiles.RealDir(filepath.Join(r.WorkTree, ".outfit")) {
+		if team, err = config.ReadFile(filepath.Join(r.WorkTree, ".outfit", "config"), config.KindTeam); err != nil {
+			return nil, Errorf("cannot read .outfit/config: %v", err)
+		}
+	} else if exists(filepath.Join(r.WorkTree, ".outfit")) {
+		warns = append(warns, config.Warning{Source: ".outfit", Message: "not read: .outfit must be a real directory, not a symlink"})
 	}
 
 	choice, _ := config.ChooseProfile(l.Cfg)

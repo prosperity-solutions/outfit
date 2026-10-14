@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"flag"
+	"fmt"
+	"io"
+	"slices"
 	"strings"
 )
 
@@ -22,4 +26,29 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 		}
 	}
 	return pos, fs.Parse(flags)
+}
+
+// newFlags makes a FlagSet that prints nothing itself: errors go through report
+// (so --json callers get JSON) and -h through parseArgs.
+func newFlags(name string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	return fs
+}
+
+// parseArgs parses args; when it returns stop=true the command must return code.
+func parseArgs(e Env, fs *flag.FlagSet, args []string) (pos []string, code int, stop bool) {
+	pos, err := parse(fs, args)
+	switch {
+	case err == nil:
+		return pos, 0, false
+	case errors.Is(err, flag.ErrHelp):
+		fmt.Fprintf(e.Stdout, "usage: outfit %s [flags]\n", fs.Name())
+		fs.SetOutput(e.Stdout)
+		fs.PrintDefaults()
+		return nil, ExitOK, true
+	default:
+		return nil, report(e.Stdout, e.Stderr, slices.Contains(args, "--json"),
+			Usagef("%v", err).WithFix("outfit "+fs.Name()+" -h")), true
+	}
 }

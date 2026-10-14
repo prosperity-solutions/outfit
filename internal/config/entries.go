@@ -56,7 +56,7 @@ func ParseGitList(out []byte) GitConfig {
 		}
 		lk := strings.ToLower(key)
 		if lk == "extensions.worktreeconfig" {
-			gc.WorktreeConfig = val == "true" || val == "on" || val == "yes" || val == "1"
+			gc.WorktreeConfig = gitBool(val)
 			continue
 		}
 		name, ok := strings.CutPrefix(key, "outfit.")
@@ -84,4 +84,13 @@ func (gc GitConfig) last(scope, key string) (string, bool) {
 		}
 	}
 	return v, found
+}
+
+// gitBool applies git's boolean spelling: true/yes/on/1, any case.
+func gitBool(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "yes", "on", "1":
+		return true
+	}
+	return false
 }

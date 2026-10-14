@@ -33,7 +33,7 @@ stdout '^off$'
 
 # --here needs extensions.worktreeConfig; `init` arrives in a later release.
 ! outfit set biome=on --here
-stderr 'fix: outfit init'
+stderr 'fix: git config extensions.worktreeConfig true'
 
 # A profile's toggles sit between personal overrides and the team default.
 exec git config --local outfit.profile yolo
@@ -54,7 +54,10 @@ stdout 'yolo\*  committed'
 outfit ls --json
 stdout '"active":"yolo"'
 
-# Scenario 13: a locked key cannot be overridden from any scope or profile.
+# Scenario 13: a locked key cannot be overridden from any scope or profile
+# (yolo's profile.config above even tries: secrets-scan = off).
+outfit get secrets-scan
+stdout '^on$'
 exec git config --global outfit.secrets-scan off
 exec git config --local outfit.secrets-scan off
 outfit get secrets-scan
@@ -63,6 +66,17 @@ stdout '^on$'
 stderr 'locked by .outfit/config'
 outfit status
 stderr 'ignored'
+
+# `git -c` reaches hooks as the command scope: a one-off skip, never of a lock.
+exec git -c outfit.biome=once config --get outfit.biome
+exec sh -c 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=outfit.biome GIT_CONFIG_VALUE_0=once outfit get biome'
+stdout '^once$'
+exec sh -c 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=outfit.secrets-scan GIT_CONFIG_VALUE_0=off outfit get secrets-scan'
+stdout '^on$'
+
+# A bad flag is a usage error, as JSON when asked.
+! outfit get biome --bogus --json
+stdout '"fix":"outfit get -h"'
 
 # Not in a repo: exit 1, with the fix.
 cd $WORK
@@ -80,6 +94,8 @@ stderr 'fix: cd into your repository'
 [outfit]
 	biome = off
 	tests = off
-	hook.pre-commit = off
+	secrets-scan = off
+[outfit "hook"]
+	pre-commit = off
 -- agents.md --
 yolo

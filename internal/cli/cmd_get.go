@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 
 	"github.com/prosperity-solutions/outfit/internal/config"
@@ -24,12 +23,11 @@ type getResult struct {
 //
 // falls through to the committed default for non-users.
 func cmdGet(ctx context.Context, e Env, args []string) int {
-	fs := flag.NewFlagSet("get", flag.ContinueOnError)
-	fs.SetOutput(e.Stderr)
+	fs := newFlags("get")
 	asJSON := fs.Bool("json", false, "print machine-readable output")
-	pos, err := parse(fs, args)
-	if err != nil {
-		return ExitUsage
+	pos, code, stop := parseArgs(e, fs, args)
+	if stop {
+		return code
 	}
 	if len(pos) != 1 {
 		return report(e.Stdout, e.Stderr, *asJSON, Usagef("usage: outfit get <key>").WithFix("outfit get biome"))

@@ -127,7 +127,7 @@ func TestSetScopesAndUnset(t *testing.T) {
 	}
 	// --here needs the worktree extension, and says how to get it.
 	code, _, errs := outfit(t, f, f.Dir, "set", "biome=on", "--here")
-	if code != 1 || !strings.Contains(errs, "fix: outfit init") {
+	if code != 1 || !strings.Contains(errs, "fix: git config extensions.worktreeConfig true") {
 		t.Fatalf("--here without extension: %d %q", code, errs)
 	}
 	f.Git("config", "extensions.worktreeConfig", "true")
@@ -228,5 +228,128 @@ func TestGetSpawnsOneGitProcess(t *testing.T) {
 	}
 	if n := gitx.Calls(); n != 1 {
 		t.Fatalf("get spawned %d git processes, budget is 1", n)
+	}
+}
+
+// Review finding: .outfit itself replaced by a symlink to files outside the repo.
+func TestSymlinkedDotOutfitIsNotRead(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	outside := t.TempDir()
+	if err := os.WriteFile(outside+"/config", []byte("[outfit]\n biome = fromoutside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(f.Path(".outfit")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, f.Path(".outfit")); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := outfit(t, f, f.Dir, "get", "biome")
+	if code != 1 || strings.Contains(out, "fromoutside") {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+	_, _, errs := outfit(t, f, f.Dir, "status")
+	if !strings.Contains(errs, "real directory") {
+		t.Fatalf("status must say why: %q", errs)
+	}
+}
+
+// Review finding (threat model): a hook in a linked worktree that `cd`s into a
+// package must still see the ROOT .outfit/ (and its locks), not a nested one.
+func TestGetFromHookInSubdirectoryIgnoresNestedDotOutfit(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo, testkit.WithWorktrees(1))
+	wt := f.Worktrees[0]
+	nested := wt + "/apps/web/.outfit"
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nested+"/config", []byte("[outfit]\n secrets-scan = off\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitDir := f.GitIn(wt, "rev-parse", "--path-format=absolute", "--git-dir")
+	var out, errb bytes.Buffer
+	for k, v := range testkit.EnvMap(f.Home) {
+		t.Setenv(k, v)
+	}
+	code := cli.Execute(context.Background(), cli.Env{
+		Dir: wt + "/apps/web",
+		Getenv: func(k string) string {
+			if k == "GIT_DIR" {
+				return gitDir
+			}
+			return os.Getenv(k)
+		},
+		Stdout: &out, Stderr: &errb,
+	}, []string{"get", "secrets-scan"})
+	if code != 0 || strings.TrimSpace(out.String()) != "on" {
+		t.Fatalf("code=%d out=%q err=%q: the root lock must win", code, out.String(), errb.String())
+	}
+}
+
+// `git -c outfit.x=y <cmd>` reaches hooks as the command scope and beats every
+// other source except a locked team value.
+func TestCommandScopeBeatsEverythingButLocks(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	f.Git("config", "--local", "outfit.biome", "local")
+	t.Setenv("GIT_CONFIG_COUNT", "2")
+	t.Setenv("GIT_CONFIG_KEY_0", "outfit.biome")
+	t.Setenv("GIT_CONFIG_VALUE_0", "once")
+	t.Setenv("GIT_CONFIG_KEY_1", "outfit.secrets-scan")
+	t.Setenv("GIT_CONFIG_VALUE_1", "off")
+	var out, errb bytes.Buffer
+	run := func(key string) string {
+		out.Reset()
+		cli.Execute(context.Background(), cli.Env{Dir: f.Dir, Getenv: os.Getenv, Stdout: &out, Stderr: &errb}, []string{"get", key})
+		return strings.TrimSpace(out.String())
+	}
+	for k, v := range testkit.EnvMap(f.Home) {
+		t.Setenv(k, v)
+	}
+	if got := run("biome"); got != "once" {
+		t.Fatalf("command scope = %q", got)
+	}
+	if got := run("secrets-scan"); got != "on" {
+		t.Fatalf("a locked key resists `git -c`: %q", got)
+	}
+}
+
+func TestFlagErrorsAreJSONWhenAsked(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	code, out, errs := outfit(t, f, f.Dir, "get", "biome", "--bogus", "--json")
+	var e struct {
+		Error string
+		Fix   string
+	}
+	if code != cli.ExitUsage || json.Unmarshal([]byte(out), &e) != nil || e.Fix != "outfit get -h" || errs != "" {
+		t.Fatalf("code=%d out=%q err=%q", code, out, errs)
+	}
+	if code, out, _ := outfit(t, f, f.Dir, "get", "-h"); code != 0 || !strings.Contains(out, "usage: outfit get") {
+		t.Fatalf("-h: %d %q", code, out)
+	}
+}
+
+func TestLsJSONIncludesBaseAndInactiveWarnings(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	f.Write(".outfit/profiles/lean/profile.config", "[outfit]\n biome = off\n[core]\n fsmonitor = x\n")
+	_, out, errs := outfit(t, f, f.Dir, "ls", "--json")
+	var ls struct {
+		Active   string
+		Profiles []struct{ Name, Tier string }
+	}
+	if err := json.Unmarshal([]byte(out), &ls); err != nil || ls.Active != "base" || ls.Profiles[0].Name != "base" || ls.Profiles[0].Tier != "builtin" {
+		t.Fatalf("%v: %q", err, out)
+	}
+	if !strings.Contains(out, "core.fsmonitor") || errs != "" {
+		t.Fatalf("a broken INACTIVE profile must raise a warning: %q", out)
+	}
+}
+
+func TestStatusShowsLockedWithoutValueAndMissingProfile(t *testing.T) {
+	f := testkit.New(t, testkit.Monorepo)
+	f.Write(".outfit/config", "[outfit]\n locked = nope-never-set\n")
+	f.Git("config", "--local", "outfit.profile", "ghost")
+	code, out, _ := outfit(t, f, f.Dir, "status")
+	if code != 0 || !strings.Contains(out, "nope-never-set=(unset) (locked by team)") || !strings.Contains(out, "profile  ghost (not found: behaving as base") {
+		t.Fatalf("%d\n%s", code, out)
 	}
 }

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"strings"
 
@@ -20,14 +19,13 @@ type setChange struct {
 // cmdSet writes personal overrides into git config: --local by default (this
 // clone), --here for this worktree, --global for this machine. `key=` unsets.
 func cmdSet(ctx context.Context, e Env, args []string) int {
-	fs := flag.NewFlagSet("set", flag.ContinueOnError)
-	fs.SetOutput(e.Stderr)
+	fs := newFlags("set")
 	asJSON := fs.Bool("json", false, "print machine-readable output")
 	here := fs.Bool("here", false, "set it for this worktree only")
 	global := fs.Bool("global", false, "set it for every repo on this machine")
-	pos, err := parse(fs, args)
-	if err != nil {
-		return ExitUsage
+	pos, code, stop := parseArgs(e, fs, args)
+	if stop {
+		return code
 	}
 	fail := func(err error) int { return report(e.Stdout, e.Stderr, *asJSON, err) }
 	if len(pos) == 0 || (*here && *global) {
@@ -69,7 +67,7 @@ func cmdSet(ctx context.Context, e Env, args []string) int {
 	case *here:
 		scope, flagName = config.ScopeWorktree, "--worktree"
 		if !l.Cfg.WorktreeConfig {
-			return fail(Errorf("this repository has no per-worktree config yet (extensions.worktreeConfig is off)").WithFix("outfit init"))
+			return fail(Errorf("this repository has no per-worktree config yet (extensions.worktreeConfig is off)").WithFix("git config extensions.worktreeConfig true"))
 		}
 	}
 	for _, t := range todo {
