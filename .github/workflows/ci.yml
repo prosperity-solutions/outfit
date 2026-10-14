@@ -127,7 +127,7 @@ jobs:
             esac
           done
       - name: actionlint
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: Workflows do not run on draft PRs
         run: |
           pip install "pyyaml>=6,<7"
