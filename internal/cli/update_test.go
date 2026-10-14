@@ -228,7 +228,7 @@ func bannerRun(t *testing.T, f *updateFixture, repo *testkit.Repo, extra map[str
 		k, v, _ := strings.Cut(kv, "=")
 		env[k] = v
 	}
-	env["HOME"] = f.home               // the update cache lives under it
+	env["HOME"] = f.home // the update cache lives under it
 	// The hermetic env opts out, and the machine running the tests may be CI or a git
 	// hook itself; these tests are about the banner's own rules, set one at a time.
 	for _, k := range []string{"OUTFIT_NO_UPDATE_CHECK", "CI", "OUTFIT_HOOK_ACTIVE", "GIT_INDEX_FILE"} {
