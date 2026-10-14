@@ -116,11 +116,16 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - name: shellcheck
         run: |
-          # POSIX sh: the installer and the CI helpers that are sh.
-          shellcheck -s sh install.sh scripts/ci/install-git.sh
-          # The hook shim is generated Go text, tested through the hooks tests.
-          # Everything else is bash.
-          shellcheck -S warning -s bash scripts/dev/*.sh scripts/release/*.sh scripts/ci/signing-smoke.sh scripts/demo.sh tests/*.sh
+          # By shebang, so a new script cannot silently go unlinted: sh scripts
+          # are checked as POSIX sh (install.sh is the one users pipe into sh),
+          # bash scripts as bash. The hook shim is generated Go text, tested
+          # through the hooks tests.
+          for f in install.sh scripts/ci/*.sh scripts/dev/*.sh scripts/release/*.sh scripts/demo.sh tests/*.sh; do
+            case $(head -1 "$f") in
+              *bash*) shellcheck -S warning -s bash "$f" ;;
+              *) shellcheck -s sh "$f" ;;
+            esac
+          done
       - name: actionlint
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
       - name: Workflows do not run on draft PRs
@@ -263,10 +268,11 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
-      - name: Install goreleaser and quill
+      - name: Install goreleaser, quill and minisign
         run: |
           go install github.com/goreleaser/goreleaser/v2@v2.18.3
           go install github.com/anchore/quill/cmd/quill@v0.7.1
+          go install aead.dev/minisign/cmd/minisign@v0.3.0
       - run: scripts/ci/signing-smoke.sh
 
   # The single required check. Fails unless every needed job SUCCEEDED. The

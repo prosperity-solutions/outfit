@@ -22,8 +22,11 @@
 #                         For tests.
 #   OUTFIT_MINISIGN_PUBKEY  Replaces the embedded signing key(s) below. For tests.
 #
-# It checks the SHA-256 of the download, and the minisign signature of the
-# checksum list when a `minisign` binary is on PATH. It never uses sudo.
+# It checks the SHA-256 of the download (which catches a damaged download, not a
+# tampered release: the checksum list comes from the same place as the archive) and,
+# when a `minisign` binary is on PATH, the signature of the checksum list against the
+# release key below (which does catch tampering). Install minisign first if you can.
+# It never uses sudo.
 
 set -eu
 
@@ -60,7 +63,7 @@ find_token() {
     [ -z "$token" ] || break
   done
   if [ -z "$token" ] && command -v gh >/dev/null 2>&1; then
-    token=$(gh auth token 2>/dev/null || true)
+    token=$(gh auth token --hostname github.com 2>/dev/null || true)
   fi
   # Tokens are [A-Za-z0-9_] plus dots and dashes. Anything else would break out of
   # the curl config line below, so treat it as no token.
@@ -148,10 +151,17 @@ install_dir() {
   case "$existing" in
     /*)
       dir=$(dirname "$existing")
-      if [ -n "${OUTFIT_INSTALL_DIR:-}" ] && [ "$OUTFIT_INSTALL_DIR" != "$dir" ]; then
-        say "note: outfit is already installed in $dir, so it is updated there (OUTFIT_INSTALL_DIR is only for a first install)" >&2
-      fi
-      echo "$dir" ;;
+      if [ -w "$dir" ]; then
+        if [ -n "${OUTFIT_INSTALL_DIR:-}" ] && [ "$OUTFIT_INSTALL_DIR" != "$dir" ]; then
+          say "note: outfit is already installed in $dir, so it is updated there (OUTFIT_INSTALL_DIR is only for a first install)" >&2
+        fi
+        echo "$dir"
+      elif [ -n "${OUTFIT_INSTALL_DIR:-}" ]; then
+        say "note: $dir (where outfit is installed) is not writable, so it goes to $OUTFIT_INSTALL_DIR. Put that folder before $dir on your PATH, or the old one wins." >&2
+        echo "$OUTFIT_INSTALL_DIR"
+      else
+        err "outfit is installed in $dir, which you cannot write to (this installer never uses sudo). Re-run with OUTFIT_INSTALL_DIR=<a folder you own> and put it first on your PATH."
+      fi ;;
     *) echo "${OUTFIT_INSTALL_DIR:-$HOME/.local/bin}" ;;
   esac
 }
@@ -175,11 +185,20 @@ main() {
   base=${OUTFIT_BASE_URL:-https://github.com/$REPO}
   api=${OUTFIT_API_URL:-https://api.github.com/repos/$REPO}
   if [ -n "$token" ]; then
+    # The token goes to the API URL and nowhere else, and never in the clear.
+    case "$api" in
+      https://* | file://* | http://localhost[:/]* | http://127.0.0.1[:/]*) ;;
+      *) err "refusing to send a GitHub token to $api (only https URLs; OUTFIT_API_URL is for tests)" ;;
+    esac
     rel=latest
     [ -z "$ver" ] || rel=tags/v$ver
     fetch_api "$api/releases/$rel" "$tmp/release.json" "application/vnd.github+json"
     asset_list "$tmp/release.json" >"$tmp/assets.txt"
     [ -s "$tmp/assets.txt" ] || err "that release lists no downloadable files (is it still a draft?)"
+    # The build must be the one the release is named for: a validly signed older
+    # build re-uploaded under a newer release would otherwise pass every check.
+    tag=$(tr ',' '\n' <"$tmp/release.json" | awk '/"tag_name" *:/ { s = $0; sub(/^[^:]*: *"/, "", s); sub(/".*/, "", s); print s; exit }')
+    case "$tag" in v[0-9]*) ;; *) err "the release has no usable tag name" ;; esac
   elif [ -n "$ver" ]; then
     assets=$base/releases/download/v$ver
   else
@@ -192,6 +211,9 @@ main() {
     err "checksums.txt does not list exactly one $plat build"
   if [ -n "$ver" ] && [ "$archive" != "outfit_${ver}_$plat.tar.gz" ]; then
     err "asked for $ver but the release holds $archive"
+  fi
+  if [ -n "$token" ] && [ "$archive" != "outfit_${tag#v}_$plat.tar.gz" ]; then
+    err "release $tag holds $archive, which is not its own build; nothing was installed"
   fi
   say "Installing ${archive%_"$plat".tar.gz} for $plat"
 

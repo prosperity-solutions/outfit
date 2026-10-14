@@ -68,6 +68,7 @@ for want in "outfit_${ver}_linux_amd64.tar.gz" "outfit_${ver}_linux_arm64.tar.gz
   [ -f "$DIR/$want" ] || die "$DIR has no $want; refusing to publish an incomplete release"
 done
 
+topup=0
 release_field() { cap 60 gh release view "$TAG" --json "$1" --jq ".$1" 2>/dev/null || true; }
 
 # The probe and the create are GitHub calls too, so they retry like the uploads.
@@ -77,6 +78,8 @@ open_release() {
   for attempt in 1 2 3; do
     if cap 60 gh release view "$TAG" >/dev/null 2>&1; then
       echo "Release $TAG already exists, topping it up."
+      # Only a draft is replaced wholesale; a published release is left alone.
+      [ "$(release_field isDraft)" = true ] && topup=1
       return 0
     fi
     if cap 120 gh release create "$TAG" --draft --verify-tag --title "$TAG" "${notes[@]}"; then
@@ -123,17 +126,26 @@ refresh_missing() {
 backoff=15
 for attempt in 1 2 3 4 5; do
   refresh_missing
-  [ "${#missing[@]}" -eq 0 ] && break
+  if [ "${#missing[@]}" -eq 0 ] && ! { [ "$attempt" -eq 1 ] && [ "$topup" -eq 1 ]; }; then break; fi
   if [ "$attempt" -gt 1 ]; then
     echo "Retrying in ${backoff}s..."
     nap "$backoff"
     backoff=$((backoff * 2))
   fi
-  echo "Attempt $attempt: uploading ${#missing[@]} of ${#expected[@]} asset(s)."
+  upload=("${missing[@]}")
+  if [ "$attempt" -eq 1 ] && [ "$topup" -eq 1 ]; then
+    # Same name and same size is not the same file: checksums.txt and its
+    # signature have a fixed size in every build, so a draft left by an earlier
+    # build would keep its stale copies. Replace everything once.
+    upload=("${expected[@]}")
+    echo "Topping up an existing release: replacing all ${#expected[@]} asset(s)."
+  else
+    echo "Attempt $attempt: uploading ${#missing[@]} of ${#expected[@]} asset(s)."
+  fi
   # A hang, not an error, is what cost veld v16.57.1. Cap and retry instead of
   # waiting it out. A killed upload leaves a partial asset, which the size/state
   # check catches next pass and --clobber overwrites.
-  cap 600 gh release upload "$TAG" "${missing[@]}" --clobber || true
+  cap 600 gh release upload "$TAG" "${upload[@]}" --clobber || true
 done
 
 refresh_missing

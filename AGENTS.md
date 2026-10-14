@@ -75,9 +75,13 @@ gofmt -l . && go vet ./... && golangci-lint run && go test -race ./...
 - **A skipped job looks green.** A draft's jobs all skip, `gh pr checks` reports
   them as `skipping`, exits 0 and prints "All checks were successful". Read the
   ready run's jobs (`ship` Step 6.3), never the rollup.
+- **A merge to `main` can publish a release.** `release.yml` runs on every push to
+  `main`; a `feat:`/`fix:` (or `!`) PR title cuts the next version, `docs:`/`chore:`/`ci:`
+  cut nothing. Only `release.yml` may reference the signing secrets
+  (`tests/validate-workflow-gates.py` enforces it). Process: `docs/release.md`.
 - macOS minutes count about 10× against a private repo's quota. On PRs macOS runs
   only `unit` and one `e2e` leg; the full macOS matrix runs on push to `main` and
-  in `release.yml`.
+  in `release.yml`, which waits for that run before it publishes.
 - `all-green` is the single check the ruleset requires. Matrix jobs report
   expanded names (`e2e (ubuntu-24.04, 2.36)`), so a check called `e2e` never
   reports.

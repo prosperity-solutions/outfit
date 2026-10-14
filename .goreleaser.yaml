@@ -42,11 +42,12 @@ checksum:
 # compiled in from internal/update/keys.txt. The secret key and password are repo
 # secrets; release.yml writes the key to a 0600 temp file, exports its path as
 # MINISIGN_KEY_FILE and deletes it afterwards. aead.dev/minisign reads the password
-# from stdin when it is not a terminal.
+# from stdin when it is not a terminal, as one line (hence the \n: without it the
+# prompt reads EOF and signing fails).
 signs:
   - id: checksums
     cmd: minisign
-    stdin: "{{ .Env.MINISIGN_PASSWORD }}"
+    stdin: "{{ .Env.MINISIGN_PASSWORD }}\n"
     args: ["-S", "-s", "{{ .Env.MINISIGN_KEY_FILE }}", "-m", "${artifact}", "-x", "${signature}"]
     artifacts: checksum
     signature: "${artifact}.minisig"

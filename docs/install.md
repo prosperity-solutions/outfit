@@ -13,11 +13,19 @@ curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
   https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
 ```
 
+That puts your token in the command line, visible to other users of the same machine
+while it runs. To keep it out, let `gh` fetch the script:
+
+```sh
+gh api -H 'Accept: application/vnd.github.raw' repos/prosperity-solutions/outfit/contents/install.sh | sh
+```
+
 The first token is for fetching the script itself; the script then looks for a token
 on its own, in this order: `OUTFIT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, then
 `gh auth token`. It uses the first one it finds to ask the GitHub API for the
-release and to download its files. The token is never printed, and is sent to the
-API host only, not to wherever GitHub redirects the download.
+release and to download its files. The token is never printed, never placed on a
+command line, sent only to the API host (not to wherever GitHub redirects the
+download), and only over https.
 
 ## Once the repository is public
 
@@ -36,14 +44,23 @@ With no token the script uses the public `releases/latest/download/…` URLs.
 2. Downloads the archive, `checksums.txt` and `checksums.txt.minisig` into a temporary
    folder that is removed on exit.
 3. Checks the archive's SHA-256 against `checksums.txt`. A mismatch stops everything.
+   This catches a damaged download. It does **not** catch a tampered release, because
+   `checksums.txt` comes from the same place as the archive.
 4. If `minisign` is installed, checks the signature of `checksums.txt` against the
    release key built into the script (the same key `outfit update` uses, kept in
    [`internal/update/keys.txt`](../internal/update/keys.txt)). A bad signature stops
-   everything. Without `minisign` it says it only checked the checksum.
+   everything. This is the check that catches tampering, so **install `minisign`
+   first if you can** (`brew install minisign`, `apt install minisign`). Without it
+   the script says it only checked the checksum. With a token, it also requires the
+   archive to be the build the release is named for, so an old, validly signed build
+   cannot be re-uploaded under a newer release; the public URL path cannot check
+   that, because GitHub's "latest" redirect is not signed.
 5. Looks inside the archive and accepts only `outfit`, `LICENSE`, `README.md` and
    `NOTICE`, as plain files.
 6. Puts `outfit` next to the existing one (the folder `command -v outfit` finds), or
-   in `OUTFIT_INSTALL_DIR`, or in `~/.local/bin`. It writes a temporary file in that
+   in `OUTFIT_INSTALL_DIR`, or in `~/.local/bin`. If the existing folder is not
+   writable, it uses `OUTFIT_INSTALL_DIR` when you set it (and tells you to put that
+   folder first on your PATH), and otherwise stops and says so. It writes a temporary file in that
    folder and renames it into place, so a failed install never leaves half a binary.
    It never uses `sudo`.
 7. Prints the PATH line to add if the folder is not on your PATH, then runs

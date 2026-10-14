@@ -5,9 +5,17 @@
 # with `quill describe` that BOTH architectures carry a hardened-runtime,
 # timestamped signature with the right team ID. Runs on Linux, like the release.
 #
-# Needs: goreleaser, quill, openssl on PATH. Exits non-zero on any miss.
+# It also runs the minisign signing step with a throwaway ENCRYPTED key (aead's
+# CLI reads the password as a line from stdin; a password without its newline made
+# the first release rehearsal fail with "failed to read password: EOF") and
+# verifies the result with the same Go code the release uses.
+#
+# Needs: goreleaser, quill, openssl and aead's minisign (go install
+# aead.dev/minisign/cmd/minisign@v0.3.0) on PATH. Exits non-zero on any miss.
 set -euo pipefail
 
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+cd "$root"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 team=TESTTEAM00
@@ -28,9 +36,16 @@ export MACOS_SIGN_P12
 export MACOS_SIGN_PASSWORD=smoke
 unset MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID
 
-goreleaser release --snapshot --clean --skip=publish,sign >/dev/null
+printf 'pw\npw\n' | minisign -G -p "$work/mini.pub" -s "$work/mini.key" >/dev/null
+export MINISIGN_KEY_FILE="$work/mini.key" MINISIGN_PASSWORD=pw
+
+goreleaser release --snapshot --clean --skip=publish >/dev/null
 bin=dist/outfit-darwin_darwin_all/outfit
 [ -f "$bin" ] || { echo "no universal binary at $bin"; exit 1; }
+
+(cd "$root" && go run ./internal/tools/verifysig dist/checksums.txt dist/checksums.txt.minisig "$work/mini.pub") ||
+  { echo "FAIL: the minisign signature does not verify"; exit 1; }
+echo "ok:   checksums.txt is signed and verifies"
 
 desc=$(quill describe "$bin" 2>&1)
 fail=0

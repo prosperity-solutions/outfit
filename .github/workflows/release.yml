@@ -22,6 +22,13 @@ concurrency:
 permissions:
   contents: read
 
+# `shell: bash` adds -o pipefail, so `curl ... | sh` fails when curl does. (The
+# unset default is `bash -e`, under which a failed curl feeds sh an empty script
+# and the pipeline succeeds.)
+defaults:
+  run:
+    shell: bash
+
 env:
   REPO: prosperity-solutions/outfit
 
@@ -30,6 +37,8 @@ jobs:
   version:
     name: Next version
     runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
     outputs:
       releasable: ${{ steps.v.outputs.releasable }}
       tag: ${{ steps.v.outputs.tag }}
@@ -39,29 +48,43 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+      # No build cache here: the cache is shared with every job that runs on a
+      # push to main, and this job holds the signing keys. Whatever wrote the cache
+      # first would decide what we compile and sign.
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
+          cache: false
       - name: Compute the next version from Conventional Commits
         id: v
         run: |
           go install github.com/caarlos0/svu/v3@v3.4.0
           current=$(svu current)
           next=$(svu next --v0)
-          echo "current=$current next=$next"
-          # No tag yet makes `current` v0.0.0; svu then answers v0.1.0 for the
-          # first feat and v0.0.0 when nothing is releasable. --v0 keeps a
-          # breaking change from jumping to 1.0.
+          # The latest PUBLISHED release: what installed clients are on, and what the
+          # update check in `verify` starts from. (Not the latest tag: a tag whose
+          # release never got published must not be treated as a release.)
+          previous=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
+          echo "current=$current next=$next previous=${previous:-none}"
           if [ "$next" = "$current" ]; then
-            echo "Nothing releasable since $current (only docs/chore/ci commits). Stopping."
-            echo "releasable=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            # No new releasable commit. But if THIS commit already carries the
+            # tag and its release never got published (publish failed after
+            # the tag was pushed), this is a re-run that must finish the job,
+            # not a run with nothing to do.
+            if [ "$current" != v0.0.0 ] && [ "$(git rev-list -n1 "$current")" = "$GITHUB_SHA" ] &&
+              ! gh api "repos/$REPO/releases/tags/$current" >/dev/null 2>&1; then
+              echo "$current is tagged on this commit but not published: resuming it."
+            else
+              echo "Nothing releasable since $current (only docs/chore/ci commits). Stopping."
+              echo "releasable=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
           {
             echo "releasable=true"
             echo "tag=$next"
             echo "version=${next#v}"
-            if [ "$current" != v0.0.0 ]; then echo "previous=$current"; fi
+            echo "previous=$previous"
           } >> "$GITHUB_OUTPUT"
           echo "### Releasing $next" >> "$GITHUB_STEP_SUMMARY"
 
@@ -73,13 +96,18 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       TAG: ${{ needs.version.outputs.tag }}
+      PREVIOUS: ${{ needs.version.outputs.previous }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+      # No build cache here: the cache is shared with every job that runs on a
+      # push to main, and this job holds the signing keys. Whatever wrote the cache
+      # first would decide what we compile and sign.
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
+          cache: false
 
       # Fail early, naming the thing, rather than building for ten minutes and
       # failing at the signing step.
@@ -148,7 +176,7 @@ jobs:
         run: |
           gobin=$(go env GOPATH)/bin
           export PATH="$PATH:$gobin"
-          git tag "$TAG"
+          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || git tag "$TAG"
           go run github.com/goreleaser/goreleaser/v2@v2.18.3 release --clean --skip=publish
 
       - name: Remove the signing key
@@ -161,6 +189,16 @@ jobs:
       # committed key fails the release here, before anything is published.
       - name: Verify the signature against internal/update/keys.txt
         run: go run ./internal/tools/verifysig dist/checksums.txt dist/checksums.txt.minisig
+
+      # Clients already installed trust the keys of the release they run. If this
+      # build is signed with a key that release does not list, none of them could
+      # update to it: that is a key rotation done in the wrong order.
+      - name: Check that the previous release's clients accept the signature
+        run: |
+          if [ -z "$PREVIOUS" ]; then echo "No previous release."; exit 0; fi
+          git show "$PREVIOUS:internal/update/keys.txt" > "$RUNNER_TEMP/previous-keys.txt"
+          go run ./internal/tools/verifysig dist/checksums.txt dist/checksums.txt.minisig "$RUNNER_TEMP/previous-keys.txt" ||
+            { echo "::error::this release is signed with a key that $PREVIOUS does not trust, so installed clients would reject it. Ship the new key in a feat:/fix: release first (docs/release.md, 'Rotating the update key')."; exit 1; }
 
       - name: Gather the release files
         run: |
@@ -195,6 +233,8 @@ jobs:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest, macos-15-intel]
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      HAVE_P12: ${{ secrets.MACOS_SIGN_P12 != '' }}
+      TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -224,6 +264,11 @@ jobs:
           got=$("$OUTFIT_INSTALL_DIR/outfit" version | awk '{print $2}')
           [ "$got" = "$VERSION" ] || { echo "::error::outfit version says '$got', expected $VERSION"; exit 1; }
           echo "OUTFIT_BIN=$OUTFIT_INSTALL_DIR/outfit" >> "$GITHUB_ENV"
+      # Before anything is public: a wrong team, a missing hardened runtime or
+      # timestamp, or a binary macOS refuses to run stops the release here.
+      - name: macOS signature
+        if: runner.os == 'macOS' && env.HAVE_P12 == 'true'
+        run: scripts/release/check-macos-signature.sh "$OUTFIT_BIN"
       - name: Run the demo with the installed binary
         run: scripts/demo.sh --quick --outfit "$OUTFIT_BIN"
       - name: outfit update --check against the fake server
@@ -234,10 +279,41 @@ jobs:
             echo "outfit has no update command in this release yet: skipped"
           fi
 
+  # ── 3b. Main's own CI must be green for this commit ──────────────────────
+  # ci.yml runs the full test matrix (every git version, both macOS legs) on the
+  # same push. Publishing waits for its `all-green` check, so a red main never
+  # produces a release.
+  ci:
+    name: Wait for CI
+    needs: version
+    if: needs.version.outputs.releasable == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      checks: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: |
+          for _ in $(seq 1 100); do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+              --jq '[.check_runs[] | select(.name == "all-green")] | sort_by(.id) | (last // {}) | (.conclusion // "pending")' || echo pending)
+            echo "all-green: ${state:-none yet}"
+            case "$state" in
+              success) exit 0 ;;
+              failure | cancelled | timed_out | action_required | neutral | skipped)
+                echo "::error::CI on this commit is $state; not releasing."; exit 1 ;;
+            esac
+            sleep 30
+          done
+          echo "::error::CI did not finish within 50 minutes; not releasing."
+          exit 1
+
   # ── 4. Publish: tag, then a verified draft-first release ──────────────────
   publish:
     name: Publish
-    needs: [version, smoke]
+    needs: [version, smoke, ci]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -257,6 +333,14 @@ jobs:
         with:
           name: release-notes
           path: notes
+      # The files travelled through artifact storage and four runners that
+      # installed third-party packages. Check them again, with the committed key,
+      # right before they become public.
+      - name: Re-check the files before publishing
+        run: |
+          set -e
+          (cd out && sha256sum -c checksums.txt)
+          go run ./internal/tools/verifysig out/checksums.txt out/checksums.txt.minisig
       - name: Push the tag
         run: |
           set -e
@@ -320,6 +404,7 @@ jobs:
           fi
           dir="$RUNNER_TEMP/previous"
           curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | OUTFIT_INSTALL_DIR="$dir" OUTFIT_VERSION="${PREVIOUS#v}" sh
+          [ -x "$dir/outfit" ] || { echo "::error::could not install $PREVIOUS"; exit 1; }
           if ! "$dir/outfit" --help 2>&1 | grep -q '^  update'; then
             echo "$PREVIOUS has no 'outfit update': update path not verified." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
@@ -344,26 +429,14 @@ jobs:
       HAVE_NOTARY: ${{ secrets.MACOS_NOTARY_KEY != '' }}
       TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Check the published binary's signature
         run: |
           if [ "$HAVE_P12" != true ]; then
             echo "No MACOS_SIGN_P12: the macOS binary is unsigned, nothing to verify." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          mkdir dl && cd dl
-          gh release download "$TAG" -p '*_darwin_all.tar.gz'
-          tar -xzf ./*_darwin_all.tar.gz outfit
-          codesign --verify --strict --verbose=2 outfit
-          info=$(codesign -dvv outfit 2>&1)
-          echo "$info" | grep -E '^(Identifier|Authority|TeamIdentifier|Timestamp|CodeDirectory)'
-          echo "$info" | grep -q '^Authority=Developer ID Application' || { echo "::error::not signed by a Developer ID Application certificate"; exit 1; }
-          echo "$info" | grep -q 'flags=.*runtime' || { echo "::error::hardened runtime is not enabled"; exit 1; }
-          echo "$info" | grep -q '^Timestamp=' || { echo "::error::the signature has no secure timestamp"; exit 1; }
-          if [ -n "$TEAM_ID" ]; then
-            got=$(echo "$info" | sed -n 's/^TeamIdentifier=//p')
-            [ "$got" = "$TEAM_ID" ] || { echo "::error::TeamIdentifier is '$got', expected '$TEAM_ID'"; exit 1; }
-          fi
-          # Informational: a bare executable is not an app, so spctl may say so.
-          spctl -a -t install -vv outfit || true
-          lipo -archs outfit | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "macOS signature verified (notarization requested: $HAVE_NOTARY)." | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir dl
+          (cd dl && gh release download "$TAG" -p '*_darwin_all.tar.gz' && tar -xzf ./*_darwin_all.tar.gz outfit)
+          scripts/release/check-macos-signature.sh dl/outfit
+          echo "macOS signature verified on the published file (notarization requested: $HAVE_NOTARY)." | tee -a "$GITHUB_STEP_SUMMARY"

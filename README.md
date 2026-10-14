@@ -31,6 +31,14 @@ curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
   https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
 ```
 
+That puts your token on the command line, where other users of a shared machine can
+see it. To keep it out, let `gh` fetch the script instead (the script then finds the
+token itself):
+
+```sh
+gh api -H 'Accept: application/vnd.github.raw' repos/prosperity-solutions/outfit/contents/install.sh | sh
+```
+
 Once the repository is public, no token is needed:
 
 ```sh
@@ -39,8 +47,9 @@ curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/in
 
 It is a single static binary for Linux (amd64, arm64) and macOS (universal), needs
 git 2.36 or newer, and never uses `sudo`: it puts `outfit` in `~/.local/bin` (or next
-to the one you already have). It checks a SHA-256 and, if `minisign` is installed, a
-signature. Options, and checking a download by hand: [docs/install.md](docs/install.md).
+to the one you already have). It checks a SHA-256 (which catches a broken download) and, if
+`minisign` is installed, the release signature (which catches a tampered release), so
+install `minisign` first if you can. Options, and checking a download by hand: [docs/install.md](docs/install.md).
 `scripts/demo.sh` walks through it all in a throwaway repository.
 
 ## Use it

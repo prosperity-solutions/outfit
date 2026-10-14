@@ -129,6 +129,14 @@ check "if the release cannot be read, nothing is published" is_draft "$S"
 check "  and it does not guess" out_has "rather than guessing"
 check "  and uploads nothing" bash -c '[ ! -e "$1/uploads" ]' _ "$S"
 
+# A draft left by an earlier build holds a same-size, different-content checksums.txt.
+S=$WORK/s8b; mkdir -p "$S/assets" "$S/state"; touch "$S/exists" "$S/draft"
+for f in "$REL"/*; do n=$(basename "$f"); cp "$f" "$S/assets/$n"; echo uploaded >"$S/state/$n"; done
+tr 'a-z' 'A-Z' <"$REL/checksums.txt" >"$S/assets/checksums.txt"
+run "$S" -- v$VER "$REL"
+check "a draft with a stale same-size asset is topped up with the right bytes" cmp -s "$S/assets/checksums.txt" "$REL/checksums.txt"
+check "  and published" is_public "$S"
+
 S=$WORK/s9; mkdir -p "$S"; touch "$S/create_fail"; run "$S" -- v$VER "$REL"
 check "a release that cannot be created fails" rc 1
 

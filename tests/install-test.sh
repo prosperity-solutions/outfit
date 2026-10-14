@@ -165,6 +165,23 @@ check "  without a PATH hint" bash -c '! grep -q "not on your PATH" "$1"' _ "$WO
 check "  and says where OUTFIT_INSTALL_DIR went" out_has "already installed in $D"
 check "  the other dir was never created" bash -c '[ ! -e "$1" ]' _ "$WORK/elsewhere"
 
+# An existing install in a folder we cannot write to (never as root, where nothing is read-only).
+if [ "$(id -u)" != 0 ]; then
+  RO=$WORK/ro
+  mkdir -p "$RO"
+  printf '#!/bin/sh\necho old\n' >"$RO/outfit"
+  chmod +x "$RO/outfit"
+  chmod 555 "$RO"
+  D=$WORK/mine
+  run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" "PATH=$RO:$WORK/bin"
+  check "a read-only existing install falls back to OUTFIT_INSTALL_DIR" installed "$D"
+  check "  and warns about PATH order" out_has "Put that folder before"
+  run_install "$(base_env)" "PATH=$RO:$WORK/bin"
+  check "a read-only existing install with no OUTFIT_INSTALL_DIR fails" rc_is 1
+  check "  and names the fix" out_has "Re-run with OUTFIT_INSTALL_DIR"
+  chmod 755 "$RO"
+fi
+
 # ── checksum, platform, hostile archive ─────────────────────────────────────
 D=$WORK/d4
 mkdir -p "$D"
@@ -241,6 +258,20 @@ D=$WORK/api-missing
 run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN OUTFIT_VERSION=9.9.9
 check "a missing release fails" rc_is 1
 check "  and installs nothing" nothing_in "$D"
+# A validly signed OLDER build re-uploaded under a newer release is refused.
+sed 's/"tag_name":"v'$VER'"/"tag_name":"v9.9.10"/; s/"tag_name": *"v'$VER'"/"tag_name": "v9.9.10"/' "$REL/api/releases/latest" >"$WORK/latest.json"
+cp "$REL/api/releases/latest" "$WORK/latest.orig"
+cp "$WORK/latest.json" "$REL/api/releases/latest"
+D=$WORK/api-replay
+run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN
+check "a build that is not the release's own is refused" rc_is 1
+check "  with the reason" out_has "not its own build"
+check "  and nothing was installed" nothing_in "$D"
+cp "$WORK/latest.orig" "$REL/api/releases/latest"
+D=$WORK/api-http
+run_install OUTFIT_API_URL="http://evil.example/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN
+check "a token is never sent over plain http" rc_is 1
+check "  with the reason" out_has "refusing to send a GitHub token"
 # gh as the last-resort token source
 mkdir -p "$WORK/ghbin"
 cp -P "$WORK/bin"/* "$WORK/ghbin/"

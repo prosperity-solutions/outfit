@@ -35,8 +35,9 @@ just the leaf: export the Developer ID certificate together with Apple's
 intermediate. If signing fails with "unable to find remaining chain certificates", the
 chain is what is missing.
 
-When the signing secrets exist, a `verify-signing` job on `macos-latest` checks the
-published result: `codesign --verify --strict`, a Developer ID authority, and a
+When the signing secrets exist, the macOS smoke legs check the built binary **before
+anything is published**, and a `verify-signing` job on `macos-latest` reads the published
+file back afterwards. Both run `scripts/release/check-macos-signature.sh`: `codesign --verify --strict`, a Developer ID authority, and a
 `TeamIdentifier` equal to the repository variable `MACOS_TEAM_ID` when that is set. A
 failed check fails the release.
 
