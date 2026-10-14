@@ -24,7 +24,11 @@ type lsEntry struct {
 func cmdLs(ctx context.Context, e Env, args []string) int {
 	fs := newFlags("ls")
 	asJSON := fs.Bool("json", false, "print machine-readable output")
-	if _, code, stop := parseArgs(e, fs, args); stop {
+	pos, code, stop := parseArgs(e, fs, args)
+	if stop {
+		return code
+	}
+	if code, bad := noArgs(e, "ls", pos, args); bad {
 		return code
 	}
 	l, err := load(ctx, e)
@@ -34,7 +38,7 @@ func cmdLs(ctx context.Context, e Env, args []string) int {
 	listing := profiles.List(ctx, l.Git, l.Repo)
 
 	// base is built in and always first: "no swaps", what a non-user gets.
-	entries := []lsEntry{{Name: config.Base, Tier: "builtin", Active: l.Result.Profile.Name == config.Base, Keys: []string{}, Files: []string{}}}
+	entries := []lsEntry{{Name: config.Base, Tier: "builtin", Active: l.Result.Profile.Name == config.Base || l.Profile == nil, Keys: []string{}, Files: []string{}}}
 	var inactiveWarnings []config.Warning
 	for _, p := range listing.Profiles {
 		ent := lsEntry{Name: p.Name, Tier: string(p.Tier), Active: p.Name == l.Result.Profile.Name, Keys: []string{}, Files: []string{}}

@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"slices"
 
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 )
@@ -79,7 +78,7 @@ func Execute(ctx context.Context, e Env, args []string) int {
 		fmt.Fprintln(e.Stdout, usage)
 		return ExitOK
 	default:
-		return report(e.Stdout, e.Stderr, slices.Contains(args, "--json"),
+		return report(e.Stdout, e.Stderr, wantsJSON(args),
 			Usagef("unknown command %q", args[0]).WithFix("outfit help"))
 	}
 }
@@ -104,7 +103,11 @@ type gitInfo struct {
 func cmdVersion(ctx context.Context, e Env, args []string) int {
 	fs := newFlags("version")
 	asJSON := fs.Bool("json", false, "print machine-readable output")
-	if _, code, stop := parseArgs(e, fs, args); stop {
+	pos, code, stop := parseArgs(e, fs, args)
+	if stop {
+		return code
+	}
+	if code, bad := noArgs(e, "version", pos, args); bad {
 		return code
 	}
 

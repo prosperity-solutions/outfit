@@ -396,11 +396,17 @@ func TestSetNormalizesBooleansAndReportsScopes(t *testing.T) {
 	// JSON is an object with stable fields.
 	_, out, _ = outfit(t, f, f.Dir, "set", "tests=off", "--json")
 	var r struct {
-		Changes  []map[string]any
-		Warnings []any
+		Changes []map[string]any
 	}
-	if err := json.Unmarshal([]byte(out), &r); err != nil || len(r.Changes) != 1 || r.Warnings == nil {
+	if err := json.Unmarshal([]byte(out), &r); err != nil || len(r.Changes) != 1 {
 		t.Fatalf("%v %q", err, out)
+	}
+	if r.Changes[0]["still_set_in"] == nil {
+		t.Error("still_set_in must be [], never null")
+	}
+	// Setting the same value twice reports the second as unchanged.
+	if _, o2, _ := outfit(t, f, f.Dir, "set", "tests=off", "--json"); !strings.Contains(o2, `"changed":false`) {
+		t.Errorf("repeated set must be idempotent: %q", o2)
 	}
 	for _, k := range []string{"key", "value", "unset", "scope", "changed", "still_set_in"} {
 		if _, ok := r.Changes[0][k]; !ok {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -29,8 +30,11 @@ var errNotInRepo = Errorf("not inside a git repository").WithFix("cd into your r
 // whole cost of `outfit get`: exactly one git process.
 func load(ctx context.Context, e Env) (*loaded, error) {
 	r, err := repo.Discover(e.Dir, e.Getenv)
-	if err != nil {
+	if errors.Is(err, repo.ErrNotRepo) {
 		return nil, errNotInRepo
+	}
+	if err != nil {
+		return nil, Errorf("cannot locate the git directory: %v", err)
 	}
 	if r.WorkTree == "" {
 		return nil, Errorf("this is a bare repository: outfit works on checkouts").WithFix("cd into a working tree")

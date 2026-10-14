@@ -112,6 +112,9 @@ func gitBool(v string) bool {
 	return false
 }
 
+// Value returns the final value of key within scope.
+func (gc GitConfig) Value(scope, key string) (string, bool) { return gc.last(scope, key) }
+
 // Has reports whether key is set in scope.
 func (gc GitConfig) Has(scope, key string) bool {
 	_, ok := gc.last(scope, key)

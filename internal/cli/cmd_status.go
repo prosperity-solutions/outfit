@@ -30,12 +30,16 @@ type statusJSON struct {
 }
 
 // cmdStatus shows the active profile and where every value comes from. It is
-// one of the four commands that enforce the git floor (init, use, status,
-// version), and it never runs inside a hook.
+// one of the commands that enforce the git floor (init, use and status; version
+// only warns), and it never runs inside a hook.
 func cmdStatus(ctx context.Context, e Env, args []string) int {
 	fs := newFlags("status")
 	asJSON := fs.Bool("json", false, "print machine-readable output")
-	if _, code, stop := parseArgs(e, fs, args); stop {
+	pos, code, stop := parseArgs(e, fs, args)
+	if stop {
+		return code
+	}
+	if code, bad := noArgs(e, "status", pos, args); bad {
 		return code
 	}
 	fail := func(err error) int { return report(e.Stdout, e.Stderr, *asJSON, err) }

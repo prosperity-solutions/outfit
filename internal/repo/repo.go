@@ -13,7 +13,7 @@ import (
 
 // Repo describes where a repository lives on disk.
 type Repo struct {
-	// WorkTree is the top of the checkout ("" when discovered via GIT_DIR alone).
+	// WorkTree is the top of the checkout ("" only for a bare repository).
 	WorkTree string
 	// GitDir is this worktree's own git dir (<common>/worktrees/<n> for a linked
 	// worktree, the same as CommonDir otherwise).
@@ -58,8 +58,9 @@ func Discover(start string, getenv func(string) string) (Repo, error) {
 			}
 		}
 		if r.WorkTree == "" {
-			// Never guess the worktree from cwd: a hook that `cd`s into a
-			// package would read that package's .outfit/ instead of the repo's.
+			// Last resort (a separate git dir with no back-pointer): the nearest
+			// ancestor with a .git entry. Never the bare cwd: a hook that `cd`s into
+			// a package must not read that package's .outfit/.
 			r.WorkTree = enclosingWorkTree(start)
 		}
 		return r, nil

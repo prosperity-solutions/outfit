@@ -130,9 +130,6 @@ func Resolve(in Input) Result {
 			keys[k] = true
 		}
 	}
-	for k := range locked {
-		keys[k] = true
-	}
 	delete(keys, KeyProfile)
 	delete(keys, KeyLocked)
 	// The system scope (/etc/gitconfig, MDM) is deliberately not consulted, and a

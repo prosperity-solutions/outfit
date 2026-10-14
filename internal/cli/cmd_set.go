@@ -15,7 +15,8 @@ type setChange struct {
 	Value string `json:"value"`
 	Unset bool   `json:"unset"`
 	Scope string `json:"scope"`
-	// Changed is false when the request was already satisfied (idempotent).
+	// Changed is false when the request was already satisfied (idempotent): the
+	// value was already set, or an unset found nothing to remove.
 	Changed bool `json:"changed"`
 	// StillSetIn lists the other sources of the key after an unset.
 	StillSetIn []string `json:"still_set_in"`
@@ -89,13 +90,15 @@ func cmdSet(ctx context.Context, e Env, args []string) int {
 	changes := []setChange{}
 	for _, t := range todo {
 		name := "outfit." + t.key
-		ch := setChange{Key: t.key, Value: t.val, Unset: t.unset, Scope: scope}
+		ch := setChange{Key: t.key, Value: t.val, Unset: t.unset, Scope: scope, StillSetIn: []string{}}
 		if t.unset {
-			// Exit 5 means "nothing to unset": already as requested.
-			ch.Changed = l.Cfg.Has(scope, t.key)
-			if res, err := l.Git.Write(ctx, "config", flagName, "--unset-all", name); err != nil && res.ExitCode != 5 {
+			// Exit 5 means "nothing to unset": already as requested. The exit code,
+			// not our snapshot, decides Changed, so it is right even without a repo.
+			res, err := l.Git.Write(ctx, "config", flagName, "--unset-all", name)
+			if err != nil && res.ExitCode != 5 {
 				return fail(partial(err, changes))
 			}
+			ch.Changed = err == nil
 			// Unsetting one scope does not unset the others: say who still sets it.
 			ch.StillSetIn = l.Cfg.OtherScopes(scope, t.key)
 		} else {
@@ -103,16 +106,18 @@ func cmdSet(ctx context.Context, e Env, args []string) int {
 			if _, err := l.Git.Write(ctx, "config", flagName, "--replace-all", name, t.val); err != nil {
 				return fail(partial(err, changes))
 			}
-			ch.Changed = true
+			prev, had := l.Cfg.Value(scope, t.key)
+			ch.Changed = !had || prev != t.val
 		}
 		changes = append(changes, ch)
 	}
 
 	if *asJSON {
+		// An object, not a bare array, so fields can be added without breaking
+		// consumers.
 		out, _ := json.Marshal(struct {
-			Changes  []setChange      `json:"changes"`
-			Warnings []config.Warning `json:"warnings"`
-		}{changes, []config.Warning{}})
+			Changes []setChange `json:"changes"`
+		}{changes})
 		fmt.Fprintln(e.Stdout, string(out))
 		return ExitOK
 	}

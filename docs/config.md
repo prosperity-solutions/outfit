@@ -40,7 +40,7 @@ outfit **never** `include.path`s a committed file: a committed git config could 
 execution on every teammate's machine. outfit parses the two files itself and
 accepts **only** `outfit.*` keys. Everything else (other sections, includes, bad
 lines, control characters in a value, a file over 1 MiB) is ignored, and
-`outfit status` / `outfit ls` print each one with its line number.
+`outfit status` / `outfit ls` print each one with its line number where it has one.
 
 It also never follows a committed symlink: `.outfit/`, `.outfit/profiles/`, a
 profile directory and `config`/`profile.config` must be real directories and
@@ -57,8 +57,8 @@ A toggle is a string. By convention it is exactly `on` or `off`, and hooks compa
 against the literal `off`. So `outfit set` turns `OFF`, `false`, `no` and `0` into
 `off` (and `ON`, `true`, `yes`, `1` into `on`); any other value (`fast`) is kept as
 typed. In a committed file nothing is rewritten, because teammates without outfit
-read the raw text: `OFF`, `false`, `no`, `0`, `true`, `yes`, `1` and a bare key get
-a warning telling you to write `on` or `off`.
+read the raw text: `ON`, `OFF` (any case other than exactly `on`/`off`), `false`,
+`no`, `0`, `true`, `yes`, `1` and a bare key get a warning telling you to write `on` or `off`.
 
 Until the hook dispatcher ships (the next release), a toggle only affects hooks
 that call `outfit get` themselves (see the snippet at the end).
@@ -98,11 +98,11 @@ A profile name that no longer exists is treated as `base`, with a warning.
 | `outfit ls` | profiles across the three tiers (`committed`, `local`, `worktree`), their keys and files; `*` marks the active one. |
 | `outfit status` | the active profile, where every toggle comes from, the files it swaps, and warnings. Enforces git ≥ 2.36. |
 
-All of them accept `--json`. Failures carry `"fix"` and `"retryable"`.
+All of them accept `--json`. Failures carry `"retryable"` and, when there is one, the exact `"fix"` command. `ls` shows a built-in `base` row (tier `builtin`): the profile that means no swaps.
 
 Exit codes: `0` ok, `1` error (or an unset `get`: there is no registry of known
 keys, so an unset key is "not found", like `git config --get`, never "unknown"),
-`2` usage or unknown profile, `3` needs a human, `4` out of sync or stale (`status` only).
+`2` usage or unknown profile, `3` needs a human and `4` out of sync or stale (`status` only): the last two are reserved and not emitted yet.
 
 ## Profile tiers
 

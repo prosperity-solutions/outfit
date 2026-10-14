@@ -111,7 +111,7 @@ func List(ctx context.Context, g gitx.Client, r repo.Repo) Listing {
 		if prev, ok := seen[p.Name]; ok {
 			l.Warnings = append(l.Warnings, config.Warning{
 				Source:  string(p.Tier) + " profile " + p.Name,
-				Message: fmt.Sprintf("name clashes with the %s profile %q, which wins; rename yours: outfit new <other-name> --from %s", prev.Tier, p.Name, p.Name),
+				Message: fmt.Sprintf("name clashes with the %s profile %q, which wins; rename your directory %s to a free name", prev.Tier, p.Name, p.Dir),
 			})
 			return
 		}
