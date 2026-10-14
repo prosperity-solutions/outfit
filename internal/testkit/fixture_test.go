@@ -95,8 +95,12 @@ func TestHuskyLayoutRunsAndLogs(t *testing.T) {
 	r.Write("x.txt", "x\n")
 	r.Git("add", "x.txt")
 	r.Git("commit", "-qm", "feat: x")
-	if !strings.Contains(r.Hooks(), "hook=pre-commit argv=") {
-		t.Fatalf("pre-commit did not log: %q", r.Hooks())
+	if !strings.Contains(r.Hooks(), "hook=pre-commit argv=\n") || !strings.Contains(r.Hooks(), "hook=commit-msg argv=[") {
+		t.Fatalf("hooks did not log argv: %q", r.Hooks())
+	}
+	r.Git("checkout", "-q", "-b", "other")
+	if !strings.Contains(r.Hooks(), "hook=post-checkout argv=[") {
+		t.Fatalf("post-checkout did not log: %q", r.Hooks())
 	}
 	// A failing hook blocks the commit and the exit code comes through.
 	if err := os.WriteFile(r.HookLog+".exit.pre-commit", []byte("7"), 0o644); err != nil {
@@ -110,9 +114,26 @@ func TestHuskyLayoutRunsAndLogs(t *testing.T) {
 }
 
 func TestPlainAndLefthookStubs(t *testing.T) {
-	r := testkit.New(t, testkit.Monorepo, testkit.WithHooks(), testkit.WithLefthook())
-	r.Git("commit", "-q", "--allow-empty", "-m", "feat: empty")
-	if !strings.Contains(r.Hooks(), "hook=pre-commit") && !strings.Contains(r.Hooks(), "hook=commit-msg") {
-		t.Fatalf("hooks did not run: %q", r.Hooks())
+	plain := testkit.New(t, testkit.Monorepo, testkit.WithHooks())
+	plain.Git("commit", "-q", "--allow-empty", "-m", "feat: empty")
+	if h := plain.Hooks(); !strings.Contains(h, "hook=pre-commit argv=") || strings.Contains(h, "via=") {
+		t.Fatalf("plain stubs: %q", h)
+	}
+	lh := testkit.New(t, testkit.Monorepo, testkit.WithLefthook())
+	lh.Git("commit", "-q", "--allow-empty", "-m", "feat: empty")
+	if h := lh.Hooks(); !strings.Contains(h, "hook=pre-commit via=lefthook argv=") {
+		t.Fatalf("lefthook stubs: %q", h)
+	}
+	if lh.Git("ls-files", "lefthook.yml") != "lefthook.yml" {
+		t.Fatal("lefthook.yml must be committed")
+	}
+}
+
+func TestPrePushStubLogsStdin(t *testing.T) {
+	r := testkit.New(t, testkit.Monorepo, testkit.WithHooks(), testkit.WithUpstream())
+	r.Git("push", "-q", "origin", "main:other")
+	h := r.Hooks()
+	if !strings.Contains(h, "hook=pre-push argv=[origin][") || !strings.Contains(h, "stdin=<<\nrefs/heads/main ") {
+		t.Fatalf("pre-push must log argv and stdin: %q", h)
 	}
 }

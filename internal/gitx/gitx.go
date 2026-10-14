@@ -123,5 +123,6 @@ func trace(args []string) {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%d git %s\n", time.Now().UnixNano(), strings.Join(args, " "))
+	line := strings.ReplaceAll(strings.Join(args, " "), "\n", `\n`) // one line per call
+	fmt.Fprintf(f, "%d git %s\n", time.Now().UnixNano(), line)
 }

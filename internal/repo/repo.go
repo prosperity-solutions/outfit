@@ -55,7 +55,7 @@ func Discover(start string, getenv func(string) string) (Repo, error) {
 	}
 	for {
 		dotgit := filepath.Join(dir, ".git")
-		fi, err := os.Lstat(dotgit)
+		fi, err := os.Stat(dotgit) // follows a .git symlink to a directory
 		switch {
 		case err == nil && fi.IsDir():
 			return Repo{WorkTree: dir, GitDir: dotgit, CommonDir: dotgit}, nil

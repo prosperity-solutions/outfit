@@ -7,7 +7,8 @@ name: CI
 # (docs/ship.md Step 6.3).
 #
 # `all-green` is the one check the ruleset requires. Matrix jobs report expanded
-# names (`e2e (ubuntu-24.04, 2.36)`), so requiring `e2e` would never report.
+# names (`Integration (ubuntu-24.04, git 2.36.6)`), so requiring `Integration`
+# would never report.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -110,8 +111,9 @@ jobs:
       - uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9
         with:
           version: latest
+      # v1.1.4 panics under Go 1.27 (found on the first CI run); bump deliberately.
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - name: shellcheck
         run: |
           files=$(git ls-files 'install.sh' 'scripts/**/*.sh' | grep -E '(^install\.sh$|shim)' || true)
@@ -174,12 +176,14 @@ jobs:
             echo "matrix={\"include\":[$linux,$mac]}" >> "$GITHUB_OUTPUT"
           fi
 
-  # Integration (real git in temp dirs) and e2e (testscript against the real
-  # binary): everything `go test -short` skips.
+  # Integration (real git in temp dirs) and e2e (testscript, which re-executes
+  # the test binary as `outfit`) in ONE job: the whole suite, including what
+  # `go test -short` skips in the unit job.
   integration:
     name: Integration (${{ matrix.os }}, git ${{ matrix.git }})
     runs-on: ${{ matrix.os }}
     needs: plan
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -188,9 +192,10 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
-      - name: Cache git build
+      - name: Restore the git build cache
+        id: gitcache
         if: matrix.git != 'apple' && matrix.git != 'brew'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/outfit-git
           key: git-${{ runner.os }}-${{ runner.arch }}-${{ matrix.git }}-${{ hashFiles('scripts/ci/install-git.sh') }}
@@ -198,6 +203,14 @@ jobs:
         env:
           GIT_UNDER_TEST: ${{ matrix.git }}
         run: scripts/ci/install-git.sh "$GIT_UNDER_TEST"
+      # Saved right after the build, not at job end, so a failing test leg does
+      # not throw away several minutes of compiling git.
+      - name: Save the git build cache
+        if: steps.gitcache.outputs.cache-hit == 'false'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/outfit-git
+          key: ${{ steps.gitcache.outputs.cache-primary-key }}
       - name: go test (integration and e2e)
         run: go test -race -count=1 ./...
 

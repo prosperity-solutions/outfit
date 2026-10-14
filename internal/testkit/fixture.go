@@ -52,7 +52,8 @@ type Option func(*spec)
 // and ignored, core.hooksPath=.husky/_ in the local config.
 func WithHusky() Option { return func(s *spec) { s.husky = true } }
 
-// WithLefthook adds lefthook.yml and lefthook-style stubs in .git/hooks.
+// WithLefthook adds lefthook.yml and stubs in .git/hooks that log `via=lefthook`
+// (lefthook installs its shims there). It replaces WithHooks' plain stubs.
 func WithLefthook() Option { return func(s *spec) { s.lefthook = true } }
 
 // WithHooks adds plain logging stubs in .git/hooks.
@@ -101,7 +102,7 @@ func New(t *testing.T, recipe Recipe, opts ...Option) *Repo {
 		t.Fatal(err)
 	}
 	r := &Repo{T: t, Home: home, Dir: filepath.Join(root, "repo"), HookLog: filepath.Join(root, "hooks.log")}
-	r.Env = append(scrub(os.Environ()), Env(home)...)
+	r.Env = HermeticEnviron(home)
 	r.Env = append(r.Env, HookLogEnv+"="+r.HookLog)
 
 	cache := cachedFixture(t, s, r.Env)
@@ -229,13 +230,22 @@ func GitVersion() string {
 
 func cachedFixture(t *testing.T, s spec, env []string) string {
 	t.Helper()
+	// The key covers the fixture's CONTENT (the fast-import stream and the hook
+	// scripts), so editing the recipe invalidates stale caches on its own.
 	h := sha256.New()
-	fmt.Fprintf(h, "%s|%v|%v|%v|%v|%s", SchemaVersion, s.recipe, s.husky, s.lefthook, s.plain, GitVersion())
+	fmt.Fprintf(h, "%s|%v|%v|%v|%v|%s|", SchemaVersion, s.recipe, s.husky, s.lefthook, s.plain, GitVersion())
+	h.Write(fastImport(monorepoFiles(s)))
+	fmt.Fprint(h, huskyShim, huskyH, hookStub("x"), stubVia("x", "lefthook"))
 	key := hex.EncodeToString(h.Sum(nil))[:16]
 	base := filepath.Join(os.TempDir(), fmt.Sprintf("outfit-testkit-%d", os.Getuid()))
 	final := filepath.Join(base, key)
 	if _, err := os.Stat(final); err == nil {
-		return final
+		// The cache lives under the OS temp dir, which gets cleaned piecemeal.
+		// A directory that no longer holds a readable history is rebuilt.
+		if _, verr := RunGit(final, env, "rev-parse", "--verify", "-q", "HEAD~1^{tree}"); verr == nil {
+			return final
+		}
+		os.RemoveAll(final)
 	}
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		t.Fatal(err)
@@ -269,7 +279,7 @@ func buildFixture(dir string, s spec, env []string) error {
 	if err := WriteHome(home); err != nil {
 		return err
 	}
-	benv := append(scrub(os.Environ()), Env(home)...)
+	benv := HermeticEnviron(home)
 	if out, err := RunGit(dir, benv, "init", "-q", "-b", "main"); err != nil {
 		return fmt.Errorf("init: %v: %s", err, out)
 	}
@@ -301,8 +311,12 @@ func buildFixture(dir string, s spec, env []string) error {
 		}
 	}
 	if s.plain || s.lefthook {
+		via := ""
+		if s.lefthook {
+			via = "lefthook"
+		}
 		for _, h := range hookNames {
-			if err := writeFile(filepath.Join(dir, ".git", "hooks", h), hookStub(h), 0o755); err != nil {
+			if err := writeFile(filepath.Join(dir, ".git", "hooks", h), stubVia(h, via), 0o755); err != nil {
 				return err
 			}
 		}
@@ -314,13 +328,18 @@ var hookNames = []string{"pre-commit", "commit-msg", "pre-push", "post-checkout"
 
 // hookStub is a fake team hook: it logs argv and stdin to $OUTFIT_TEST_HOOKLOG
 // and exits with the code found in $OUTFIT_TEST_HOOKLOG.exit.<name>, else 0.
-func hookStub(name string) string {
+func hookStub(name string) string { return stubVia(name, "") }
+
+// stubVia is hookStub that also records which hook manager it pretends to be.
+func stubVia(name, via string) string {
 	return fmt.Sprintf(`#!/bin/sh
 # fake %[1]s hook (outfit testkit)
 name=%[1]s
 log="${OUTFIT_TEST_HOOKLOG:-/dev/null}"
 {
-  printf 'hook=%%s argv=' "$name"
+  printf 'hook=%%s' "$name"
+  [ -z %[2]q ] || printf ' via=%%s' %[2]q
+  printf ' argv='
   for a in "$@"; do printf '[%%s]' "$a"; done
   printf '\n'
   case "$name" in
@@ -329,7 +348,7 @@ log="${OUTFIT_TEST_HOOKLOG:-/dev/null}"
 } >> "$log"
 if [ -f "$log.exit.$name" ]; then exit "$(cat "$log.exit.$name")"; fi
 exit 0
-`, name)
+`, name, via)
 }
 
 const huskyShim = `#!/usr/bin/env sh

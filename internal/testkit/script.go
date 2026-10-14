@@ -130,8 +130,10 @@ func cmdHookLog(ts *testscript.TestScript, neg bool, args []string) {
 	fmt.Fprint(ts.Stdout(), string(b))
 }
 
-// gitcalls reset | gitcalls <max>: the budget gate. `reset` truncates the trace;
-// `<max>` fails when more git processes ran since the last reset.
+// gitcalls reset | gitcalls <max> | gitcalls ==<n>: the budget gate. `reset`
+// truncates the trace; `<max>` fails when more git processes ran since the last
+// reset, `==<n>` when the count is not exactly n (proving the tracer works). A
+// missing trace file is an error, never a pass.
 func cmdGitCalls(ts *testscript.TestScript, neg bool, args []string) {
 	if neg || len(args) != 1 {
 		ts.Fatalf("usage: gitcalls reset | gitcalls <max>")
@@ -141,10 +143,17 @@ func cmdGitCalls(ts *testscript.TestScript, neg bool, args []string) {
 		ts.Check(os.WriteFile(trace, nil, 0o600))
 		return
 	}
-	max, err := strconv.Atoi(args[0])
+	exact := strings.HasPrefix(args[0], "==")
+	max, err := strconv.Atoi(strings.TrimPrefix(args[0], "=="))
 	ts.Check(err)
-	b, _ := os.ReadFile(trace)
+	b, err := os.ReadFile(trace)
+	if err != nil {
+		ts.Fatalf("no git trace at %s (did you `gitcalls reset` first?): %v", trace, err)
+	}
 	n := strings.Count(string(b), "\n")
+	if exact && n != max {
+		ts.Fatalf("%d git calls, want exactly %d:\n%s", n, max, b)
+	}
 	if n > max {
 		ts.Fatalf("%d git calls, budget is %d:\n%s", n, max, b)
 	}

@@ -1,5 +1,4 @@
 # The hermetic environment and the custom commands of docs/HANDOVER.md §7.1.
-env HOME=$WORK/home
 exec git config --global --get init.defaultBranch
 stdout '^main$'
 exec git var GIT_AUTHOR_IDENT
@@ -36,9 +35,11 @@ gitver >= 2.36
 hooklog
 ! stdout .
 
-# The git trace counts processes: `git --version` through a stub is one call.
+# The git trace counts git processes spawned through gitx: `outfit version`
+# runs exactly one. (The `exec git` lines above bypass gitx and are not counted.)
 gitcalls reset
-gitcalls 0
+outfit version
+gitcalls ==1
 
 -- seed.txt --
 seed

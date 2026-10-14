@@ -8,6 +8,10 @@ import (
 
 func noenv(string) string { return "" }
 
+func TestMain(m *testing.M) {
+	os.Exit(m.Run())
+}
+
 func mkdir(t *testing.T, p ...string) string {
 	t.Helper()
 	d := filepath.Join(p...)
@@ -141,5 +145,18 @@ func TestBrokenGitFile(t *testing.T) {
 	write(t, filepath.Join(root, ".git"), "gitdir:   \n")
 	if _, err := Discover(root, noenv); err == nil {
 		t.Fatal("an empty gitdir must be an error")
+	}
+}
+
+func TestGitSymlinkToDirectory(t *testing.T) {
+	root := real(t, t.TempDir())
+	target := mkdir(t, root, "elsewhere", "gitdir")
+	wt := mkdir(t, root, "wt")
+	if err := os.Symlink(target, filepath.Join(wt, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Discover(wt, noenv)
+	if err != nil || r.GitDir != filepath.Join(wt, ".git") || r.WorkTree != wt {
+		t.Fatalf("got %+v, %v", r, err)
 	}
 }

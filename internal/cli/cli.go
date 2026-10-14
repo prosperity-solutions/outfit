@@ -5,11 +5,14 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"runtime"
+	"slices"
 
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 )
@@ -40,8 +43,8 @@ func Run(ctx context.Context, b Build, args []string, stdout, stderr io.Writer) 
 		fmt.Fprintln(stdout, "usage: outfit <command> [flags]\ncommands: version")
 		return ExitOK
 	default:
-		return report(stdout, stderr, false, Usagef("unknown command %q", args[0]).
-			WithFix("outfit help"))
+		return report(stdout, stderr, slices.Contains(args, "--json"),
+			Usagef("unknown command %q", args[0]).WithFix("outfit help"))
 	}
 }
 
@@ -71,16 +74,17 @@ func cmdVersion(ctx context.Context, b Build, args []string, stdout, stderr io.W
 	}
 
 	info := versionInfo{Version: b.Version, Commit: b.Commit, Date: b.Date, OS: runtime.GOOS, Arch: runtime.GOARCH}
-	v, raw, err := gitx.Client{}.Version(ctx)
+	v, _, err := gitx.Client{}.Version(ctx)
 	switch {
+	case errors.Is(err, exec.ErrNotFound):
+		info.Git.Warning = fmt.Sprintf("git not found on PATH: install git %s or newer", gitx.Floor)
 	case err != nil:
-		info.Git.Warning = "git not found on PATH: install git 2.36 or newer"
+		info.Git.Warning = fmt.Sprintf("could not read the git version: %v", err)
 	case gitx.CheckFloor(v) != nil:
 		info.Git = gitInfo{Version: v.String(), Warning: gitx.CheckFloor(v).Error()}
 	default:
 		info.Git = gitInfo{Version: v.String(), OK: true}
 	}
-	_ = raw
 
 	if *asJSON {
 		out, _ := json.Marshal(info)

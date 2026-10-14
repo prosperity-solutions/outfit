@@ -44,6 +44,27 @@ Local pre-pass, before every push (lefthook runs it on `pre-push`):
 gofmt -l . && go vet ./... && golangci-lint run && go test -race ./...
 ```
 
+## Pushing
+
+- `origin` is `github.com/prosperity-solutions/outfit`, a **private** repo. Pushes
+  go over HTTPS with your `gh` login (`gh auth login`, scopes `repo` and
+  `workflow`). If your `origin` is an SSH URL and you have no key loaded, run once
+  per clone:
+
+  ```sh
+  git config --local url."https://github.com/".insteadOf "git@github.com:"
+  git config --local credential.https://github.com.helper ''
+  git config --local --add credential.https://github.com.helper '!gh auth git-credential'
+  ```
+
+  Nothing global changes, and it never touches the remote's visibility.
+- **Direct pushes to `main`:** the one bootstrap commit was the only one. Every
+  other change is a PR, merged with `gh pr merge --squash --delete-branch`. Once
+  the `main` ruleset exists (PR 11 of `docs/HANDOVER.md`), a direct push needs an
+  admin bypass: don't.
+- Never force-push `main`. Releases push **tags** only; nothing is committed to
+  `main` by CI.
+
 ## CI cost and the draft convention
 
 - **CI does not run on draft PRs.** Every job carries

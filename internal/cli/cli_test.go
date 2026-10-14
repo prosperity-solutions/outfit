@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -61,5 +63,44 @@ func TestReportJSONShape(t *testing.T) {
 	}
 	if e.Error != "boom" || e.Fix != "outfit sync" || e.Retryable || e.Code != ExitError {
 		t.Fatalf("%+v", e)
+	}
+}
+
+func fakeGit(t *testing.T, out string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte("#!/bin/sh\necho '"+out+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+}
+
+// `version` is what install.sh prints last: old or missing git is a warning,
+// never a failure.
+func TestVersionWarnsOnOldGit(t *testing.T) {
+	fakeGit(t, "git version 2.34.1")
+	code, out, errs := run(t, "version")
+	if code != ExitOK || !strings.Contains(out, "git 2.34.1") || !strings.Contains(errs, "ppa:git-core/ppa") {
+		t.Fatalf("code=%d out=%q err=%q", code, out, errs)
+	}
+	_, jout, _ := run(t, "version", "--json")
+	if !strings.Contains(jout, `"ok":false`) || !strings.Contains(jout, `"warning"`) {
+		t.Fatalf("json = %q", jout)
+	}
+}
+
+func TestVersionWarnsOnMissingGit(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	code, out, errs := run(t, "version")
+	if code != ExitOK || !strings.Contains(out, "git not found") || !strings.Contains(errs, "install git 2.36.0 or newer") {
+		t.Fatalf("code=%d out=%q err=%q", code, out, errs)
+	}
+}
+
+func TestUnknownCommandHonoursJSON(t *testing.T) {
+	code, out, _ := run(t, "nope", "--json")
+	var e jsonError
+	if code != ExitUsage || json.Unmarshal([]byte(out), &e) != nil || e.Fix != "outfit help" {
+		t.Fatalf("code=%d out=%q", code, out)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"testing"
 )
 
 // HookLogEnv names the file the fake hooks append their argv and stdin to.
@@ -32,8 +33,14 @@ func EnvMap(home string) map[string]string {
 	}
 }
 
-// Env is EnvMap as KEY=VALUE pairs, with ambient git variables removed so a test
-// run from inside a hook (or a developer's shell) cannot leak into the repo.
+// HermeticEnviron is the process environment with ambient git variables removed
+// (so a test run from inside a hook cannot leak into another repo), overlaid with
+// Env(home).
+func HermeticEnviron(home string) []string {
+	return append(scrub(os.Environ()), Env(home)...)
+}
+
+// Env is EnvMap as KEY=VALUE pairs.
 func Env(home string) []string {
 	m := EnvMap(home)
 	out := make([]string, 0, len(m))
@@ -54,17 +61,40 @@ func WriteHome(home string) error {
 	return os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(GlobalConfig), 0o644)
 }
 
-// scrub removes variables that make git operate on some other repository.
+// leaks reports whether an environment variable would make git operate on some
+// other repository, read other configuration, or write traces into a test.
+func leaks(k string) bool {
+	switch k {
+	case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+		"GIT_PREFIX", "GIT_NAMESPACE", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CEILING_DIRECTORIES",
+		"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CONFIG", "GIT_CONFIG_SYSTEM":
+		return true
+	}
+	return strings.HasPrefix(k, "GIT_TRACE") || strings.HasPrefix(k, "GIT_CONFIG_KEY_") ||
+		strings.HasPrefix(k, "GIT_CONFIG_VALUE_")
+}
+
+// scrub removes the variables in leaks from env.
 func scrub(env []string) []string {
 	out := env[:0:0]
 	for _, kv := range env {
 		k, _, _ := strings.Cut(kv, "=")
-		switch k {
-		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
-			"GIT_PREFIX", "GIT_NAMESPACE", "GIT_ALTERNATE_OBJECT_DIRECTORIES":
-			continue
+		if !leaks(k) {
+			out = append(out, kv)
 		}
-		out = append(out, kv)
 	}
 	return out
+}
+
+// Isolate removes ambient git variables from this test process for the duration
+// of t, so a package test that runs git directly (not through a fixture) is
+// hermetic even when `go test` runs inside a hook or under `git -c`.
+func Isolate(t testing.TB) {
+	t.Helper()
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); leaks(k) {
+			t.Setenv(k, "") // registers the restore
+			_ = os.Unsetenv(k)
+		}
+	}
 }
