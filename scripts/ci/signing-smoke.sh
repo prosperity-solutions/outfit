@@ -10,7 +10,7 @@
 # the first release rehearsal fail with "failed to read password: EOF") and
 # verifies the result with the same Go code the release uses.
 #
-# Needs: goreleaser, quill, openssl and aead's minisign (go install
+# Needs: go, goreleaser, quill, openssl and aead's minisign (go install
 # aead.dev/minisign/cmd/minisign@v0.3.0) on PATH. Exits non-zero on any miss.
 set -euo pipefail
 

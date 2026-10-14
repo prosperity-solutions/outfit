@@ -8,11 +8,19 @@ import (
 	"aead.dev/minisign"
 )
 
+// releaseKeyID is the owner's minisign key (HANDOVER.md §8.4). It must stay among
+// the embedded keys; docs/release.md says to change it in rotation step 3 and in
+// the key-leak runbook, where the old key is dropped on purpose.
+const releaseKeyID = "93E83CF19144CC30"
+
 func TestEmbeddedKeyIsTheReleaseKey(t *testing.T) {
 	ids := KeyIDs()
-	if len(ids) != 1 || ids[0] != "93E83CF19144CC30" {
-		t.Fatalf("embedded keys = %v, want [93E83CF19144CC30]", ids)
+	for _, id := range ids {
+		if id == releaseKeyID {
+			return
+		}
 	}
+	t.Fatalf("embedded keys = %v, want %s among them", ids, releaseKeyID)
 }
 
 func TestParseKeys(t *testing.T) {

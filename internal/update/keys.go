@@ -12,7 +12,7 @@ import (
 )
 
 // keysFile is internal/update/keys.txt, compiled into the binary. The release
-// workflow reads the same file (through cmd verifysig) before it publishes.
+// workflow reads the same file (through internal/tools/verifysig) before it publishes.
 //
 //go:embed keys.txt
 var keysFile string

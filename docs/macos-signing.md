@@ -5,7 +5,7 @@
 Not for the install path. Gatekeeper only checks files that carry the
 `com.apple.quarantine` attribute, which browsers and some other apps add to what
 they download. **`curl` never sets it**, so a binary installed by `install.sh` (or
-replaced by `outfit update`, which downloads the same way) is never checked, signed or
+replaced by `outfit update` (coming in a later release), which downloads the same way) is never checked, signed or
 not.
 
 Notarization could not be stapled to a bare executable anyway (stapling needs an app
@@ -37,12 +37,12 @@ chain is what is missing.
 
 When the signing secrets exist, the macOS smoke legs check the built binary **before
 anything is published**, and a `verify-signing` job on `macos-latest` reads the published
-file back afterwards. Both run `scripts/release/check-macos-signature.sh`: `codesign --verify --strict`, a Developer ID authority, and a
-`TeamIdentifier` equal to the repository variable `MACOS_TEAM_ID` when that is set. A
+file back afterwards. Both run `scripts/release/check-macos-signature.sh`: `codesign --verify --strict`, a Developer ID authority, the hardened-runtime flag, a
+secure timestamp, and a `TeamIdentifier` equal to the repository variable `MACOS_TEAM_ID` when that is set. A
 failed check fails the release.
 
 The signing path is exercised on **every pull request** without real secrets: the
-`signing-smoke` job builds the universal binary with a throwaway certificate chain and
+`signing` job builds the universal binary with a throwaway certificate chain and
 checks, with `quill describe`, that both architectures carry a hardened-runtime,
 timestamped signature with the right team ID (`scripts/ci/signing-smoke.sh`).
 

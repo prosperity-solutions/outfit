@@ -37,8 +37,9 @@ version → build → smoke (4 runners) ┐
    run there on a push to `main`) and fails if it is not green, so a red `main` never
    releases.
 4. **publish.** Needs smoke and CI. Re-checks the files (`sha256sum -c`, and the
-   signature against `keys.txt`) since they travelled through artifact storage and
-   four runners, then pushes the tag and runs [`scripts/release/publish.sh`](../scripts/release/publish.sh):
+   signature against `keys.txt`) since they sat in artifact storage while four
+   runners ran third-party packages in the same run (any job of a run can replace its
+   artifacts), then pushes the tag and runs [`scripts/release/publish.sh`](../scripts/release/publish.sh):
    a *draft* release, upload with retries, check every asset by name, size and
    state, flip to published, read it back. Any failure leaves a draft, which users
    cannot see; re-running the job tops it up.
@@ -92,7 +93,9 @@ Clients trust the keys compiled into them, so a rotation is **two releases**:
    client that updates to it learns the new key.
 2. Once clients have updated, switch `MINISIGN_SECRET_KEY`, `MINISIGN_PASSWORD` and
    `MINISIGN_PUBLIC_KEY` to the new pair. The next release is signed with it.
-3. Later, drop the old key from both files in another release.
+3. Later, drop the old key from both files in another release, and change `releaseKeyID`
+   in `internal/update/verify_test.go` to the new key's ID (the test only requires the
+   release key to be among the embedded ones, so adding a key in step 1 needs no edit).
 
 Doing step 2 first would ship a release no installed client can verify. The release job
 refuses that: it verifies the fresh signature against the keys of the previous release
@@ -107,9 +110,9 @@ break-glass switch. In one go:
 1. Generate a new pair (step 0) and set `MINISIGN_SECRET_KEY`, `MINISIGN_PASSWORD` and
    `MINISIGN_PUBLIC_KEY` to it. Keep the old values until the release below is out.
 2. Set the repository variable `ALLOW_UNTRUSTED_PREVIOUS_KEYS` to `true`.
-3. In **one commit**, replace the leaked key with the new one in both
-   `internal/update/keys.txt` and the `PUBKEYS` line of `install.sh` (the contract test
-   fails if only one changes), titled `fix!: …`. Merge it.
+3. In **one commit**, replace the leaked key with the new one in `internal/update/keys.txt`,
+   the `PUBKEYS` line of `install.sh` (the contract test fails if only one changes) and
+   `releaseKeyID` in `internal/update/verify_test.go`, titled `fix!: …`. Merge it.
 4. When the release is published, delete the variable. New installs trust only the new
    key as soon as `install.sh` on `main` is served (raw.githubusercontent.com caches it for
    about five minutes). Clients that only know the leaked key cannot verify the new release

@@ -4,7 +4,8 @@ name: Release
 # (MIT; see NOTICE). The whole story, and how to rotate the signing key, is in
 # docs/release.md.
 #
-#   version -> build -> smoke (4 native runners) -> publish -> verify (4 runners)
+#   version -> build -> smoke (4 native runners) -+
+#         \-> ci (waits for main's all-green) ----+-> publish -> verify (4 runners)
 #                                                           \-> verify-signing
 #
 # This is the ONLY workflow that references the MINISIGN_* and MACOS_* secrets,
@@ -48,9 +49,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-      # No build cache here: the cache is shared with every job that runs on a
-      # push to main, and this job holds the signing keys. Whatever wrote the cache
-      # first would decide what we compile and sign.
+      # No build cache in release jobs: it is shared with every job that runs on a
+      # push to main, and the build job holds the signing keys. Whatever wrote the
+      # cache first would decide what we compile and sign.
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
@@ -122,9 +123,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-      # No build cache here: the cache is shared with every job that runs on a
-      # push to main, and this job holds the signing keys. Whatever wrote the cache
-      # first would decide what we compile and sign.
+      # No build cache in release jobs: it is shared with every job that runs on a
+      # push to main, and the build job holds the signing keys. Whatever wrote the
+      # cache first would decide what we compile and sign.
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
@@ -337,7 +338,7 @@ jobs:
           for _ in $(seq 1 100); do
             state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
               --jq '[.check_runs[] | select(.name == "all-green")] | sort_by(.id) | (last // {}) | (.conclusion // "pending")' || echo pending)
-            echo "all-green: ${state:-none yet}"
+            echo "all-green: $state"
             case "$state" in
               success) exit 0 ;;
               failure | cancelled | timed_out | action_required | neutral | skipped)
@@ -375,9 +376,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      # The files travelled through artifact storage and four runners that
-      # installed third-party packages. Check them again, with the committed key,
-      # right before they become public.
+      # The files sat in artifact storage while four runners installed third-party
+      # packages in the same run, and any job of a run can replace that run's
+      # artifacts. Check them again, with the committed key, right before they
+      # become public.
       - name: Re-check the files before publishing
         run: |
           set -e

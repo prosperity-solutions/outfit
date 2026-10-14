@@ -6,7 +6,7 @@
 #     https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
 #
 # While the repository is private the download needs a GitHub token that can read
-# it. The script finds one the way `outfit update` does: OUTFIT_GITHUB_TOKEN,
+# it. The script finds one the way `outfit update` will: OUTFIT_GITHUB_TOKEN,
 # GH_TOKEN, GITHUB_TOKEN, then `gh auth token`. With none, it uses the public
 # release URLs, which work once the repository is public.
 #
@@ -22,6 +22,8 @@
 #                         For tests.
 #   OUTFIT_MINISIGN_PUBKEY  Replaces the embedded signing key(s) below. For tests.
 #
+# A release always carries checksums.txt and checksums.txt.minisig; both are
+# downloaded even when minisign is not installed.
 # It checks the SHA-256 of the download (which catches a damaged download, not a
 # tampered release: the checksum list comes from the same place as the archive) and,
 # when a `minisign` binary is on PATH, the signature of the checksum list against the
@@ -124,7 +126,6 @@ verify_signature() {
     say "note: minisign is not installed, so only the checksum was checked (brew install minisign)"
     return 0
   }
-  [ -f "$tmp/checksums.txt.minisig" ] || err "the release has no checksums.txt.minisig"
   for key in ${OUTFIT_MINISIGN_PUBKEY:-$PUBKEYS}; do
     if minisign -V -m "$tmp/checksums.txt" -x "$tmp/checksums.txt.minisig" -P "$key" >/dev/null 2>&1; then
       say "signature OK"
@@ -221,7 +222,8 @@ main() {
   if [ -n "$token" ] && [ "$archive" != "outfit_${tag#v}_$plat.tar.gz" ]; then
     err "release $tag holds $archive, which is not its own build; nothing was installed"
   fi
-  say "Installing ${archive%_"$plat".tar.gz} for $plat"
+  name=${archive#outfit_}
+  say "Installing outfit ${name%_"$plat".tar.gz} for $plat"
 
   get "$archive"
   get checksums.txt.minisig

@@ -47,7 +47,7 @@ With no token the script uses the public `releases/latest/download/…` URLs.
    This catches a damaged download. It does **not** catch a tampered release, because
    `checksums.txt` comes from the same place as the archive.
 4. If `minisign` is installed, checks the signature of `checksums.txt` against the
-   release key built into the script (the same key `outfit update` uses, kept in
+   release key built into the script (the same key `outfit update` will use, kept in
    [`internal/update/keys.txt`](../internal/update/keys.txt)). A bad signature stops
    everything. This is the check that catches tampering, so **install `minisign`
    first if you can** (`brew install minisign`, `apt install minisign`). Without it

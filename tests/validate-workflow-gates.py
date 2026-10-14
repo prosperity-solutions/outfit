@@ -12,6 +12,9 @@ Nothing in Actions enforces that, and the symptom of a missing guard is a bill
 rather than a failed job -- so this is the drift gate, in the same spirit as the
 other drift gates.
 
+A second gate lives here too: the signing secrets may only be read by
+release.yml, which may only trigger on a push to main (check_secrets).
+
 Usage:
     python3 tests/validate-workflow-gates.py [workflow.yml ...]
     python3 tests/validate-workflow-gates.py --selftest

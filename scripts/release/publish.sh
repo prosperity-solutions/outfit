@@ -7,7 +7,7 @@
 #   scripts/release/publish.sh vX.Y.Z DIR [NOTES_FILE]
 #
 # DIR is a flat directory of the release files. Needs gh, authenticated through
-# GH_TOKEN, and GH_REPO (owner/name) when not run inside a checkout.
+# GH_TOKEN, and GH_REPO (owner/name), which is always required.
 #
 # Steps: open (or reuse) a DRAFT release, upload what is missing (capped and
 # retried, checked by name, size and state), flip it to published, read it back.

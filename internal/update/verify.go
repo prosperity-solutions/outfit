@@ -32,7 +32,7 @@ func VerifyEmbedded(message, sig []byte) error {
 	return Verify(Keys(), message, sig)
 }
 
-// KeyIDs lists the embedded key IDs as minisign prints them, for `status`.
+// KeyIDs lists the embedded key IDs as minisign prints them.
 func KeyIDs() []string {
 	var ids []string
 	for _, k := range Keys() {
