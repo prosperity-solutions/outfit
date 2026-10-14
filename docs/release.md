@@ -15,7 +15,7 @@ version → build → smoke (4 runners) ┐
    If the commit is already tagged but its release was never published (a failed
    publish), the run resumes that version instead of stopping. `previous` is the latest
    *published* release.
-2. **build** (ubuntu). Creates the tag **locally**, then `goreleaser release --clean
+2. **build** (macOS, for the native `codesign`). Creates the tag **locally**, then `goreleaser release --clean
    --skip=publish`: linux amd64/arm64 and a macOS universal binary
    (signed/notarized when the secrets exist, see [macos-signing.md](macos-signing.md)),
    `checksums.txt`, and `checksums.txt.minisig`. Then it checks the signature against

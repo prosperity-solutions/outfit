@@ -19,37 +19,55 @@ the archive with a browser.
 
 ## How it works in the release
 
-GoReleaser's `notarize.macos` (which uses [quill](https://github.com/anchore/quill))
-signs the macOS universal binary **from Linux**, so the release needs no Mac for the
-build. Two entries in `.goreleaser.yaml`, exactly one of which is enabled:
+The release's `build` job runs on **macOS** and signs the universal binary with the
+native `codesign`, as a GoReleaser post hook (`universal_binaries[].hooks.post` in
+`.goreleaser.yaml` runs `scripts/release/macos-sign.sh`). The script puts the
+certificate in a throwaway keychain (`macos-keychain.sh`, which picks the identity by
+**team ID**, so a `.p12` holding two teams cannot sign as the wrong one), signs with
+the hardened runtime and a secure timestamp under the fixed identifier `outfit`
+(`macos-codesign.sh`, which then asserts identifier, runtime flag, timestamp, team
+and that the designated requirement pins the team, not a certificate hash), and deletes
+the keychain afterwards, even on failure. Ported from veld (MIT; see NOTICE).
 
 | Secrets present | Result |
 |---|---|
 | none | the darwin binary ships unsigned (the release log says why) |
-| `MACOS_SIGN_P12` and `MACOS_SIGN_PASSWORD` | signed with Developer ID, hardened runtime, timestamp |
-| plus `MACOS_NOTARY_KEY`, `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_ISSUER_ID` | also notarized (waits up to 20 minutes) |
+| `MACOS_SIGN_P12`, `MACOS_SIGN_PASSWORD` and the variable `MACOS_TEAM_ID` | signed with Developer ID, hardened runtime, timestamp |
+| plus `MACOS_NOTARY_KEY`, `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_ISSUER_ID` | also notarized: zipped, `notarytool submit --wait` (up to 20 minutes), the log dumped on failure. Not stapled. |
 
 `MACOS_SIGN_P12` and `MACOS_NOTARY_KEY` hold the **base64 contents** of the `.p12`
-and the App Store Connect `.p8`. The `.p12` must include the certificate chain, not
-just the leaf: export the Developer ID certificate together with Apple's
-intermediate. If signing fails with "unable to find remaining chain certificates", the
-chain is what is missing.
+and the App Store Connect `.p8`. The `.p12` must hold the Developer ID Application
+certificate, its private key and Apple's Developer ID G2 intermediate; without the
+intermediate the keychain script finds no valid identity and says so. It also refuses a
+certificate with less than 30 days left, so an expiry fails a release a month early.
 
 When the signing secrets exist, the macOS smoke legs check the built binary **before
 anything is published**, and a `verify-signing` job on `macos-latest` reads the published
-file back afterwards. Both run `scripts/release/check-macos-signature.sh`: `codesign --verify --strict`, a Developer ID authority, the hardened-runtime flag, a
-secure timestamp, and a `TeamIdentifier` equal to the repository variable `MACOS_TEAM_ID` when that is set. A
-failed check fails the release.
+file back afterwards. Both run `scripts/release/check-macos-signature.sh`:
+`codesign --verify --strict`, a Developer ID authority, the hardened-runtime flag, a
+secure timestamp, and a `TeamIdentifier` equal to the repository variable
+`MACOS_TEAM_ID`. A failed check fails the release.
 
 The signing path is exercised on **every pull request** without real secrets: the
-`signing` job builds the universal binary with a throwaway certificate chain and
-checks, with `quill describe`, that both architectures carry a hardened-runtime,
-timestamped signature with the right team ID (`scripts/ci/signing-smoke.sh`).
+`signing` job (one short macOS job) runs the release's own GoReleaser snapshot and hook
+with a throwaway certificate (named like a Developer ID one, trusted on the runner) and
+checks that both slices verify with the hardened runtime, that the checksum signature
+verifies, and that the signed universal binary **runs** (`scripts/ci/signing-smoke.sh`).
+Apple's timestamp server, the Apple-issued team and notarization are the parts it
+cannot exercise; the release's smoke legs check those on the real certificate.
 
-## If quill ever stops working
+The hardened runtime means macOS removes `DYLD_*` variables from what a signed process
+starts. outfit runs your hooks as children, so a hook that relies on `DYLD_LIBRARY_PATH`
+would not see it; set it inside the hook if you need it.
 
-The fallback is signing on a macOS runner with `codesign`, in a temporary keychain,
-then `notarytool submit --wait`. veld's `scripts/release/macos-codesign.sh` and
-`macos-keychain.sh` are the pattern (MIT; see NOTICE). We chose quill because the
-smoke test proved it handles the universal binary, and it keeps the build on one cheap
-Linux runner.
+## Why not quill
+
+GoReleaser's `notarize.macos` (quill) signs from Linux, and it was the first choice:
+its signature verified on the build and in the smoke checks. But on a real Developer ID
+certificate it writes the designated requirement
+`… and certificate root[field.1.2.840.113635.100.6.2.6] …` (the Developer ID CA marker
+on the **root**, where Apple's own signatures put it on the intermediate), which no
+chain satisfies. `codesign --verify` says "does not satisfy its designated Requirement"
+and macOS kills the binary on launch (`Killed: 9`, exit 137). The release's smoke leg
+caught it before anything was published; the check that would have caught it earlier
+is "run the signed binary", which the PR smoke job now does.

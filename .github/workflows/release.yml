@@ -109,11 +109,14 @@ jobs:
           echo "### Releasing $next" >> "$GITHUB_STEP_SUMMARY"
 
   # ── 2. Build, sign, checksum ──────────────────────────────────────────────
+  # On macOS because the Developer ID signature is made by the native `codesign`
+  # (scripts/release/macos-sign.sh, a GoReleaser post hook); everything else in the
+  # build is the same on any OS.
   build:
     name: Build and sign
     needs: version
     if: needs.version.outputs.releasable == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: macos-latest
     env:
       TAG: ${{ needs.version.outputs.tag }}
       PREVIOUS: ${{ needs.version.outputs.previous }}
@@ -142,6 +145,7 @@ jobs:
           HAVE_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY != '' }}
           HAVE_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID != '' }}
           HAVE_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER_ID != '' }}
+          MACOS_TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
         run: |
           fail=0
           if [ -z "$MINISIGN_PUBLIC_KEY" ]; then
@@ -159,6 +163,7 @@ jobs:
           # macOS signing is optional, but half of it is a mistake.
           if [ "$HAVE_P12" = true ]; then
             [ "$HAVE_P12_PASSWORD" = true ] || { echo "::error::MACOS_SIGN_P12 is set but MACOS_SIGN_PASSWORD is not"; fail=1; }
+            [ -n "$MACOS_TEAM_ID" ] || { echo "::error::MACOS_SIGN_P12 is set but the repository variable MACOS_TEAM_ID is not"; fail=1; }
             if [ "$HAVE_NOTARY_KEY" = true ]; then
               [ "$HAVE_NOTARY_KEY_ID" = true ] || { echo "::error::MACOS_NOTARY_KEY is set but MACOS_NOTARY_KEY_ID is not"; fail=1; }
               [ "$HAVE_NOTARY_ISSUER" = true ] || { echo "::error::MACOS_NOTARY_KEY is set but MACOS_NOTARY_ISSUER_ID is not"; fail=1; }
@@ -194,6 +199,7 @@ jobs:
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          MACOS_TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
         run: |
           gobin=$(go env GOPATH)/bin
           export PATH="$PATH:$gobin"

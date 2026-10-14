@@ -21,11 +21,21 @@ builds:
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 # One macOS binary that runs natively on both Apple Silicon and Intel.
+#
+# It is signed (and notarized) by a post hook, with the native `codesign` on a macOS
+# runner: scripts/release/macos-sign.sh. Without MACOS_SIGN_P12 the hook leaves it
+# unsigned. quill (GoReleaser's `notarize.macos`) was tried first and rejected: its
+# signature on a Developer ID certificate makes macOS kill the binary on launch
+# (docs/macos-signing.md, "Why not quill").
 universal_binaries:
   - id: outfit-darwin
     ids: [outfit]
     replace: true
     name_template: outfit
+    hooks:
+      post:
+        - cmd: scripts/release/macos-sign.sh {{ .Path }}
+          output: true
 
 archives:
   - id: outfit
@@ -51,32 +61,6 @@ signs:
     args: ["-S", "-s", "{{ .Env.MINISIGN_KEY_FILE }}", "-m", "${artifact}", "-x", "${signature}"]
     artifacts: checksum
     signature: "${artifact}.minisig"
-
-# macOS signing and notarization via quill, which works from Linux and signs
-# the universal binary (tested on every PR: the `signing` job in ci.yml).
-# Both are optional. Without MACOS_SIGN_P12 the darwin binary ships unsigned:
-# curl-installed binaries are never quarantined, so Gatekeeper does not check them
-# (docs/macos-signing.md). Notarizing a bare Mach-O cannot be stapled, and does
-# not need to be. Two entries, exactly one of which is enabled: sign only, or
-# sign and notarize.
-notarize:
-  macos:
-    - enabled: '{{ and (isEnvSet "MACOS_SIGN_P12") (not (isEnvSet "MACOS_NOTARY_KEY")) }}'
-      ids: [outfit-darwin]
-      sign:
-        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
-        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
-    - enabled: '{{ and (isEnvSet "MACOS_SIGN_P12") (isEnvSet "MACOS_NOTARY_KEY") }}'
-      ids: [outfit-darwin]
-      sign:
-        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
-        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
-      notarize:
-        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
-        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
-        key: "{{ .Env.MACOS_NOTARY_KEY }}"
-        wait: true
-        timeout: 20m
 
 # From git, not the API, so the build job needs no token. The notes land in
 # dist/CHANGELOG.md and become the release body.

@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+#
+# Developer ID-sign one file and prove the signature is the one we meant. Ported
+# from veld's release scripts (MIT; see NOTICE).
+#
+# Usage:
+#   macos-codesign.sh <identity> <identifier> <file>
+#       identity    what `codesign --sign` takes; the SHA-1 printed by
+#                   `macos-keychain.sh import`
+#       identifier  the stable code-signing identifier (outfit signs as "outfit")
+#   env: MACOS_TEAM_ID  the team the signature must come out as
+#        KEYCHAIN       optional; passed as `codesign --keychain`
+#        OUTFIT_CODESIGN_SELFTEST=1
+#                   ONLY for the PR smoke job (scripts/ci/signing-smoke.sh), which
+#                   signs with a throwaway self-signed certificate: skips the secure
+#                   timestamp and the Apple-issued-team checks such a certificate
+#                   cannot pass. The Release workflow refuses it.
+#
+# Signed with the hardened runtime and a secure timestamp, which notarization
+# requires. The identifier is passed and checked, not derived from the file name:
+# macOS remembers a binary by its designated requirement, which names it.
+set -euo pipefail
+
+die() {
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    echo "::error::$*" >&2
+  else
+    echo "error: $*" >&2
+  fi
+  exit 1
+}
+
+runtime=1
+[ "$#" -eq 3 ] || die "usage: $0 <identity> <identifier> <file>"
+identity=$1
+identifier=$2
+file=$3
+: "${MACOS_TEAM_ID:?MACOS_TEAM_ID is not set}"
+[ -f "$file" ] || die "$file does not exist"
+
+selftest=0
+if [ "${OUTFIT_CODESIGN_SELFTEST:-}" = 1 ]; then
+  # this keeps the switch out of a release run however it got into the environment.
+  [ "${GITHUB_WORKFLOW:-}" != Release ] || die "OUTFIT_CODESIGN_SELFTEST is set in the Release workflow — it skips the timestamp and team checks"
+  selftest=1
+  echo "OUTFIT_CODESIGN_SELFTEST=1: skipping timestamp and team checks" >&2
+fi
+
+args=(--force --identifier "$identifier" --sign "$identity")
+if [ "$selftest" = 0 ]; then
+  args+=(--timestamp)
+fi
+if [ "$runtime" = 1 ]; then
+  args+=(--options runtime)
+fi
+if [ -n "${KEYCHAIN:-}" ]; then
+  args+=(--keychain "$KEYCHAIN")
+fi
+
+# `--timestamp` asks Apple's timestamp server, which fails transiently often
+# enough to matter over a release's half-dozen signatures. Retrying is safe: each
+# attempt replaces the whole signature (`--force`).
+attempt=1
+until codesign "${args[@]}" "$file"; do
+  [ "$attempt" -lt 3 ] || die "codesign failed 3 times on $file"
+  echo "codesign failed on $file (attempt $attempt) — retrying in $((attempt * 10))s" >&2
+  sleep $((attempt * 10))
+  attempt=$((attempt + 1))
+done
+
+codesign --verify --strict --verbose=2 "$file" >&2 \
+  || die "$file does not verify after signing"
+
+# `codesign -d` writes its report to stderr.
+display=$(codesign -d --verbose=4 "$file" 2>&1)
+has_line() { printf '%s\n' "$display" | awk -v s="$1" 'index($0, s) == 1 { found = 1 } END { exit !found }'; }
+has_line "Identifier=$identifier" || die "$file: identifier is not $identifier"
+has_line "Authority=Developer ID Application: " || die "$file: not signed by a Developer ID Application certificate"
+runtime_flag=0
+if printf '%s\n' "$display" | grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]+\([^)]*runtime'; then
+  runtime_flag=1
+fi
+[ "$runtime_flag" = "$runtime" ] \
+  || die "$file: hardened runtime is $([ "$runtime_flag" = 1 ] && echo on || echo off), expected $([ "$runtime" = 1 ] && echo on || echo off)"
+
+requirement=$(codesign -d -r- "$file" 2>&1)
+printf '%s\n' "$requirement" | grep -qF "identifier \"$identifier\"" \
+  || die "$file: designated requirement does not pin identifier $identifier: $requirement"
+
+if [ "$selftest" = 0 ]; then
+  has_line "TeamIdentifier=$MACOS_TEAM_ID" || die "$file: team is not $MACOS_TEAM_ID"
+  # A signature without a secure timestamp stops verifying when the certificate
+  # expires, and notarization rejects it outright.
+  has_line "Timestamp=" || die "$file: no secure timestamp"
+  # The team, not the certificate: a renewed certificate must keep the identity,
+  # so the requirement must never pin a leaf hash.
+  printf '%s\n' "$requirement" | grep -Eq "leaf\[subject\.OU\] = \"?$MACOS_TEAM_ID\"?" \
+    || die "$file: designated requirement does not pin team $MACOS_TEAM_ID: $requirement"
+  if printf '%s\n' "$requirement" | grep -Eq 'cdhash|leaf = H"'; then
+    die "$file: designated requirement pins a hash, which every update would break: $requirement"
+  fi
+fi
+
+echo "signed $file as $identifier (team $MACOS_TEAM_ID)" >&2

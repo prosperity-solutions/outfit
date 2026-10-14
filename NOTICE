@@ -13,9 +13,10 @@ Copyright (c) 2026 Prosperity Solutions), commit
   - the `commits` and `ship` jobs in .github/workflows/ci.yml
   - the structure of CLAUDE.md, AGENTS.md, .claude/settings.json and lefthook.yml
 
-The release pipeline and install.sh, when added, are modelled on veld's
-install.sh, .github/workflows/release.yml and scripts/release/*, under the same
-licence.
+The release pipeline and install.sh are modelled on veld's install.sh,
+.github/workflows/release.yml and scripts/release/*, under the same licence;
+scripts/release/macos-keychain.sh, macos-codesign.sh and publish.sh are ported from
+them.
 
 MIT License
 
