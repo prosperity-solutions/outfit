@@ -1,0 +1,85 @@
+# get/set/status/ls end to end, with the call budget of docs/HANDOVER.md §2.
+exec git init -q repo
+cd repo
+mkdir .outfit/profiles/yolo
+cp $WORK/team.cfg .outfit/config
+cp $WORK/yolo.cfg .outfit/profiles/yolo/profile.config
+cp $WORK/agents.md .outfit/profiles/yolo/AGENTS.md
+exec git add -A
+exec git commit -qm 'feat: outfit config'
+
+# Team default.
+outfit get biome
+stdout '^on$'
+# Unset keys print nothing and exit 1, so `|| git config -f ...` can take over.
+! outfit get nosuch
+! stdout .
+
+# The budget: `get` spawns exactly one git process.
+gitcalls reset
+outfit get biome
+gitcalls ==1
+
+# Personal overrides, highest scope wins.
+outfit set biome=off --global
+outfit get biome
+stdout '^off$'
+outfit set biome=maybe
+outfit get biome
+stdout '^maybe$'
+outfit set biome=
+outfit get biome
+stdout '^off$'
+
+# --here needs extensions.worktreeConfig; `init` arrives in a later release.
+! outfit set biome=on --here
+stderr 'fix: outfit init'
+
+# A profile's toggles sit between personal overrides and the team default.
+exec git config --local outfit.profile yolo
+outfit get tests
+stdout '^off$'
+outfit status
+stdout 'profile  yolo \(committed; chosen for this clone\)'
+stdout 'tests=off \(profile\)'
+stdout 'secrets-scan=on \(locked by team\)'
+stdout 'AGENTS.md ← yolo \(committed\)'
+
+outfit status --json
+stdout '"name":"yolo"'
+stdout '"locked":\["hook.pre-push","secrets-scan"\]'
+
+outfit ls
+stdout 'yolo\*  committed'
+outfit ls --json
+stdout '"active":"yolo"'
+
+# Scenario 13: a locked key cannot be overridden from any scope or profile.
+exec git config --global outfit.secrets-scan off
+exec git config --local outfit.secrets-scan off
+outfit get secrets-scan
+stdout '^on$'
+! outfit set secrets-scan=off
+stderr 'locked by .outfit/config'
+outfit status
+stderr 'ignored'
+
+# Not in a repo: exit 1, with the fix.
+cd $WORK
+! outfit get biome
+stderr 'fix: cd into your repository'
+
+-- team.cfg --
+[outfit]
+	locked = secrets-scan, hook.pre-push
+	secrets-scan = on
+	biome = on
+[outfit "hook"]
+	pre-push = on
+-- yolo.cfg --
+[outfit]
+	biome = off
+	tests = off
+	hook.pre-commit = off
+-- agents.md --
+yolo

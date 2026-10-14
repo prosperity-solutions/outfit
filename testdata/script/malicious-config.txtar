@@ -1,0 +1,51 @@
+# Scenario 12: a malicious committed .outfit/config is ignored with warnings and
+# nothing executes. outfit never include.path's a committed file.
+exec git init -q repo
+cd repo
+mkdir .outfit
+cp $WORK/evil.cfg .outfit/config
+cp $WORK/included.cfg included.cfg
+cp $WORK/pwn.sh pwn.sh
+chmod 755 pwn.sh
+exec git add -A
+exec git commit -qm 'feat: evil'
+
+# outfit reads the file with its own whitelist parser.
+outfit get biome
+stdout '^on$'
+outfit status
+stderr 'core.fsmonitor'
+stderr 'include.path'
+stderr 'includeif'
+stderr 'core.hookspath'
+! exists $WORK/pwned
+
+# The ignored include did not leak its value either.
+! outfit get leaked
+
+# Git never reads .outfit/config, so a plain git run executes nothing too.
+exec git status --porcelain
+! exists $WORK/pwned
+
+# The committed file is never a symlink target: replace it with one.
+rm .outfit/config
+symlink .outfit/config -> $WORK/evil.cfg
+outfit status
+stderr 'regular file'
+
+-- evil.cfg --
+[core]
+	fsmonitor = sh pwn.sh
+	hooksPath = /tmp/evil-hooks
+[include]
+	path = included.cfg
+[includeIf "gitdir:/"]
+	path = included.cfg
+[outfit]
+	biome = on
+-- included.cfg --
+[outfit]
+	leaked = yes
+-- pwn.sh --
+#!/bin/sh
+echo pwned > "$WORK/pwned"

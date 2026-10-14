@@ -26,6 +26,10 @@ func ScriptSetup(env *testscript.Env) error {
 	for k, v := range m {
 		env.Vars = append(env.Vars, k+"="+v)
 	}
+	// PATHNOOUTFIT is the ambient PATH as the process started, i.e. without the
+	// directory testscript.Main adds for the `outfit` command: a machine that
+	// never installed outfit.
+	env.Vars = append(env.Vars, "PATHNOOUTFIT="+m["PATH"])
 	return nil
 }
 

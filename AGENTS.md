@@ -46,10 +46,10 @@ gofmt -l . && go vet ./... && golangci-lint run && go test -race ./...
 
 ## Pushing
 
-- `origin` is `github.com/prosperity-solutions/outfit`, a **private** repo. Pushes
-  go over HTTPS with your `gh` login (`gh auth login`, scopes `repo` and
-  `workflow`). If your `origin` is an SSH URL and you have no key loaded, run once
-  per clone:
+- `origin` is `github.com/prosperity-solutions/outfit`, a **private** repo. Plain
+  `git push` over SSH is the default. If you have no SSH key loaded, HTTPS with
+  your `gh` login (`gh auth login`, scopes `repo` and `workflow`) works too; run
+  once per clone:
 
   ```sh
   git config --local url."https://github.com/".insteadOf "git@github.com:"
@@ -57,7 +57,7 @@ gofmt -l . && go vet ./... && golangci-lint run && go test -race ./...
   git config --local --add credential.https://github.com.helper '!gh auth git-credential'
   ```
 
-  Nothing global changes, and it never touches the remote's visibility.
+  Nothing global changes, and nothing here touches the repo's visibility.
 - **Direct pushes to `main`:** the one bootstrap commit was the only one. Every
   other change is a PR, merged with `gh pr merge --squash --delete-branch`. Once
   the `main` ruleset exists (PR 11 of `docs/HANDOVER.md`), a direct push needs an

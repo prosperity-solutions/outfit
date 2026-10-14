@@ -24,26 +24,63 @@ type Build struct {
 	Date    string
 }
 
+// Env is everything a command needs from the outside world.
+type Env struct {
+	Build  Build
+	Dir    string // working directory
+	Getenv func(string) string
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
 // Main runs the CLI against the real process environment and returns the exit
 // code.
 func Main(b Build) int {
 	return Run(context.Background(), b, os.Args[1:], os.Stdout, os.Stderr)
 }
 
-// Run is Main with injectable streams, for tests.
+// Run is Execute with the process's working directory and environment.
 func Run(ctx context.Context, b Build, args []string, stdout, stderr io.Writer) int {
+	dir, err := os.Getwd()
+	if err != nil {
+		return report(stdout, stderr, false, Errorf("cannot determine the working directory: %v", err))
+	}
+	return Execute(ctx, Env{Build: b, Dir: dir, Getenv: os.Getenv, Stdout: stdout, Stderr: stderr}, args)
+}
+
+const usage = `usage: outfit <command> [flags]
+
+commands:
+  get <key>              print a toggle's value (exit 1 when unset)
+  set <key>=<val>…       personal toggle override; key= unsets   [--here | --global]
+  ls                     list profiles across the three tiers
+  status                 the active profile and where every value comes from
+  version                version, commit, build date, git version found
+
+every command accepts --json. Run 'outfit <command> -h' for its flags.`
+
+// Execute runs one command and returns its exit code.
+func Execute(ctx context.Context, e Env, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: outfit <command> [flags]\ncommands: version\nrun `outfit version` to see what is installed")
+		fmt.Fprintln(e.Stderr, usage)
 		return ExitUsage
 	}
 	switch args[0] {
 	case "version":
-		return cmdVersion(ctx, b, args[1:], stdout, stderr)
+		return cmdVersion(ctx, e, args[1:])
+	case "get":
+		return cmdGet(ctx, e, args[1:])
+	case "set":
+		return cmdSet(ctx, e, args[1:])
+	case "ls":
+		return cmdLs(ctx, e, args[1:])
+	case "status":
+		return cmdStatus(ctx, e, args[1:])
 	case "-h", "--help", "help":
-		fmt.Fprintln(stdout, "usage: outfit <command> [flags]\ncommands: version")
+		fmt.Fprintln(e.Stdout, usage)
 		return ExitOK
 	default:
-		return report(stdout, stderr, slices.Contains(args, "--json"),
+		return report(e.Stdout, e.Stderr, slices.Contains(args, "--json"),
 			Usagef("unknown command %q", args[0]).WithFix("outfit help"))
 	}
 }
@@ -65,14 +102,15 @@ type gitInfo struct {
 
 // cmdVersion never fails because of git: install.sh prints it as its last step,
 // so a missing or old git is reported as a warning, not an error.
-func cmdVersion(ctx context.Context, b Build, args []string, stdout, stderr io.Writer) int {
+func cmdVersion(ctx context.Context, e Env, args []string) int {
 	fs := flag.NewFlagSet("version", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs.SetOutput(e.Stderr)
 	asJSON := fs.Bool("json", false, "print machine-readable output")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
 
+	b := e.Build
 	info := versionInfo{Version: b.Version, Commit: b.Commit, Date: b.Date, OS: runtime.GOOS, Arch: runtime.GOARCH}
 	v, _, err := gitx.Client{}.Version(ctx)
 	switch {
@@ -88,17 +126,17 @@ func cmdVersion(ctx context.Context, b Build, args []string, stdout, stderr io.W
 
 	if *asJSON {
 		out, _ := json.Marshal(info)
-		fmt.Fprintln(stdout, string(out))
+		fmt.Fprintln(e.Stdout, string(out))
 		return ExitOK
 	}
 	gv := info.Git.Version
 	if gv == "" {
 		gv = "not found"
 	}
-	fmt.Fprintf(stdout, "outfit %s (commit %s, built %s, %s/%s, git %s)\n",
+	fmt.Fprintf(e.Stdout, "outfit %s (commit %s, built %s, %s/%s, git %s)\n",
 		info.Version, info.Commit, info.Date, info.OS, info.Arch, gv)
 	if info.Git.Warning != "" {
-		fmt.Fprintf(stderr, "warning: %s\n", info.Git.Warning)
+		fmt.Fprintf(e.Stderr, "warning: %s\n", info.Git.Warning)
 	}
 	return ExitOK
 }

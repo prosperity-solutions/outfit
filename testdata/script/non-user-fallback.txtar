@@ -1,0 +1,48 @@
+# docs/HANDOVER.md §3.0: the default variant. A machine WITHOUT outfit reads the
+# committed toggle with plain git; a machine with outfit reads it through outfit.
+# `git config -f` reads one file, applies nothing, and follows no includes.
+exec git init -q repo
+cd repo
+mkdir .outfit
+cp $WORK/team.cfg .outfit/config
+exec git add -A
+exec git commit -qm 'feat: toggles'
+
+exec git config -f .outfit/config --get outfit.biome
+stdout '^on$'
+exec git config -f .outfit/config --get outfit.hook.pre-commit
+stdout '^off$'
+
+# Pinned: a dotted key under [outfit] is NOT valid git syntax. `git config -f`
+# fails on the whole file (exit 128), even for other keys, so committed files that
+# non-users read must use the [outfit "hook"] subsection form.
+cp $WORK/dotted.cfg dotted.cfg
+! exec git config -f dotted.cfg --get outfit.biome
+stderr 'bad config line'
+# outfit itself accepts both spellings.
+exec cp dotted.cfg .outfit/config
+outfit get hook.pre-commit
+stdout '^off$'
+exec cp $WORK/team.cfg .outfit/config
+
+# The documented snippet, with outfit installed...
+exec sh -c 'v=$(outfit get biome 2>/dev/null || git config -f .outfit/config --get outfit.biome); echo "$v"'
+stdout '^on$'
+# ...and with outfit missing from PATH.
+env PATH=$PATHNOOUTFIT
+exec sh -c 'v=$(outfit get biome 2>/dev/null || git config -f .outfit/config --get outfit.biome); echo "$v"'
+stdout '^on$'
+
+# A key outfit never heard of falls through to git and stays empty.
+exec sh -c 'v=$(outfit get nosuch 2>/dev/null || git config -f .outfit/config --get outfit.nosuch); echo "[$v]"'
+stdout '^\[\]$'
+
+-- team.cfg --
+[outfit]
+	biome = on
+[outfit "hook"]
+	pre-commit = off
+-- dotted.cfg --
+[outfit]
+	biome = on
+	hook.pre-commit = off
