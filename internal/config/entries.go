@@ -37,6 +37,11 @@ type GitConfig struct {
 	// always has some (core.repositoryformatversion): none means git refused to
 	// read this repository's config, e.g. safe.directory "dubious ownership".
 	SawLocal bool
+	// HooksPaths are the core.hooksPath values in git's own order (later wins).
+	HooksPaths []Entry
+	// SparseCheckout reports core.sparseCheckout=true in the repo's own or the
+	// worktree's config.
+	SparseCheckout bool
 	// Warnings lists outfit.* keys that were not valid.
 	Warnings []Warning
 }
@@ -64,6 +69,14 @@ func ParseGitList(out []byte) GitConfig {
 			gc.SawLocal = true
 		}
 		lk := strings.ToLower(key)
+		if lk == "core.hookspath" {
+			gc.HooksPaths = append(gc.HooksPaths, Entry{Scope: string(scope), Key: "core.hookspath", Value: val})
+			continue
+		}
+		if lk == "core.sparsecheckout" && (string(scope) == ScopeLocal || string(scope) == ScopeWorktree) {
+			gc.SparseCheckout = gitBool(val)
+			continue
+		}
 		if lk == "extensions.worktreeconfig" {
 			if string(scope) == ScopeLocal {
 				gc.WorktreeConfig = gitBool(val)

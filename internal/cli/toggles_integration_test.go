@@ -34,7 +34,7 @@ func outfit(t *testing.T, f *testkit.Repo, dir string, args ...string) (int, str
 }
 
 func TestGetPrecedenceThroughRealGit(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	get := func(key string) (int, string) {
 		code, out, _ := outfit(t, f, f.Dir, "get", key)
 		return code, strings.TrimSpace(out)
@@ -75,7 +75,7 @@ func TestGetPrecedenceThroughRealGit(t *testing.T) {
 }
 
 func TestLockedKeyResistsEveryScope(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	f.Git("config", "extensions.worktreeConfig", "true")
 	f.Git("config", "--local", "outfit.profile", "yolo")
 	for _, scope := range []string{"--global", "--local", "--worktree"} {
@@ -103,7 +103,7 @@ func TestLockedKeyResistsEveryScope(t *testing.T) {
 }
 
 func TestSetScopesAndUnset(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	if code, out, _ := outfit(t, f, f.Dir, "set", "biome=off"); code != 0 || out != "biome=off (local)\n" {
 		t.Fatalf("local: %d %q", code, out)
 	}
@@ -127,7 +127,7 @@ func TestSetScopesAndUnset(t *testing.T) {
 	}
 	// --here needs the worktree extension, and says how to get it.
 	code, _, errs := outfit(t, f, f.Dir, "set", "biome=on", "--here")
-	if code != 1 || !strings.Contains(errs, "fix: git config extensions.worktreeConfig true") {
+	if code != 1 || !strings.Contains(errs, "fix: outfit init") {
 		t.Fatalf("--here without extension: %d %q", code, errs)
 	}
 	f.Git("config", "extensions.worktreeConfig", "true")
@@ -140,7 +140,7 @@ func TestSetScopesAndUnset(t *testing.T) {
 }
 
 func TestSetValidation(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	cases := [][]string{
 		{"set"},
 		{"set", "novalue"},
@@ -161,7 +161,7 @@ func TestSetValidation(t *testing.T) {
 }
 
 func TestStatusAndLsThroughRealGit(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	f.Git("config", "--local", "outfit.profile", "yolo")
 	f.Git("config", "--global", "outfit.biome", "maybe")
 
@@ -205,7 +205,7 @@ func TestStatusAndLsThroughRealGit(t *testing.T) {
 }
 
 func TestStatusRefusesOldGit(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	dir := t.TempDir()
 	if err := os.WriteFile(dir+"/git", []byte("#!/bin/sh\necho 'git version 2.30.0'\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -220,7 +220,7 @@ func TestStatusRefusesOldGit(t *testing.T) {
 
 // The budget of HANDOVER.md §2: `get` spawns at most one git process.
 func TestGetSpawnsOneGitProcess(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	f.Git("config", "--local", "outfit.profile", "yolo")
 	gitx.ResetCalls()
 	if code, _, _ := outfit(t, f, f.Dir, "get", "biome"); code != 0 {
@@ -233,7 +233,7 @@ func TestGetSpawnsOneGitProcess(t *testing.T) {
 
 // Review finding: .outfit itself replaced by a symlink to files outside the repo.
 func TestSymlinkedDotOutfitIsNotRead(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	outside := t.TempDir()
 	if err := os.WriteFile(outside+"/config", []byte("[outfit]\n biome = fromoutside\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -257,7 +257,7 @@ func TestSymlinkedDotOutfitIsNotRead(t *testing.T) {
 // Review finding (threat model): a hook in a linked worktree that `cd`s into a
 // package must still see the ROOT .outfit/ (and its locks), not a nested one.
 func TestGetFromHookInSubdirectoryIgnoresNestedDotOutfit(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo, testkit.WithWorktrees(1))
+	f := testkit.New(t, testkit.Team, testkit.WithWorktrees(1))
 	wt := f.Worktrees[0]
 	nested := wt + "/apps/web/.outfit"
 	if err := os.MkdirAll(nested, 0o755); err != nil {
@@ -289,7 +289,7 @@ func TestGetFromHookInSubdirectoryIgnoresNestedDotOutfit(t *testing.T) {
 // `git -c outfit.x=y <cmd>` reaches hooks as the command scope and beats every
 // other source except a locked team value.
 func TestCommandScopeBeatsEverythingButLocks(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	f.Git("config", "--local", "outfit.biome", "local")
 	t.Setenv("GIT_CONFIG_COUNT", "2")
 	t.Setenv("GIT_CONFIG_KEY_0", "outfit.biome")
@@ -314,7 +314,7 @@ func TestCommandScopeBeatsEverythingButLocks(t *testing.T) {
 }
 
 func TestFlagErrorsAreJSONWhenAsked(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	code, out, errs := outfit(t, f, f.Dir, "get", "biome", "--bogus", "--json")
 	var e struct {
 		Error string
@@ -329,7 +329,7 @@ func TestFlagErrorsAreJSONWhenAsked(t *testing.T) {
 }
 
 func TestLsJSONIncludesBaseAndInactiveWarnings(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	f.Write(".outfit/profiles/lean/profile.config", "[outfit]\n biome = off\n[core]\n fsmonitor = x\n")
 	_, out, errs := outfit(t, f, f.Dir, "ls", "--json")
 	var ls struct {
@@ -345,7 +345,7 @@ func TestLsJSONIncludesBaseAndInactiveWarnings(t *testing.T) {
 }
 
 func TestStatusShowsLockedWithoutValueAndMissingProfile(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	f.Write(".outfit/config", "[outfit]\n locked = nope-never-set\n")
 	f.Git("config", "--local", "outfit.profile", "ghost")
 	code, out, _ := outfit(t, f, f.Dir, "status")
@@ -357,7 +357,7 @@ func TestStatusShowsLockedWithoutValueAndMissingProfile(t *testing.T) {
 // Review finding: a repo with only .outfit/config (no profiles/) is the normal
 // §3.0 layout and must not look like a symlink attack.
 func TestNoProfilesDirectoryIsNotAWarning(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	if err := os.RemoveAll(f.Path(".outfit/profiles")); err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +372,7 @@ func TestNoProfilesDirectoryIsNotAWarning(t *testing.T) {
 }
 
 func TestSetNormalizesBooleansAndReportsScopes(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	for in, want := range map[string]string{"OFF": "off", "false": "off", "No": "off", "0": "off", "TRUE": "on", "yes": "on", "fast": "fast"} {
 		outfit(t, f, f.Dir, "set", "biome="+in)
 		if got := f.Git("config", "--local", "outfit.biome"); got != want {
@@ -416,7 +416,7 @@ func TestSetNormalizesBooleansAndReportsScopes(t *testing.T) {
 }
 
 func TestSetConvergesWhenAKeyHoldsSeveralValues(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	f.Git("config", "--local", "--add", "outfit.biome", "a")
 	f.Git("config", "--local", "--add", "outfit.biome", "b")
 	if code, _, errs := outfit(t, f, f.Dir, "set", "biome=off"); code != 0 {
@@ -428,7 +428,7 @@ func TestSetConvergesWhenAKeyHoldsSeveralValues(t *testing.T) {
 }
 
 func TestSetGlobalNeedsNoRepository(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	elsewhere := t.TempDir()
 	code, out, errs := outfit(t, f, elsewhere, "set", "biome=off", "--global")
 	if code != 0 || out != "biome=off (global)\n" {
@@ -445,7 +445,7 @@ func TestSetGlobalNeedsNoRepository(t *testing.T) {
 }
 
 func TestSetReportsRetryableLockContention(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	if err := os.WriteFile(f.Path(".git/config.lock"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +462,7 @@ func TestSetReportsRetryableLockContention(t *testing.T) {
 // Review finding: when git refuses to read the repo's config (safe.directory),
 // `get` must fail loudly instead of returning the team value.
 func TestDubiousOwnershipFailsLoudly(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	f.Git("config", "--local", "outfit.biome", "mine")
 	t.Setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
 	code, _, errs := outfit(t, f, f.Dir, "get", "biome")
@@ -473,7 +473,7 @@ func TestDubiousOwnershipFailsLoudly(t *testing.T) {
 
 // Review finding: a hook's GIT_DIR may be relative to a cwd we have since left.
 func TestRelativeGitDirFromSubdirectory(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	f.Git("config", "--local", "outfit.biome", "mine")
 	for k, v := range testkit.EnvMap(f.Home) {
 		t.Setenv(k, v)
@@ -495,7 +495,7 @@ func TestRelativeGitDirFromSubdirectory(t *testing.T) {
 }
 
 func TestLsOnlyListsRealCommittedTrees(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	outside := t.TempDir()
 	if err := os.WriteFile(outside+"/profile.config", []byte("[outfit]\n secret = outside\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -516,7 +516,7 @@ func TestLsOnlyListsRealCommittedTrees(t *testing.T) {
 }
 
 func TestInvalidProfileDirectoryNamesAreReported(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	f.Write(".outfit/profiles/Has Space/profile.config", "[outfit]\n x = on\n")
 	_, out, errs := outfit(t, f, f.Dir, "ls")
 	if strings.Contains(out, "Has Space") || !strings.Contains(errs, "not a valid profile name") {
@@ -525,7 +525,7 @@ func TestInvalidProfileDirectoryNamesAreReported(t *testing.T) {
 }
 
 func TestLockWarningsAreInStableOrder(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	f.Write(".outfit/config", "[outfit]\n locked = a, b, c, d\n a = on\n b = on\n c = on\n d = on\n")
 	for _, k := range []string{"d", "b", "a", "c"} {
 		f.Git("config", "--local", "outfit."+k, "off")
@@ -542,7 +542,7 @@ func TestLockWarningsAreInStableOrder(t *testing.T) {
 }
 
 func TestExtensionWorktreeConfigOnlyCountsInTheRepoConfig(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	f.Git("config", "--global", "extensions.worktreeConfig", "true")
 	code, _, errs := outfit(t, f, f.Dir, "set", "biome=off", "--here")
 	if code != 1 || !strings.Contains(errs, "extensions.worktreeConfig") {

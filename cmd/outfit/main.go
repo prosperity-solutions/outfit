@@ -1,5 +1,6 @@
-// Command outfit runs a git monorepo under a profile: which hook checks run,
-// and a few swapped files. See docs/HANDOVER.md for the spec.
+// Command outfit gives each developer, and each coding agent, their own setup of
+// a git repository: which hook checks run, and a few swapped files. See
+// docs/HANDOVER.md for the spec.
 package main
 
 import (

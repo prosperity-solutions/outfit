@@ -19,10 +19,10 @@ import (
 type Recipe int
 
 const (
-	// Monorepo is a small monorepo with a committed .outfit/ (config plus the
+	// Team is a small repository with a committed .outfit/ (config plus the
 	// yolo and lean profiles).
-	Monorepo Recipe = iota
-	// Plain is the same monorepo without any .outfit/ directory: a repo that has
+	Team Recipe = iota
+	// Plain is the same repository without any .outfit/ directory: a repo that has
 	// never heard of outfit.
 	Plain
 )
@@ -31,7 +31,7 @@ func (r Recipe) String() string {
 	if r == Plain {
 		return "plain"
 	}
-	return "monorepo"
+	return "team"
 }
 
 type spec struct {
@@ -91,10 +91,6 @@ const SchemaVersion = "1"
 func New(t *testing.T, recipe Recipe, opts ...Option) *Repo {
 	t.Helper()
 	SkipIfShort(t)
-	s := spec{recipe: recipe}
-	for _, o := range opts {
-		o(&s)
-	}
 
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
@@ -105,40 +101,91 @@ func New(t *testing.T, recipe Recipe, opts ...Option) *Repo {
 	r.Env = HermeticEnviron(home)
 	r.Env = append(r.Env, HookLogEnv+"="+r.HookLog)
 
-	cache := cachedFixture(t, s, r.Env)
-	if err := copyTree(cache, r.Dir); err != nil {
-		t.Fatalf("copy fixture: %v", err)
+	up, wts, err := Materialize(r.Dir, root, r.Env, recipe, opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Upstream, r.Worktrees = up, wts
+	return r
+}
+
+// Materialize builds a fixture repository at dir (which must not exist) using
+// env for every git call. Companion paths (the bare upstream, linked worktrees)
+// are created under siblings. It is New without a *testing.T, so testscript can
+// call it too.
+func Materialize(dir, siblings string, env []string, recipe Recipe, opts ...Option) (upstream string, worktrees []string, err error) {
+	s := spec{recipe: recipe}
+	for _, o := range opts {
+		o(&s)
+	}
+	git := func(args ...string) error {
+		if out, err := RunGit(dir, env, args...); err != nil {
+			return fmt.Errorf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return nil
+	}
+
+	cache, err := cachedFixture(s, env)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := copyTree(cache, dir); err != nil {
+		return "", nil, fmt.Errorf("copy fixture: %w", err)
 	}
 	// Copying changed every mtime: refresh the index so git trusts its stat cache
 	// (otherwise it re-hashes lazily and a later sparse change can skip files it
 	// believes are modified).
-	r.Git("update-index", "-q", "--refresh")
+	if err := git("update-index", "-q", "--refresh"); err != nil {
+		return "", nil, err
+	}
 	// Local state that holds absolute paths cannot live in the cache.
 	if s.upstream {
-		r.Upstream = filepath.Join(root, "upstream.git")
-		r.Git("init", "-q", "--bare", r.Upstream)
-		r.Git("remote", "add", "origin", r.Upstream)
-		r.Git("push", "-q", "-u", "origin", "main")
+		upstream = filepath.Join(siblings, filepath.Base(dir)+"-upstream.git")
+		for _, args := range [][]string{
+			{"init", "-q", "--bare", upstream},
+			{"remote", "add", "origin", upstream},
+			{"push", "-q", "-u", "origin", "main"},
+		} {
+			if err := git(args...); err != nil {
+				return "", nil, err
+			}
+		}
 	}
 	if s.conflict {
-		r.Git("branch", "conflict", "HEAD~1")
-		r.Git("checkout", "-q", "conflict")
-		r.Write("AGENTS.md", "# Agents\nconflict side\n")
-		r.Git("commit", "-qam", "conflict side")
-		r.Git("checkout", "-q", "main")
-		r.Write("AGENTS.md", "# Agents\nmain side\n")
-		r.Git("commit", "-qam", "main side")
+		write := func(content string) error {
+			return os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(content), 0o644)
+		}
+		steps := []func() error{
+			func() error { return git("branch", "conflict", "HEAD~1") },
+			func() error { return git("checkout", "-q", "conflict") },
+			func() error { return write("# Agents\nconflict side\n") },
+			func() error { return git("commit", "-qam", "conflict side") },
+			func() error { return git("checkout", "-q", "main") },
+			func() error { return write("# Agents\nmain side\n") },
+			func() error { return git("commit", "-qam", "main side") },
+		}
+		for _, step := range steps {
+			if err := step(); err != nil {
+				return "", nil, err
+			}
+		}
 	}
 	for i := 1; i <= s.worktrees; i++ {
-		p := filepath.Join(root, fmt.Sprintf("wt%d", i))
-		r.Git("worktree", "add", "-q", "-b", fmt.Sprintf("wt%d", i), p)
-		r.Worktrees = append(r.Worktrees, p)
+		p := filepath.Join(siblings, fmt.Sprintf("%s-wt%d", filepath.Base(dir), i))
+		if err := git("worktree", "add", "-q", "-b", fmt.Sprintf("wt%d", i), p); err != nil {
+			return "", nil, err
+		}
+		worktrees = append(worktrees, p)
 	}
 	if s.cone {
-		r.Git("sparse-checkout", "init", "--cone")
-		r.Git("sparse-checkout", "set", "apps/web")
+		if err := git("sparse-checkout", "init", "--cone"); err != nil {
+			return "", nil, err
+		}
+		if err := git("sparse-checkout", "set", "apps/web"); err != nil {
+			return "", nil, err
+		}
 	}
-	return r
+	return upstream, worktrees, nil
 }
 
 // SkipIfShort skips integration and e2e tests under `go test -short`, which is
@@ -228,13 +275,12 @@ func GitVersion() string {
 
 // --- cache -----------------------------------------------------------------
 
-func cachedFixture(t *testing.T, s spec, env []string) string {
-	t.Helper()
+func cachedFixture(s spec, env []string) (string, error) {
 	// The key covers the fixture's CONTENT (the fast-import stream and the hook
 	// scripts), so editing the recipe invalidates stale caches on its own.
 	h := sha256.New()
 	fmt.Fprintf(h, "%s|%v|%v|%v|%v|%s|", SchemaVersion, s.recipe, s.husky, s.lefthook, s.plain, GitVersion())
-	h.Write(fastImport(monorepoFiles(s)))
+	h.Write(fastImport(baseFiles(s)))
 	fmt.Fprint(h, huskyShim, huskyH, hookStub("x"), stubVia("x", "lefthook"))
 	key := hex.EncodeToString(h.Sum(nil))[:16]
 	base := filepath.Join(os.TempDir(), fmt.Sprintf("outfit-testkit-%d", os.Getuid()))
@@ -243,29 +289,29 @@ func cachedFixture(t *testing.T, s spec, env []string) string {
 		// The cache lives under the OS temp dir, which gets cleaned piecemeal.
 		// A directory that no longer holds a readable history is rebuilt.
 		if _, verr := RunGit(final, env, "rev-parse", "--verify", "-q", "HEAD~1^{tree}"); verr == nil {
-			return final
+			return final, nil
 		}
 		os.RemoveAll(final)
 	}
 	if err := os.MkdirAll(base, 0o755); err != nil {
-		t.Fatal(err)
+		return "", err
 	}
 	tmp, err := os.MkdirTemp(base, "build-")
 	if err != nil {
-		t.Fatal(err)
+		return "", err
 	}
 	if err := buildFixture(tmp, s, env); err != nil {
 		os.RemoveAll(tmp)
-		t.Fatalf("build fixture: %v", err)
+		return "", fmt.Errorf("build fixture: %w", err)
 	}
 	// Atomic publish; if another process won the race, use its copy.
 	if err := os.Rename(tmp, final); err != nil {
 		os.RemoveAll(tmp)
 		if _, serr := os.Stat(final); serr != nil {
-			t.Fatalf("publish fixture: %v", err)
+			return "", fmt.Errorf("publish fixture: %w", err)
 		}
 	}
-	return final
+	return final, nil
 }
 
 func buildFixture(dir string, s spec, env []string) error {
@@ -283,7 +329,7 @@ func buildFixture(dir string, s spec, env []string) error {
 	if out, err := RunGit(dir, benv, "init", "-q", "-b", "main"); err != nil {
 		return fmt.Errorf("init: %v: %s", err, out)
 	}
-	files := monorepoFiles(s)
+	files := baseFiles(s)
 	stream := fastImport(files)
 	cmd := exec.Command("git", "fast-import", "--quiet")
 	cmd.Dir, cmd.Env = dir, benv
@@ -383,9 +429,9 @@ type file struct {
 	exec          bool
 }
 
-func monorepoFiles(s spec) []file {
+func baseFiles(s spec) []file {
 	fs := []file{
-		{path: "README.md", content: "# Monorepo\n"},
+		{path: "README.md", content: "# Example\n"},
 		{path: "AGENTS.md", content: "# Agents\nbase rules\n"},
 		{path: "CLAUDE.md", content: "# Claude\nbase rules\n"},
 		{path: "apps/web/AGENTS.md", content: "# Web agents\nbase web rules\n"},
@@ -396,7 +442,7 @@ func monorepoFiles(s spec) []file {
 		{path: "packages/ui/index.ts", content: "export const ui = 1\n"},
 		{path: "docs/guide.md", content: "# Guide\n"},
 	}
-	if s.recipe == Monorepo {
+	if s.recipe == Team {
 		fs = append(fs,
 			file{path: ".outfit/config", content: "[outfit]\n\tlocked = secrets-scan, hook.pre-push\n\tsecrets-scan = on\n\tbiome = on\n"},
 			file{path: ".outfit/profiles/yolo/profile.config", content: "[outfit]\n\tbiome = off\n\ttests = off\n\thook.pre-commit = off\n"},
@@ -437,7 +483,7 @@ func fastImport(files []file) []byte {
 			fmt.Fprintf(&b, "M %s inline %s\ndata %d\n%s\n", mode, f.path, len(f.content), f.content)
 		}
 	}
-	commit("feat: initial monorepo", 1700000000, "", files)
+	commit("feat: initial commit", 1700000000, "", files)
 	commit("docs: tweak the guide", 1700000100, "",
 		[]file{{path: "docs/guide.md", content: "# Guide\n\nUpdated.\n"}})
 	return b.Bytes()

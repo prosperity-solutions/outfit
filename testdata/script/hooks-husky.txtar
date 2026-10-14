@@ -1,0 +1,73 @@
+# Scenario 11 (husky): the dispatcher chains to the team's hooks with git's args,
+# stdin and exit codes intact, a husky hooksPath reset cannot win, and
+# hook.<name>=off skips the chained hook. docs/HANDOVER.md §3.6.
+fixture repo husky upstream
+cd repo
+
+# Before outfit: husky's hooks run.
+exec git commit --allow-empty -qm 'feat: before'
+hooklog
+stdout 'hook=pre-commit argv='
+stdout 'hook=commit-msg argv=\[.*COMMIT_EDITMSG\]'
+
+outfit init
+stdout 'installed: '
+exists .git/outfit/hooks/pre-commit
+exists .git/outfit/hooks/commit-msg
+exists .git/outfit/hooks/post-checkout
+exec git config --worktree --get core.hooksPath
+stdout 'outfit/hooks$'
+
+# After init, the same hooks run, once each, with the same arguments.
+rm $OUTFIT_TEST_HOOKLOG
+exec git commit --allow-empty -qm 'feat: after'
+hooklog
+stdout 'hook=pre-commit argv='
+stdout 'hook=commit-msg argv=\[.*COMMIT_EDITMSG\]'
+exec grep -c 'hook=pre-commit' $OUTFIT_TEST_HOOKLOG
+stdout '^1$'
+
+# pre-push: argv and the ref lines on stdin reach the team hook.
+rm $OUTFIT_TEST_HOOKLOG
+exec git push -q origin main:other
+hooklog
+stdout 'hook=pre-push argv=\[origin\]\[.*upstream.git\]'
+stdout 'stdin=<<'
+stdout '^refs/heads/main [0-9a-f]+ refs/heads/other '
+
+# A failing team hook blocks the commit and its exit status is git's.
+exec sh -c 'echo 7 > "$OUTFIT_TEST_HOOKLOG.exit.pre-commit"'
+! exec git commit --allow-empty -qm 'feat: blocked'
+stderr .
+exec git log --format=%s -1
+stdout '^feat: after$'
+rm $OUTFIT_TEST_HOOKLOG.exit.pre-commit
+
+# husky rewrites core.hooksPath on every `npm install`: our worktree-scope value wins.
+exec git config --local core.hooksPath .husky/_
+rm $OUTFIT_TEST_HOOKLOG
+exec git commit --allow-empty -qm 'feat: after husky reset'
+exec grep -c 'hook=pre-commit' $OUTFIT_TEST_HOOKLOG
+stdout '^1$'
+
+# hook.pre-commit=off skips the chained team hook; the others still run.
+outfit set hook.pre-commit=off
+rm $OUTFIT_TEST_HOOKLOG
+exec git commit --allow-empty -qm 'feat: yolo'
+hooklog
+! stdout 'hook=pre-commit'
+stdout 'hook=commit-msg'
+outfit set hook.pre-commit=
+rm $OUTFIT_TEST_HOOKLOG
+exec git commit --allow-empty -qm 'feat: back'
+hooklog
+stdout 'hook=pre-commit'
+
+# A locked hook cannot be skipped: `set` refuses, and a hand-written override is ignored.
+! outfit set hook.pre-push=off
+stderr 'locked by .outfit/config'
+exec git config --local outfit.hook.pre-push off
+rm $OUTFIT_TEST_HOOKLOG
+exec git push -q origin main:another
+hooklog
+stdout 'hook=pre-push'

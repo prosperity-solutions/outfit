@@ -8,3 +8,4 @@ linters:
         - fmt.Fprintln
         - os.RemoveAll
         - (*os.File).Close
+        - os.Remove

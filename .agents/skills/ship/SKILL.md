@@ -316,7 +316,7 @@ Three rules that make it worth the spend rather than theatre:
   `gh pr ready`, run `git status --short` and revert incidental drift.
 - **Drive it yourself, before the review loop.** A review subagent cannot do
   this at all. Build `outfit`, create a fixture repo (use `internal/testkit` or
-  `scripts/demo.sh`'s throwaway monorepo), and run the actual user journey: the
+  `scripts/demo.sh`'s throwaway repo), and run the actual user journey: the
   command a person types, the output it prints, the `git status` afterwards.
   Paste the terminal transcript into the PR body under **"Driven by hand"**.
   Do this **before** the review loop: a finding from a real run is worth more

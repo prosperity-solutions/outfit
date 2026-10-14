@@ -60,8 +60,9 @@ typed. In a committed file nothing is rewritten, because teammates without outfi
 read the raw text: `ON`, `OFF` (any case other than exactly `on`/`off`), `false`,
 `no`, `0`, `true`, `yes`, `1` and a bare key get a warning telling you to write `on` or `off`.
 
-Until the hook dispatcher ships (the next release), a toggle only affects hooks
-that call `outfit get` themselves (see the snippet at the end).
+After `outfit init` (see [hooks.md](hooks.md)) `hook.<name> = off` skips that hook
+for you without any change to the team's hooks. Other toggles (`biome`, `tests`…)
+only affect hooks that ask for them with `outfit get` (see the snippet at the end).
 
 ## Where a value comes from
 
@@ -94,8 +95,9 @@ A profile name that no longer exists is treated as `base`, with a warning.
 | Command | What it does |
 |---|---|
 | `outfit get <key>` | prints the value. Unset: prints nothing and exits **1** (like `git config --get`). One git process, no writes. |
-| `outfit set <key>=<val>… [--here\|--global]` | personal override in git config; `key=` unsets (in that scope only: it prints which scopes still set the key). `--global` works outside a repo. `--here` needs `extensions.worktreeConfig` (`outfit init` will enable it; until then run `git config extensions.worktreeConfig true`). Note that git copies a worktree's `config.worktree` into every worktree created afterwards, so `--here` in the main worktree leaks into new ones until outfit strips the copies on `worktree add`. |
+| `outfit set <key>=<val>… [--here\|--global]` | personal override in git config; `key=` unsets (in that scope only: it prints which scopes still set the key). `--global` works outside a repo. `--here` needs `extensions.worktreeConfig`, which `outfit init` enables. Note that git copies a worktree's `config.worktree` into every worktree created afterwards, so `--here` in the main worktree leaks into new ones until outfit strips the copies on `worktree add`. |
 | `outfit ls` | profiles across the three tiers (`committed`, `local`, `worktree`), their keys and files; `*` marks the active one. |
+| `outfit init` / `outfit uninstall` | install or remove the hook dispatcher: [hooks.md](hooks.md). |
 | `outfit status` | the active profile, where every toggle comes from, the files it swaps, and warnings. Enforces git ≥ 2.36. |
 
 All of them accept `--json`. Failures carry `"retryable"` and, when there is one, the exact `"fix"` command. `ls` shows a built-in `base` row (tier `builtin`): the profile that means no swaps.

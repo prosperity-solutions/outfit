@@ -77,7 +77,7 @@ func cmdSet(ctx context.Context, e Env, args []string) int {
 	case *here:
 		scope, flagName = config.ScopeWorktree, "--worktree"
 		if !l.Cfg.WorktreeConfig {
-			return fail(Errorf("this repository has no per-worktree config yet (extensions.worktreeConfig is off)").WithFix("git config extensions.worktreeConfig true"))
+			return fail(Errorf("this repository has no per-worktree config yet (extensions.worktreeConfig is off)").WithFix("outfit init"))
 		}
 	}
 	for _, t := range todo {

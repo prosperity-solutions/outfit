@@ -21,7 +21,7 @@ func eval(t *testing.T, p string) string {
 // Discovery without exec must agree with what git itself reports, for the main
 // worktree and for linked worktrees.
 func TestAgreesWithGit(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo, testkit.WithWorktrees(2))
+	f := testkit.New(t, testkit.Team, testkit.WithWorktrees(2))
 	for _, dir := range append([]string{f.Dir}, f.Worktrees...) {
 		sub := filepath.Join(dir, "apps", "web")
 		got, err := repo.Discover(sub, func(string) string { return "" })
@@ -39,7 +39,7 @@ func TestAgreesWithGit(t *testing.T) {
 
 // Inside a hook git exports GIT_DIR; the repo must resolve from it alone.
 func TestHookStyleGitDir(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo, testkit.WithWorktrees(1))
+	f := testkit.New(t, testkit.Team, testkit.WithWorktrees(1))
 	wt := f.Worktrees[0]
 	gitDir := f.GitIn(wt, "rev-parse", "--path-format=absolute", "--git-dir")
 	got, err := repo.Discover(os.TempDir(), func(k string) string {
@@ -62,7 +62,7 @@ func TestHookStyleGitDir(t *testing.T) {
 // from the cwd, or the root .outfit/ (and its `locked` keys) would be skipped
 // and a nested pkg/.outfit/config would be read instead.
 func TestHookInLinkedWorktreeFromSubdirectory(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo, testkit.WithWorktrees(1))
+	f := testkit.New(t, testkit.Team, testkit.WithWorktrees(1))
 	wt := f.Worktrees[0]
 	gitDir := f.GitIn(wt, "rev-parse", "--path-format=absolute", "--git-dir")
 	sub := filepath.Join(wt, "apps", "web")
@@ -82,7 +82,7 @@ func TestHookInLinkedWorktreeFromSubdirectory(t *testing.T) {
 }
 
 func TestHookInMainWorktreeWithRelativeGitDirFromSubdirectory(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	sub := filepath.Join(f.Dir, "apps", "web", "src")
 	got, err := repo.Discover(sub, func(k string) string {
 		if k == "GIT_DIR" {
@@ -100,7 +100,7 @@ func TestHookInMainWorktreeWithRelativeGitDirFromSubdirectory(t *testing.T) {
 
 // git >= 2.48 can store worktree back-pointers as relative paths.
 func TestRelativeBackPointer(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo, testkit.WithWorktrees(1))
+	f := testkit.New(t, testkit.Team, testkit.WithWorktrees(1))
 	wt := f.Worktrees[0]
 	gitDir := f.GitIn(wt, "rev-parse", "--path-format=absolute", "--git-dir")
 	// Rewrite the back-pointer the way useRelativePaths does.

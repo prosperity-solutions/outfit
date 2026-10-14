@@ -8,9 +8,9 @@ import (
 	"github.com/prosperity-solutions/outfit/internal/testkit"
 )
 
-func TestMonorepoHistoryIsDeterministic(t *testing.T) {
-	a := testkit.New(t, testkit.Monorepo)
-	b := testkit.New(t, testkit.Monorepo)
+func TestTeamHistoryIsDeterministic(t *testing.T) {
+	a := testkit.New(t, testkit.Team)
+	b := testkit.New(t, testkit.Team)
 	if a.Git("rev-parse", "HEAD") != b.Git("rev-parse", "HEAD") {
 		t.Fatal("same recipe must give the same history")
 	}
@@ -21,7 +21,7 @@ func TestMonorepoHistoryIsDeterministic(t *testing.T) {
 		t.Fatalf("want 2 commits, got %d newlines", n)
 	}
 	if !strings.Contains(a.Git("ls-files", ".outfit"), ".outfit/profiles/yolo/AGENTS.md") {
-		t.Fatal("Monorepo must commit .outfit/")
+		t.Fatal("Team must commit .outfit/")
 	}
 }
 
@@ -33,8 +33,8 @@ func TestPlainHasNoOutfit(t *testing.T) {
 }
 
 func TestFixturesAreIndependent(t *testing.T) {
-	a := testkit.New(t, testkit.Monorepo)
-	b := testkit.New(t, testkit.Monorepo)
+	a := testkit.New(t, testkit.Team)
+	b := testkit.New(t, testkit.Team)
 	a.Write("AGENTS.md", "changed\n")
 	if b.Read("AGENTS.md") == "changed\n" {
 		t.Fatal("copies must be private to a test")
@@ -42,7 +42,7 @@ func TestFixturesAreIndependent(t *testing.T) {
 }
 
 func TestHermeticIdentityAndDefaultBranch(t *testing.T) {
-	r := testkit.New(t, testkit.Monorepo)
+	r := testkit.New(t, testkit.Team)
 	if got := r.Git("var", "GIT_COMMITTER_IDENT"); !strings.HasPrefix(got, "Test Committer <committer@example.com> 1700000000 +0000") {
 		t.Fatalf("ident = %q", got)
 	}
@@ -53,13 +53,13 @@ func TestHermeticIdentityAndDefaultBranch(t *testing.T) {
 
 func TestOptions(t *testing.T) {
 	t.Run("upstream", func(t *testing.T) {
-		r := testkit.New(t, testkit.Monorepo, testkit.WithUpstream())
+		r := testkit.New(t, testkit.Team, testkit.WithUpstream())
 		if r.Git("rev-parse", "HEAD") != r.Git("--git-dir="+r.Upstream, "rev-parse", "main") {
 			t.Fatal("upstream must have main pushed")
 		}
 	})
 	t.Run("conflict", func(t *testing.T) {
-		r := testkit.New(t, testkit.Monorepo, testkit.WithConflictBranch())
+		r := testkit.New(t, testkit.Team, testkit.WithConflictBranch())
 		if _, err := r.GitErr("merge", "conflict"); err == nil {
 			t.Fatal("merge must conflict")
 		}
@@ -68,13 +68,13 @@ func TestOptions(t *testing.T) {
 		}
 	})
 	t.Run("worktrees", func(t *testing.T) {
-		r := testkit.New(t, testkit.Monorepo, testkit.WithWorktrees(2))
+		r := testkit.New(t, testkit.Team, testkit.WithWorktrees(2))
 		if len(r.Worktrees) != 2 || strings.Count(r.Git("worktree", "list"), "\n") != 2 {
 			t.Fatalf("worktrees: %v", r.Worktrees)
 		}
 	})
 	t.Run("cone", func(t *testing.T) {
-		r := testkit.New(t, testkit.Monorepo, testkit.WithCone())
+		r := testkit.New(t, testkit.Team, testkit.WithCone())
 		if r.Git("config", "core.sparseCheckoutCone") != "true" {
 			t.Fatal("cone sparse checkout must be on")
 		}
@@ -85,7 +85,7 @@ func TestOptions(t *testing.T) {
 }
 
 func TestHuskyLayoutRunsAndLogs(t *testing.T) {
-	r := testkit.New(t, testkit.Monorepo, testkit.WithHusky())
+	r := testkit.New(t, testkit.Team, testkit.WithHusky())
 	if r.Git("config", "core.hooksPath") != ".husky/_" {
 		t.Fatal("husky sets core.hooksPath=.husky/_")
 	}
@@ -114,12 +114,12 @@ func TestHuskyLayoutRunsAndLogs(t *testing.T) {
 }
 
 func TestPlainAndLefthookStubs(t *testing.T) {
-	plain := testkit.New(t, testkit.Monorepo, testkit.WithHooks())
+	plain := testkit.New(t, testkit.Team, testkit.WithHooks())
 	plain.Git("commit", "-q", "--allow-empty", "-m", "feat: empty")
 	if h := plain.Hooks(); !strings.Contains(h, "hook=pre-commit argv=") || strings.Contains(h, "via=") {
 		t.Fatalf("plain stubs: %q", h)
 	}
-	lh := testkit.New(t, testkit.Monorepo, testkit.WithLefthook())
+	lh := testkit.New(t, testkit.Team, testkit.WithLefthook())
 	lh.Git("commit", "-q", "--allow-empty", "-m", "feat: empty")
 	if h := lh.Hooks(); !strings.Contains(h, "hook=pre-commit via=lefthook argv=") {
 		t.Fatalf("lefthook stubs: %q", h)
@@ -130,7 +130,7 @@ func TestPlainAndLefthookStubs(t *testing.T) {
 }
 
 func TestPrePushStubLogsStdin(t *testing.T) {
-	r := testkit.New(t, testkit.Monorepo, testkit.WithHooks(), testkit.WithUpstream())
+	r := testkit.New(t, testkit.Team, testkit.WithHooks(), testkit.WithUpstream())
 	r.Git("push", "-q", "origin", "main:other")
 	h := r.Hooks()
 	if !strings.Contains(h, "hook=pre-push argv=[origin][") || !strings.Contains(h, "stdin=<<\nrefs/heads/main ") {

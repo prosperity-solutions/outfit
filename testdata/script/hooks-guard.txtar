@@ -1,0 +1,68 @@
+# The pre-commit guard (docs/HANDOVER.md §3.6, scenario 5 partly): with a path
+# swapped, no way of committing it, `commit -a` included, gets past pre-commit,
+# and the sparse config that protects `git add` cannot be switched off quietly.
+fixture repo hooks
+cd repo
+outfit init
+cp $WORK/state.json .git/outfit/state.json
+mkdir .git/info
+cp $WORK/sparse .git/info/sparse-checkout
+exec git config core.sparseCheckout true
+
+# Nothing staged: the commit goes through (and the team's own hook still runs).
+exec git commit --allow-empty -qm 'feat: fine'
+hooklog
+stdout 'hook=pre-commit'
+
+# A swapped path, staged on purpose with --sparse, is refused with the exact fix.
+cp $WORK/edited.md AGENTS.md
+exec git add --sparse AGENTS.md
+! exec git commit -qm 'feat: swapped'
+stderr 'commit refused'
+stderr 'AGENTS.md is swapped by your active profile'
+stderr 'git reset -q -- AGENTS.md'
+exec git reset -q
+exec git log --format=%s -1
+stdout '^feat: fine$'
+
+# `commit -a` does not even stage it while the sparse config is in place (git
+# itself says "no changes added"; docs/git-behavior.md row 27).
+! exec git commit -aqm 'feat: commit -a'
+exec git log --format=%s -1
+stdout '^feat: fine$'
+
+# A deliberate commit needs OUTFIT_ALLOW=1.
+exec git add --sparse AGENTS.md
+env OUTFIT_ALLOW=1
+exec git commit -qm 'feat: deliberate'
+env OUTFIT_ALLOW=
+exec git log --format=%s -1
+stdout '^feat: deliberate$'
+
+# The verified disaster: sparse checkout disabled, then commit -a would commit the
+# symlink. The guard refuses because the protection is gone.
+rm AGENTS.md
+symlink AGENTS.md -> .outfit/profiles/yolo/AGENTS.md
+exec git sparse-checkout disable
+! exec git commit -aqm 'feat: the symlink'
+stderr 'sparse checkout is off'
+stderr 'mode 120000'
+exec git ls-tree HEAD AGENTS.md
+! stdout '^120000'
+
+# Not running outfit's guard is on whoever removed outfit: `uninstall` restores a
+# plain repository.
+outfit uninstall
+exec git reset -q
+rm AGENTS.md
+exec git checkout -- AGENTS.md
+
+-- state.json --
+{"schema": 1, "git_version": "", "binary": "", "version": "", "worktree_config_was_set": false, "swaps": [{"path": "AGENTS.md"}]}
+-- sparse --
+# outfit-managed (do not edit; run `outfit sync`)
+/*
+!/AGENTS.md
+-- edited.md --
+# Agents
+edited through the link

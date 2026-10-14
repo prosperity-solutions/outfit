@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 
 	"github.com/prosperity-solutions/outfit/internal/gitx"
@@ -29,6 +30,10 @@ type Env struct {
 	Getenv func(string) string
 	Stdout io.Writer
 	Stderr io.Writer
+	// Stdin is passed through to chained hooks (pre-push reads its refs there).
+	Stdin io.Reader
+	// Exe is the absolute path of the running binary, recorded in hook shims.
+	Exe string
 }
 
 // Main runs the CLI against the real process environment and returns the exit
@@ -43,19 +48,25 @@ func Run(ctx context.Context, b Build, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return report(stdout, stderr, false, Errorf("cannot determine the working directory: %v", err))
 	}
-	return Execute(ctx, Env{Build: b, Dir: dir, Getenv: os.Getenv, Stdout: stdout, Stderr: stderr}, args)
+	exe, _ := os.Executable()
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	return Execute(ctx, Env{Build: b, Dir: dir, Getenv: os.Getenv, Stdout: stdout, Stderr: stderr, Stdin: os.Stdin, Exe: exe}, args)
 }
 
 const usage = `usage: outfit <command> [flags]
 
 commands:
+  init [--dry-run]       install the hook dispatcher (git hooks keep working)
+  uninstall              remove everything init installed, in every worktree
   get <key>              print a toggle's value (exit 1 when unset)
   set <key>=<val>…       personal toggle override; key= unsets   [--here | --global]
   ls                     list profiles across the three tiers
   status                 the active profile and where every value comes from
   version                version, commit, build date, git version found
 
-every command accepts --json. Run 'outfit <command> -h' for its flags.`
+every command accepts --json (plumbing: "outfit hook <name>", run by git). Run 'outfit <command> -h' for its flags.`
 
 // Execute runs one command and returns its exit code.
 func Execute(ctx context.Context, e Env, args []string) int {
@@ -72,6 +83,12 @@ func Execute(ctx context.Context, e Env, args []string) int {
 		return cmdSet(ctx, e, args[1:])
 	case "ls":
 		return cmdLs(ctx, e, args[1:])
+	case "init":
+		return cmdInit(ctx, e, args[1:])
+	case "uninstall":
+		return cmdUninstall(ctx, e, args[1:])
+	case "hook":
+		return cmdHook(ctx, e, args[1:])
 	case "status":
 		return cmdStatus(ctx, e, args[1:])
 	case "-h", "--help", "help":

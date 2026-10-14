@@ -1,0 +1,39 @@
+# Scenario 11 (plain .git/hooks and lefthook-style): both keep working through
+# the dispatcher, and init covers worktrees that already exist.
+fixture plain hooks worktrees=1
+fixture lh lefthook
+
+cd plain
+outfit init
+stdout 'core.hooksPath set \(worktree scope\) in 2 worktree'
+exec git -C ../plain-wt1 config --worktree --get core.hooksPath
+stdout 'plain/.git/outfit/hooks$'
+
+exec git commit --allow-empty -qm 'feat: plain'
+hooklog
+stdout 'hook=pre-commit argv='
+! stdout 'via='
+
+# The existing linked worktree is covered too.
+rm $OUTFIT_TEST_HOOKLOG
+cd ../plain-wt1
+exec git commit --allow-empty -qm 'feat: in the linked worktree'
+hooklog
+stdout 'hook=pre-commit'
+
+# Scenario 17: a failing team post-checkout is git's problem, exactly as without
+# outfit: `git worktree add` exits non-zero although the worktree was created, and
+# the new worktree inherits the dispatcher.
+cd ../plain
+exec sh -c 'echo 1 > "$OUTFIT_TEST_HOOKLOG.exit.post-checkout"'
+! exec git worktree add -q ../plain-new
+exists ../plain-new/.git
+exec git -C ../plain-new config --worktree --get core.hooksPath
+stdout 'plain/.git/outfit/hooks$'
+rm $OUTFIT_TEST_HOOKLOG.exit.post-checkout
+
+cd ../lh
+outfit init
+exec git commit --allow-empty -qm 'feat: lefthook'
+hooklog
+stdout 'hook=pre-commit via=lefthook argv='

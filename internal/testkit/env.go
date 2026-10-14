@@ -1,5 +1,5 @@
 // Package testkit is outfit's test harness: the hermetic environment every test
-// runs git in, a fixture factory for monorepos, and the testscript commands.
+// runs git in, a fixture factory for repositories, and the testscript commands.
 package testkit
 
 import (

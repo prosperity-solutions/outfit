@@ -1,8 +1,8 @@
 # AGENTS.md — outfit
 
 `outfit` is a small, very fast Go CLI that lets each developer, and each coding
-agent, run a git monorepo under a **profile**: which hook checks run, and a few
-swapped files. The full spec is [docs/HANDOVER.md](docs/HANDOVER.md); how git
+agent, run any git repository under a **profile**: which hook checks run, and a
+few swapped files. The full spec is [docs/HANDOVER.md](docs/HANDOVER.md); how git
 actually behaves, as pinned by tests, is [docs/git-behavior.md](docs/git-behavior.md).
 
 ## Before you change anything

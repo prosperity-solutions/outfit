@@ -1,0 +1,64 @@
+# init is idempotent and has --dry-run; uninstall restores `git config --list`
+# byte for byte and leaves no dangling core.hooksPath in any worktree (scenario 10,
+# hooks part).
+fixture repo husky worktrees=1
+cd repo
+exec git config --list
+cp stdout $WORK/before.txt
+exec git worktree list --porcelain
+cp stdout $WORK/worktrees-before.txt
+
+# --dry-run writes nothing.
+outfit init --dry-run
+stdout 'would install'
+! exists .git/outfit
+exec git config --list
+cmp stdout $WORK/before.txt
+
+outfit init
+stdout 'installed'
+exists .git/outfit/state.json
+exec cat .git/outfit/state.json
+stdout '"schema": 1'
+stdout '"worktree_config_was_set": false'
+
+# A second run changes nothing, and touches no file.
+exec sh -c 'ls -l --time-style=+%s .git/outfit/hooks > $WORK/ls1.txt 2>/dev/null || ls -lT .git/outfit/hooks > $WORK/ls1.txt'
+outfit init
+stdout 'already installed'
+exec sh -c 'ls -l --time-style=+%s .git/outfit/hooks > $WORK/ls2.txt 2>/dev/null || ls -lT .git/outfit/hooks > $WORK/ls2.txt'
+cmp $WORK/ls1.txt $WORK/ls2.txt
+outfit init --json
+stdout '"changed":false'
+
+# The dispatcher's budget: one git process per hook run (pre-commit and
+# commit-msg here), and nothing else.
+gitcalls reset
+exec git commit --allow-empty -qm 'feat: counted'
+gitcalls ==2
+exec git reset -q --soft HEAD~1
+
+# Personal toggles set after init are removed with it.
+outfit set biome=off
+exec git config --local --get outfit.biome
+
+outfit uninstall
+stdout 'uninstalled'
+! exists .git/outfit/hooks
+! exists .git/outfit/state.json
+exec git config --list
+cmp stdout $WORK/before.txt
+exec git -C ../repo-wt1 config --list
+! stdout 'outfit/hooks'
+exec git worktree list --porcelain
+cmp stdout $WORK/worktrees-before.txt
+
+# Hooks still run after uninstall (husky's own path is back in charge).
+rm $OUTFIT_TEST_HOOKLOG
+exec git commit --allow-empty -qm 'feat: after uninstall'
+hooklog
+stdout 'hook=pre-commit'
+
+# Uninstall twice is fine.
+outfit uninstall
+stdout 'nothing to uninstall'

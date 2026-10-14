@@ -183,7 +183,7 @@ func TestNoGitConfigGet(t *testing.T) {
 // skip-worktree tag, the mode, the blob and the stage. Pins the FORMAT on every
 // git in the CI matrix, including the 2.36 floor.
 func TestLsFilesSkipWorktreeFormat(t *testing.T) {
-	r := testkit.New(t, testkit.Monorepo)
+	r := testkit.New(t, testkit.Team)
 	r.Git("update-index", "--skip-worktree", "AGENTS.md")
 	res, err := gitx.Client{Dir: r.Dir, Env: r.Env}.Read(context.Background(), "ls-files", "-s", "-t", "--", "AGENTS.md", "README.md")
 	if err != nil {

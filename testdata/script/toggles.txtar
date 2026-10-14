@@ -33,7 +33,7 @@ stdout '^off$'
 
 # --here needs extensions.worktreeConfig; `init` arrives in a later release.
 ! outfit set biome=on --here
-stderr 'fix: git config extensions.worktreeConfig true'
+stderr 'fix: outfit init'
 
 # A profile's toggles sit between personal overrides and the team default.
 exec git config --local outfit.profile yolo

@@ -37,7 +37,7 @@ func discover(t *testing.T, f *testkit.Repo) repo.Repo {
 }
 
 func TestCommittedProfilesFromDiskAndHead(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	r := discover(t, f)
 	g := gitx.Client{Dir: f.Dir, Env: f.Env}
 
@@ -73,7 +73,7 @@ func TestCommittedProfilesFromDiskAndHead(t *testing.T) {
 }
 
 func TestLocalAndWorktreeTiersAndNameClash(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo, testkit.WithWorktrees(1))
+	f := testkit.New(t, testkit.Team, testkit.WithWorktrees(1))
 	r := discover(t, f)
 	g := gitx.Client{Dir: f.Dir, Env: f.Env}
 
@@ -121,7 +121,7 @@ func TestLocalAndWorktreeTiersAndNameClash(t *testing.T) {
 }
 
 func TestLocateRejectsUnsafeNames(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	r := discover(t, f)
 	for _, n := range []string{"../../etc", "base", "", "a/b"} {
 		if _, ok := profiles.Locate(r, n); ok {
@@ -131,7 +131,7 @@ func TestLocateRejectsUnsafeNames(t *testing.T) {
 }
 
 func TestFilesExcludeProfileConfig(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	r := discover(t, f)
 	p, ok := profiles.Locate(r, "lean")
 	if !ok {
@@ -149,7 +149,7 @@ func TestFilesExcludeProfileConfig(t *testing.T) {
 // Review finding: a committed symlink must never make outfit read or list files
 // outside the repository.
 func TestCommittedSymlinksAreNeverFollowed(t *testing.T) {
-	f := testkit.New(t, testkit.Monorepo)
+	f := testkit.New(t, testkit.Team)
 	r := discover(t, f)
 	g := gitx.Client{Dir: f.Dir, Env: f.Env}
 	outside := t.TempDir()

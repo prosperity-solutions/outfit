@@ -1,0 +1,30 @@
+# Scenario 11, last clause: with the outfit binary deleted, the shims still run
+# the team's hooks directly and print one warning. Uninstalling the binary must
+# never silently disable team hooks.
+fixture repo husky
+exec sh -c 'command -v outfit'
+cp stdout outfit-path.txt
+mkdir bin
+exec sh -c 'cp "$(cat outfit-path.txt)" bin/outfit'
+cd repo
+exec ../bin/outfit init
+stdout 'installed: '
+
+# Works with the binary present...
+exec git commit --allow-empty -qm 'feat: with binary'
+hooklog
+stdout 'hook=pre-commit'
+
+# ...and with it gone (and no outfit on PATH either).
+rm ../bin/outfit
+rm $OUTFIT_TEST_HOOKLOG
+env PATH=$PATHNOOUTFIT
+exec git commit --allow-empty -qm 'feat: without binary'
+stderr 'binary not found at'
+hooklog
+stdout 'hook=pre-commit argv='
+stdout 'hook=commit-msg argv=\[.*COMMIT_EDITMSG\]'
+
+# A failing team hook still blocks, with its exit status, without outfit.
+exec sh -c 'echo 9 > "$OUTFIT_TEST_HOOKLOG.exit.pre-commit"'
+! exec git commit --allow-empty -qm 'feat: blocked without binary'

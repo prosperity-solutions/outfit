@@ -26,10 +26,15 @@ func ScriptSetup(env *testscript.Env) error {
 	for k, v := range m {
 		env.Vars = append(env.Vars, k+"="+v)
 	}
-	// PATHNOOUTFIT is the ambient PATH as the process started, i.e. without the
-	// directory testscript.Main adds for the `outfit` command: a machine that
-	// never installed outfit.
-	env.Vars = append(env.Vars, "PATHNOOUTFIT="+m["PATH"])
+	// PATHNOOUTFIT is PATH without any directory that holds an `outfit` (the one
+	// testscript.Main adds): a machine that never installed outfit.
+	var kept []string
+	for _, d := range filepath.SplitList(m["PATH"]) {
+		if _, err := os.Stat(filepath.Join(d, "outfit")); err != nil {
+			kept = append(kept, d)
+		}
+	}
+	env.Vars = append(env.Vars, "PATHNOOUTFIT="+strings.Join(kept, string(os.PathListSeparator)))
 	return nil
 }
 
@@ -42,6 +47,7 @@ func ScriptCommands() map[string]func(*testscript.TestScript, bool, []string) {
 		"gitver":     cmdGitVer,
 		"hooklog":    cmdHookLog,
 		"gitcalls":   cmdGitCalls,
+		"fixture":    cmdFixture,
 	}
 }
 
@@ -161,4 +167,51 @@ func cmdGitCalls(ts *testscript.TestScript, neg bool, args []string) {
 	if n > max {
 		ts.Fatalf("%d git calls, budget is %d:\n%s", n, max, b)
 	}
+}
+
+// fixture <dir> [team|plain] [husky] [lefthook] [hooks] [upstream] [conflict]
+// [worktrees=N] [cone]: build a fixture repository (docs/HANDOVER.md §7.3) at
+// <dir>, relative to the script's work dir. Linked worktrees land next to it as
+// <dir>-wt1.., and the bare upstream as <dir>-upstream.git.
+func cmdFixture(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) < 1 {
+		ts.Fatalf("usage: fixture dir [team|plain] [husky] [lefthook] [hooks] [upstream] [conflict] [worktrees=N] [cone]")
+	}
+	dir := ts.MkAbs(args[0])
+	recipe := Team
+	var opts []Option
+	for _, a := range args[1:] {
+		switch {
+		case a == "team":
+			recipe = Team
+		case a == "plain":
+			recipe = Plain
+		case a == "husky":
+			opts = append(opts, WithHusky())
+		case a == "lefthook":
+			opts = append(opts, WithLefthook())
+		case a == "hooks":
+			opts = append(opts, WithHooks())
+		case a == "upstream":
+			opts = append(opts, WithUpstream())
+		case a == "conflict":
+			opts = append(opts, WithConflictBranch())
+		case a == "cone":
+			opts = append(opts, WithCone())
+		case strings.HasPrefix(a, "worktrees="):
+			n, err := strconv.Atoi(strings.TrimPrefix(a, "worktrees="))
+			ts.Check(err)
+			opts = append(opts, WithWorktrees(n))
+		default:
+			ts.Fatalf("fixture: unknown option %q", a)
+		}
+	}
+	// The script's own environment, so the fixture and later commands agree.
+	var env []string
+	for _, k := range []string{"HOME", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+		"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_AUTHOR_DATE", "GIT_COMMITTER_DATE", "TZ", "LC_ALL", "GIT_TERMINAL_PROMPT", "PATH", HookLogEnv} {
+		env = append(env, k+"="+ts.Getenv(k))
+	}
+	_, _, err := Materialize(dir, filepath.Dir(dir), scrub(append(os.Environ(), env...)), recipe, opts...)
+	ts.Check(err)
 }
