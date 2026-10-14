@@ -40,6 +40,18 @@ and the App Store Connect `.p8`. The `.p12` must hold the Developer ID Applicati
 certificate, its private key and Apple's Developer ID G2 intermediate; without the
 intermediate the keychain script finds no valid identity and says so. It also refuses a
 certificate with less than 30 days left, so an expiry fails a release a month early.
+**Check the real secret once, on a Mac**, before relying on it (the first release run
+that used it was signed by a different tool, which reads `.p12` files more leniently
+than `security import` and fills in a missing intermediate from its own copy):
+
+```sh
+kc=$(mktemp -d)/check.keychain-db
+security create-keychain -p x "$kc"
+security import devid.p12 -k "$kc" -f pkcs12 -P '<password>' -T /usr/bin/codesign
+security find-identity -v -p codesigning "$kc"    # must list one "Developer ID Application: … (HZHB3JQ29L)"
+security delete-keychain "$kc"
+```
+
 Export from Keychain Access (File > Export Items, `.p12`, select the certificate and
 its key together) or re-wrap an existing file with
 `/usr/bin/openssl pkcs12 -export` (the macOS tool); both formats `security import`
@@ -78,6 +90,9 @@ certificate it writes the designated requirement
 `… and certificate root[field.1.2.840.113635.100.6.2.6] …` (the Developer ID CA marker
 on the **root**, where Apple's own signatures put it on the intermediate), which no
 chain satisfies. `codesign --verify` says "does not satisfy its designated Requirement"
-and macOS kills the binary on launch (`Killed: 9`, exit 137). The release's smoke leg
-caught it before anything was published; the check that would have caught it earlier
-is "run the signed binary", which the PR smoke job now does.
+and macOS kills the binary on launch (`Killed: 9`, exit 137). The release's smoke legs
+(macos-latest and macos-15-intel, which install and run the signed artifact) caught it
+before anything was published. The PR smoke job runs the signed binary too, but with a
+throwaway certificate that has no Apple chain, so it cannot reproduce a failure that
+depends on one: it catches everything else, and **the release smoke legs are the
+guard for the Apple-chain part**.

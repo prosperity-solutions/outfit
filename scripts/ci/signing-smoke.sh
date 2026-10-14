@@ -5,8 +5,11 @@
 # an encrypted throwaway minisign key. Then it checks what matters:
 #
 #   * the universal binary is signed with the hardened runtime, as "outfit", in BOTH
-#     slices, and it RUNS (the first release attempt produced a binary macOS killed
-#     on launch; only running it catches that);
+#     slices, and it RUNS. (The first release attempt produced a binary macOS killed
+#     on launch because of the Apple chain in a real Developer ID certificate. A
+#     throwaway certificate has no such chain, so this cannot reproduce that class
+#     of failure: the release's own smoke legs, which run the artifact signed with
+#     the real certificate before publishing, are the guard for it.)
 #   * checksums.txt is signed with the encrypted key (aead's CLI reads the password
 #     as a line from stdin: without the trailing newline GoReleaser's `stdin` gives,
 #     signing fails with "failed to read password: EOF") and verifies with the same
@@ -15,13 +18,15 @@
 #
 # What it cannot exercise, and OUTFIT_CODESIGN_SELFTEST=1 therefore skips: Apple's
 # timestamp server, the Apple-issued team in the designated requirement, and
-# notarization. The release's smoke legs check those on the real certificate before
-# anything is published.
+# notarization. Timestamp and team are checked on the real certificate by the
+# release's smoke legs (check-macos-signature.sh) before anything is published;
+# notarization is checked in the build hook, and its branch is exercised below
+# with a stub notarytool.
 #
 # CI ONLY, macOS only: it trusts the throwaway certificate system-wide (`sudo
 # security add-trusted-cert`), because codesign and `find-identity -v` refuse an
 # untrusted identity. Never run it on your own Mac.
-# Needs: go, goreleaser and aead's minisign (go install aead.dev/minisign/cmd/minisign@latest).
+# Needs: go, goreleaser and aead's minisign (go install aead.dev/minisign/cmd/minisign@v0.3.0).
 set -euo pipefail
 
 [ -n "${CI:-}" ] || { echo "refusing to run outside CI: this trusts a throwaway certificate system-wide" >&2; exit 1; }
@@ -85,7 +90,7 @@ done
 codesign --verify --strict "$bin" || fail "the universal binary does not verify"
 ok "both slices and the universal binary verify, as 'outfit', with the hardened runtime"
 
-# The failure that stopped the first release: a signed binary macOS killed on launch.
+# A signed binary that does not start (see the header for what this can and cannot catch).
 "$bin" version | grep -q '^outfit ' || fail "the signed binary does not run"
 ok "the signed universal binary runs"
 

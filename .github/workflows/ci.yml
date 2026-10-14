@@ -259,11 +259,14 @@ jobs:
 
   # The macOS signing path, exercised on every PR with a throwaway certificate:
   # the release's own GoReleaser snapshot and signing hook must sign BOTH slices of
-  # the universal binary, and the signed binary must RUN (the first release attempt
-  # shipped one macOS killed on launch). One short macOS job; AGENTS.md has the cost note.
+  # the universal binary, and the signed binary must run. (A real Developer ID
+  # chain is what macOS judged in the first release attempt; a throwaway certificate
+  # cannot reproduce that, so the release's smoke legs stay the guard for it.) One
+  # short macOS job; AGENTS.md has the cost note.
   signing:
     name: Signing smoke
     runs-on: macos-latest
+    timeout-minutes: 15
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

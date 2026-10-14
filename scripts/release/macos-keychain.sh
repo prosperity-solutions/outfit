@@ -17,7 +17,7 @@
 #       what `codesign --sign` gets. Everything else goes to stderr.
 #   macos-keychain.sh delete <keychain-path>
 #       Removes the keychain and takes it off the user's search list. Safe to run
-#       when it does not exist, so it can sit in an `always()` step / an EXIT trap.
+#       when it does not exist, so it can sit in an EXIT trap.
 #
 # The identity is picked by **team id**, not by "the first Developer ID in the
 # keychain": a `.p12` exported from a machine that holds two teams' certificates
@@ -37,7 +37,11 @@ die() {
 
 # The user search list, as plain paths, without the keychain named in $1.
 search_list_without() {
-  security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//' | grep -vxF "$1" || true
+  # A failing `security list-keychains` must stop the script: carrying on would set
+  # an empty search list below. Only the filter's "nothing left" is tolerated.
+  local all
+  all=$(security list-keychains -d user)
+  printf '%s\n' "$all" | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//' | grep -vxF "$1" || true
 }
 
 cmd="${1:-}"
@@ -113,8 +117,9 @@ case "$cmd" in
     security list-keychains -d user -s "$kc" ${current[@]+"${current[@]}"}
 
     # `-v` lists only identities whose chain validates, so a .p12 missing the G2
-    # intermediate (on a machine that does not have it either) shows up here, as
-    # zero matches, instead of as a codesign failure later.
+    # intermediate, on a machine that lacks it too, shows up here as zero matches
+    # instead of as a codesign failure later. (A hosted runner may already hold the
+    # intermediate; the check is then simply satisfied.)
     identities=$(security find-identity -v -p codesigning "$kc")
     matches=$(printf '%s\n' "$identities" \
       | grep -F "\"Developer ID Application: " | grep -F "($MACOS_TEAM_ID)\"" || true)

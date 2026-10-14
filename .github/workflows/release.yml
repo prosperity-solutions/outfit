@@ -117,6 +117,8 @@ jobs:
     needs: version
     if: needs.version.outputs.releasable == 'true'
     runs-on: macos-latest
+    # Notarization alone may wait 20 minutes; nothing else here should take long.
+    timeout-minutes: 60
     env:
       TAG: ${{ needs.version.outputs.tag }}
       PREVIOUS: ${{ needs.version.outputs.previous }}

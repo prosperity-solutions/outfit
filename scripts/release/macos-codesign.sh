@@ -30,7 +30,6 @@ die() {
   exit 1
 }
 
-runtime=1
 [ "$#" -eq 3 ] || die "usage: $0 <identity> <identifier> <file>"
 identity=$1
 identifier=$2
@@ -51,15 +50,13 @@ args=(--force --identifier "$identifier" --sign "$identity")
 if [ "$selftest" = 0 ]; then
   args+=(--timestamp)
 fi
-if [ "$runtime" = 1 ]; then
-  args+=(--options runtime)
-fi
+args+=(--options runtime)
 if [ -n "${KEYCHAIN:-}" ]; then
   args+=(--keychain "$KEYCHAIN")
 fi
 
 # `--timestamp` asks Apple's timestamp server, which fails transiently often
-# enough to matter over a release's half-dozen signatures. Retrying is safe: each
+# enough to matter over a release's signature. Retrying is safe: each
 # attempt replaces the whole signature (`--force`).
 attempt=1
 until codesign "${args[@]}" "$file"; do
@@ -77,16 +74,12 @@ display=$(codesign -d --verbose=4 "$file" 2>&1)
 has_line() { printf '%s\n' "$display" | awk -v s="$1" 'index($0, s) == 1 { found = 1 } END { exit !found }'; }
 has_line "Identifier=$identifier" || die "$file: identifier is not $identifier"
 has_line "Authority=Developer ID Application: " || die "$file: not signed by a Developer ID Application certificate"
-runtime_flag=0
-if printf '%s\n' "$display" | grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]+\([^)]*runtime'; then
-  runtime_flag=1
-fi
-[ "$runtime_flag" = "$runtime" ] \
-  || die "$file: hardened runtime is $([ "$runtime_flag" = 1 ] && echo on || echo off), expected $([ "$runtime" = 1 ] && echo on || echo off)"
+printf '%s\n' "$display" | grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]+\([^)]*runtime' \
+  || die "$file: the hardened runtime is off"
 
 requirement=$(codesign -d -r- "$file" 2>&1)
-# codesign prints the identifier bare when it is a plain word ("outfit") and quoted
-# when it has dots ("dev.veld.daemon"): accept both.
+# codesign prints the identifier bare when it is a plain word and quoted when it has
+# dots: accept both.
 printf '%s\n' "$requirement" | grep -Eq "identifier \"?$identifier\"?( |$)" \
   || die "$file: designated requirement does not pin identifier $identifier: $requirement"
 
