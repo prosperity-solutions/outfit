@@ -1,0 +1,52 @@
+# Worktrees: a foreign worktree-scope hooksPath is refused in ANY worktree, init
+# from a linked worktree is undone by uninstall from the main one, a worktree
+# whose directory is gone does not break either, and status notices a moved repo.
+fixture repo plain hooks worktrees=2
+cd repo
+exec git config --list
+cp stdout $WORK/before.txt
+
+# A foreign value in a LINKED worktree is refused (and left alone).
+exec git config extensions.worktreeConfig true
+exec git -C ../repo-wt2 config --worktree core.hooksPath /opt/foreign-hooks
+! outfit init
+stderr 'worktree .*repo-wt2'
+stderr 'already set to "/opt/foreign-hooks"'
+exec git -C ../repo-wt2 config --worktree --get core.hooksPath
+stdout '^/opt/foreign-hooks$'
+exec git -C ../repo-wt2 config --worktree --unset core.hooksPath
+exec git config --local --unset extensions.worktreeConfig
+exec git config --list
+cmp stdout $WORK/before.txt
+
+# A worktree whose directory was deleted by hand (not yet pruned) does not break init.
+exec rm -rf ../repo-wt2
+outfit init
+stdout 'directory is gone'
+exists .git/worktrees/repo-wt2/config.worktree
+
+# init from a LINKED worktree, uninstall from the main one: nothing is left behind.
+outfit uninstall
+exec git config --list
+cmp stdout $WORK/before.txt
+cd ../repo-wt1
+outfit init
+exec git config --worktree --get core.hooksPath
+stdout 'outfit/hooks$'
+cd ../repo
+outfit uninstall
+exec git config --list
+cmp stdout $WORK/before.txt
+! exists .git/outfit
+! exists .git/worktrees/repo-wt1/outfit
+
+# status notices a dispatcher that no longer points at its shims (a moved repo).
+outfit init
+outfit status
+stdout 'hooks    dispatcher installed'
+exec git config --worktree core.hooksPath /somewhere/else
+! outfit status
+stdout 'dispatcher BROKEN'
+stderr 'Fix: outfit init'
+! outfit status --json
+stdout '"installed":true,"ok":false'

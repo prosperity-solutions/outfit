@@ -48,11 +48,33 @@ func Run(ctx context.Context, b Build, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return report(stdout, stderr, false, Errorf("cannot determine the working directory: %v", err))
 	}
-	exe, _ := os.Executable()
-	if real, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = real
+	return Execute(ctx, Env{Build: b, Dir: dir, Getenv: os.Getenv, Stdout: stdout, Stderr: stderr, Stdin: os.Stdin, Exe: stableExe()}, args)
+}
+
+// stableExe is the path recorded in hook shims. Package managers install a
+// versioned file (/opt/homebrew/Cellar/outfit/1.2.3/bin/outfit) and link a stable
+// name to it (/opt/homebrew/bin/outfit); the versioned path disappears on the
+// next upgrade and the shim would fall back to a PATH lookup. So when `outfit` on
+// PATH is this very binary, record that name, otherwise the resolved path.
+func stableExe() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
 	}
-	return Execute(ctx, Env{Build: b, Dir: dir, Getenv: os.Getenv, Stdout: stdout, Stderr: stderr, Stdin: os.Stdin, Exe: exe}, args)
+	real, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		real = exe
+	}
+	if p, err := exec.LookPath("outfit"); err == nil {
+		if abs, err := filepath.Abs(p); err == nil {
+			a, aerr := os.Stat(abs)
+			b, berr := os.Stat(real)
+			if aerr == nil && berr == nil && os.SameFile(a, b) {
+				return abs
+			}
+		}
+	}
+	return real
 }
 
 const usage = `usage: outfit <command> [flags]

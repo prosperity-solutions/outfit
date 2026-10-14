@@ -1,0 +1,30 @@
+# The review's critical finding: hooks that appear AFTER `outfit init` must still
+# run. Every client-side hook is shimmed; nothing is chosen at init time.
+fixture repo plain hooks upstream
+cd repo
+outfit init
+
+# 1. The natural onboarding order: `outfit init`, then `npm install` makes husky's
+# directory and sets core.hooksPath (a pre-push secret scan that now exists).
+mkdir .husky/_
+cp $WORK/failing-hook .husky/_/pre-push
+chmod 755 .husky/_/pre-push
+exec git config --local core.hooksPath .husky/_
+! exec git push -q origin main:other
+stderr 'secret found'
+
+# 2. A plain hook added later to .git/hooks (core.hooksPath unset again).
+exec git config --local --unset core.hooksPath
+cp $WORK/failing-hook .git/hooks/commit-msg
+chmod 755 .git/hooks/commit-msg
+! exec git commit --allow-empty -qm 'feat: later hook'
+stderr 'secret found'
+rm .git/hooks/commit-msg
+
+# 3. Hooks nobody has still cost nothing visible and do not fail.
+exec git commit --allow-empty -qm 'feat: fine'
+
+-- failing-hook --
+#!/bin/sh
+echo 'secret found' >&2
+exit 1

@@ -1,0 +1,19 @@
+# uninstall removes the outfit.* settings made after init and keeps those that were
+# there before it.
+fixture repo plain
+cd repo
+exec git config --local outfit.biome off
+exec git config --local --list
+cp stdout $WORK/before.txt
+outfit init
+outfit set tests=off
+outfit set hook.pre-push=off --global
+exec git config --local --get outfit.tests
+outfit uninstall
+exec git config --local --get outfit.biome
+stdout '^off$'
+! exec git config --local --get outfit.tests
+exec git config --local --list
+cmp stdout $WORK/before.txt
+exec git config --global --get outfit.hook.pre-push
+stdout '^off$'

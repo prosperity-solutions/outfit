@@ -1,0 +1,39 @@
+# The review's second critical finding: a global core.hooksPath written with ~/
+# (the usual shared secret-scan setup). With the outfit binary gone, the shim must
+# still find and run the team's hook.
+fixture repo plain
+exec sh -c 'command -v outfit'
+cp stdout outfit-path.txt
+mkdir bin
+exec sh -c 'cp "$(cat outfit-path.txt)" bin/outfit'
+mkdir $HOME/.githooks
+cp $WORK/failing-hook $HOME/.githooks/pre-commit
+chmod 755 $HOME/.githooks/pre-commit
+exec git config --global core.hooksPath '~/.githooks'
+cd repo
+exec ../bin/outfit init
+stdout 'installed'
+
+# With the binary: the team's hook runs and blocks.
+! exec git commit --allow-empty -qm 'feat: x'
+stderr 'secret found'
+
+# Without it (and without outfit on PATH): still.
+rm ../bin/outfit
+env PATH=$PATHNOOUTFIT
+! exec git commit --allow-empty -qm 'feat: y'
+stderr 'binary not found'
+stderr 'secret found'
+
+# And when husky sets a local core.hooksPath later, the fallback follows it.
+exec git config --local core.hooksPath .husky/_
+mkdir .husky/_
+cp $WORK/failing-hook .husky/_/pre-commit
+chmod 755 .husky/_/pre-commit
+! exec git commit --allow-empty -qm 'feat: z'
+stderr 'secret found'
+
+-- failing-hook --
+#!/bin/sh
+echo 'secret found' >&2
+exit 1

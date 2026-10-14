@@ -1,0 +1,46 @@
+# Tools that install hooks into `git rev-parse --git-path hooks` (lefthook install)
+# write into outfit's directory once init ran. init moves those hooks to the team's
+# directory instead of deleting or orphaning them, and uninstall does the same.
+fixture repo plain
+cd repo
+outfit init
+
+# lefthook install, simulated: it drops its own hook files where git says hooks live.
+cp $WORK/lefthook-hook .git/outfit/hooks/pre-push
+chmod 755 .git/outfit/hooks/pre-push
+cp $WORK/lefthook-hook .git/outfit/hooks/post-commit
+chmod 755 .git/outfit/hooks/post-commit
+outfit init
+stdout 'moved hooks another tool installed'
+stdout 'pre-push'
+exists .git/hooks/pre-push
+exec grep -c outfit-generated .git/outfit/hooks/pre-push
+stdout '^1$'
+! exec grep -q lefthook .git/outfit/hooks/pre-push
+
+# The adopted hook runs through the dispatcher.
+exec git commit --allow-empty -qm 'feat: x'
+stderr 'lefthook ran'
+
+# Uninstall adopts too: a hook that appeared in outfit's directory goes back to the team's.
+cp $WORK/lefthook-hook .git/outfit/hooks/commit-msg
+chmod 755 .git/outfit/hooks/commit-msg
+
+outfit uninstall
+stdout 'moved hooks another tool had installed'
+exists .git/hooks/commit-msg
+! exists .git/outfit
+
+# Both exist: refuse and say so (never overwrite a hook).
+outfit init
+cp $WORK/lefthook-hook .git/outfit/hooks/pre-merge-commit
+chmod 755 .git/outfit/hooks/pre-merge-commit
+cp $WORK/lefthook-hook .git/hooks/pre-merge-commit
+chmod 755 .git/hooks/pre-merge-commit
+! outfit init
+stderr 'both .* exist'
+
+-- lefthook-hook --
+#!/bin/sh
+echo 'lefthook ran' >&2
+exit 0

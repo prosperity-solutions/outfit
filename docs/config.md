@@ -136,4 +136,7 @@ Decisions made while building, kept here so the reason outlives the PR:
 | §3.1 example `hook.pre-commit = off` in `[outfit]` | accepted, with a warning | git rejects that line and so does every teammate's `git config -f`; the subsection form is valid for both. |
 | §4 exit 2 = "unknown profile/key" | `get` of an unset key exits **1** | there is no registry of keys; it mirrors `git config --get`, which the §3.0 fallback chains with `||`. |
 | §2 `version` floor check | `version` warns and exits 0 on old git | `install.sh` prints it last; it must not fail after a good install. |
+| §3.6 shim only what exists | a shim for **every** client hook, resolved at run time | a hook added after `init` (a new secret scan, husky created by a later `npm install`) would otherwise be skipped silently. |
+| §3.6 `<git-dir>/config.worktree` via `git config --worktree` | the same files, written with `git config --file` | works for worktrees whose checkout is missing. |
+| §4 uninstall removes `outfit.*` | removes only what was added after `init` | settings from before `init` are the user's; `git config --list` still comes back identical. |
 | (unspecified) | a committed profile wins a name clash, even on the hot path (`get`) | per spec §3.1; `status` and `ls` warn. |

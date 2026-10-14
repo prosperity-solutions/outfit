@@ -29,6 +29,9 @@ func guardFixture(t *testing.T, opts ...testkit.Option) (*testkit.Repo, *state.S
 	}
 	f.Git("config", "core.sparseCheckout", "true")
 	st := &state.State{Swaps: []state.Swap{{Path: "AGENTS.md"}}}
+	if _, err := state.Write(gitDir, st); err != nil {
+		t.Fatal(err)
+	}
 	return f, st, loadCfg(t, f), gitx.Client{Dir: f.Dir, Env: f.Env}
 }
 
@@ -38,10 +41,10 @@ func loadCfg(t *testing.T, f *testkit.Repo) config.GitConfig {
 	return config.ParseGitList([]byte(out))
 }
 
-func guard(t *testing.T, f *testkit.Repo, st *state.State, env map[string]string) []hooks.Violation {
+func guard(t *testing.T, f *testkit.Repo, _ *state.State, env map[string]string) []hooks.Violation {
 	t.Helper()
 	gc := loadCfg(t, f)
-	vs, err := hooks.Guard(context.Background(), gitx.Client{Dir: f.Dir, Env: f.Env}, st, filepath.Join(f.Dir, ".git"), gc,
+	vs, err := hooks.Guard(context.Background(), gitx.Client{Dir: f.Dir, Env: f.Env}, filepath.Join(f.Dir, ".git"), gc, true,
 		func(k string) string { return env[k] })
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +61,7 @@ func TestGuardIsFreeWithNothingSwapped(t *testing.T) {
 		t.Fatalf("base must not be guarded: %v", vs)
 	}
 	if vs := guard(t, f, nil, nil); len(vs) != 0 {
-		t.Fatalf("no state, no guard: %v", vs)
+		t.Fatalf("no state, no sparse file, no guard: %v", vs)
 	}
 }
 
@@ -148,5 +151,55 @@ func TestGuardRefusesWhenTheSparseConfigIsMissing(t *testing.T) {
 		if vs := guard(t, f, st, nil); len(vs) != 1 || !strings.Contains(vs[0].Message, want) {
 			t.Fatalf("%q: %+v", body, vs)
 		}
+	}
+}
+
+// A gap between links and state.json (a link made first, a state file lost) must
+// not turn the guard off: the sparse file outfit manages names the swapped paths too.
+func TestGuardDerivesSwapsFromTheSparseFileWhenStateIsEmpty(t *testing.T) {
+	f, _, _, _ := guardFixture(t)
+	if err := os.Remove(filepath.Join(f.Dir, ".git", "outfit", "state.json")); err != nil {
+		t.Fatal(err)
+	}
+	f.Write("AGENTS.md", "edited\n")
+	f.Git("add", "--sparse", "AGENTS.md")
+	if vs := guard(t, f, nil, nil); len(vs) != 1 || vs[0].Path != "AGENTS.md" {
+		t.Fatalf("%+v", vs)
+	}
+}
+
+// The guard protects history, so it fails CLOSED.
+func TestGuardFailsClosed(t *testing.T) {
+	f, _, gc, g := guardFixture(t)
+	gitDir := filepath.Join(f.Dir, ".git")
+	none := func(string) string { return "" }
+
+	// Unreadable state.
+	if err := os.WriteFile(state.Path(gitDir), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := hooks.Guard(context.Background(), g, gitDir, gc, true, none)
+	if err != nil || len(vs) != 1 || !strings.Contains(vs[0].Message, "state file cannot be read") {
+		t.Fatalf("%+v %v", vs, err)
+	}
+	// A newer schema (after a downgrade) is just as unreadable.
+	if err := os.WriteFile(state.Path(gitDir), []byte(`{"schema": 99}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if vs, _ := hooks.Guard(context.Background(), g, gitDir, gc, true, none); len(vs) != 1 {
+		t.Fatalf("%+v", vs)
+	}
+	// Config that could not be read while paths are swapped.
+	if _, err := state.Write(gitDir, &state.State{Swaps: []state.Swap{{Path: "AGENTS.md"}}}); err != nil {
+		t.Fatal(err)
+	}
+	vs, _ = hooks.Guard(context.Background(), g, gitDir, config.GitConfig{}, false, none)
+	if len(vs) != 1 || !strings.Contains(vs[0].Message, "could not read the git config") {
+		t.Fatalf("%+v", vs)
+	}
+	// An unreadable index.
+	vs, _ = hooks.Guard(context.Background(), gitx.Client{Dir: t.TempDir(), Env: f.Env}, gitDir, gc, true, none)
+	if len(vs) == 0 || !strings.Contains(vs[len(vs)-1].Message, "could not read the index") {
+		t.Fatalf("%+v", vs)
 	}
 }

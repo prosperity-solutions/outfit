@@ -61,6 +61,12 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 		if len(res.Removed) > 0 {
 			fmt.Fprintf(e.Stdout, "  removed stale shims: %s\n", strings.Join(res.Removed, ", "))
 		}
+		if len(res.Adopted) > 0 {
+			fmt.Fprintf(e.Stdout, "  moved hooks another tool installed into outfit's directory to %s: %s\n", res.OriginalDir, strings.Join(res.Adopted, ", "))
+		}
+		if len(res.MissingWorktrees) > 0 {
+			fmt.Fprintf(e.Stdout, "  worktrees whose directory is gone (configured anyway; `git worktree prune` removes them): %s\n", strings.Join(res.MissingWorktrees, ", "))
+		}
 	}
 	return ExitOK
 }
@@ -81,7 +87,7 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	res, err := hooks.Uninstall(ctx, l.Git, l.Repo)
+	res, err := hooks.Uninstall(ctx, l.Git, l.Repo, l.Cfg, e.Getenv("HOME"))
 	if err != nil {
 		return fail(Errorf("%v", err))
 	}
@@ -90,10 +96,20 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 		fmt.Fprintln(e.Stdout, string(out))
 		return ExitOK
 	}
+	for _, f := range res.Failed {
+		fmt.Fprintf(e.Stderr, "outfit: could not undo %s\n", f)
+	}
+	if len(res.Failed) > 0 {
+		fmt.Fprintln(e.Stderr, "fix: resolve the above, then rerun `outfit uninstall` (it continues where it stopped)")
+		return ExitError
+	}
 	if !res.Changed {
 		fmt.Fprintln(e.Stdout, "nothing to uninstall")
 		return ExitOK
 	}
 	fmt.Fprintf(e.Stdout, "uninstalled (%d items removed)\n", len(res.Removed))
+	if len(res.Adopted) > 0 {
+		fmt.Fprintf(e.Stdout, "  moved hooks another tool had installed back to the team's hooks directory: %s\n", strings.Join(res.Adopted, ", "))
+	}
 	return ExitOK
 }

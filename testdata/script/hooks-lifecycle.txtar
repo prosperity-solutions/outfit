@@ -20,7 +20,11 @@ stdout 'installed'
 exists .git/outfit/state.json
 exec cat .git/outfit/state.json
 stdout '"schema": 1'
+# Repository-wide facts live in the common dir, written before init changes anything;
+# every worktree (also the linked one) gets its own state.
+exec cat .git/outfit/install.json
 stdout '"worktree_config_was_set": false'
+exists .git/worktrees/repo-wt1/outfit/state.json
 
 # A second run changes nothing, and touches no file.
 exec sh -c 'ls -l --time-style=+%s .git/outfit/hooks > $WORK/ls1.txt 2>/dev/null || ls -lT .git/outfit/hooks > $WORK/ls1.txt'
@@ -31,11 +35,12 @@ cmp $WORK/ls1.txt $WORK/ls2.txt
 outfit init --json
 stdout '"changed":false'
 
-# The dispatcher's budget: one git process per hook run (pre-commit and
-# commit-msg here), and nothing else.
+# The dispatcher's budget: exactly one git process per hook run. A commit runs
+# four hooks (pre-commit, prepare-commit-msg, commit-msg, post-commit), because
+# every client hook is shimmed so that hooks added later still run.
 gitcalls reset
 exec git commit --allow-empty -qm 'feat: counted'
-gitcalls ==2
+gitcalls ==4
 exec git reset -q --soft HEAD~1
 
 # Personal toggles set after init are removed with it.
@@ -46,6 +51,8 @@ outfit uninstall
 stdout 'uninstalled'
 ! exists .git/outfit/hooks
 ! exists .git/outfit/state.json
+! exists .git/outfit/install.json
+! exists .git/worktrees/repo-wt1/outfit
 exec git config --list
 cmp stdout $WORK/before.txt
 exec git -C ../repo-wt1 config --list

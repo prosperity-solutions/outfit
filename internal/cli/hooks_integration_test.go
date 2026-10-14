@@ -108,3 +108,29 @@ func TestInitJSONShape(t *testing.T) {
 		t.Fatal("--dry-run must write nothing")
 	}
 }
+
+func TestUninstallJSONShape(t *testing.T) {
+	f := testkit.New(t, testkit.Team)
+	for k, v := range testkit.EnvMap(f.Home) {
+		t.Setenv(k, v)
+	}
+	env, out, _ := hookEnv(f, f.Dir, "")
+	env.Getenv = os.Getenv
+	if code := cli.Execute(context.Background(), env, []string{"init"}); code != 0 {
+		t.Fatalf("init: %d", code)
+	}
+	out.Reset()
+	if code := cli.Execute(context.Background(), env, []string{"uninstall", "--json"}); code != 0 {
+		t.Fatalf("uninstall: %d", code)
+	}
+	for _, key := range []string{`"changed":true`, `"removed":[`, `"adopted_hooks":[]`, `"failed":[]`} {
+		if !strings.Contains(out.String(), key) {
+			t.Errorf("missing %s in %s", key, out.String())
+		}
+	}
+	out.Reset()
+	cli.Execute(context.Background(), env, []string{"uninstall", "--json"})
+	if !strings.Contains(out.String(), `"changed":false`) {
+		t.Errorf("second uninstall must change nothing: %s", out.String())
+	}
+}

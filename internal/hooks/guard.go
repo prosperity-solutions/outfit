@@ -3,9 +3,11 @@ package hooks
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/prosperity-solutions/outfit/internal/config"
@@ -28,9 +30,11 @@ func (v Violation) String() string {
 	return v.Message + "\n  fix: " + v.Fix
 }
 
-// Guard decides whether a commit may proceed. With nothing swapped it returns
-// immediately without spawning git, so `base` and non-swapping profiles pay
-// nothing. Otherwise it refuses when:
+// Guard decides whether a commit may proceed. The swapped set is what state.json
+// records UNION what outfit's sparse-checkout file hides, so a gap between the
+// two (a link made before the state was written, a state file lost) cannot turn
+// the guard off. With nothing swapped it returns without spawning git, so `base`
+// and non-swapping profiles pay nothing. Otherwise it refuses when:
 //
 //   - the expected sparse config is missing (then git would happily commit the
 //     symlink: `git sparse-checkout disable` followed by `commit -a` did, verified);
@@ -38,23 +42,42 @@ func (v Violation) String() string {
 //   - any swapped path is staged at all, unless OUTFIT_ALLOW=1 or a merge is in
 //     progress and a regular-file blob is staged (resolving a conflict on a swapped
 //     path is legitimate).
-func Guard(ctx context.Context, g gitx.Client, st *state.State, gitDir string, gc config.GitConfig, getenv func(string) string) ([]Violation, error) {
-	if st == nil || len(st.Swaps) == 0 {
+//
+// It fails CLOSED: an unreadable state file, an unreadable index, or a git config
+// outfit could not read (configKnown=false) while paths are swapped refuses the
+// commit with a fix, because the guard exists to keep links out of history.
+func Guard(ctx context.Context, g gitx.Client, gitDir string, gc config.GitConfig, configKnown bool, getenv func(string) string) ([]Violation, error) {
+	st, serr := state.Read(gitDir)
+	if serr != nil && !errors.Is(serr, state.ErrNone) {
+		return []Violation{{Message: "outfit's state file cannot be read, so swapped files cannot be protected: " + serr.Error(),
+			Fix: "outfit init   (rewrites it; or commit with OUTFIT_ALLOW=1 on purpose)"}}, nil
+	}
+	sparseText, _ := os.ReadFile(filepath.Join(gitDir, "info", "sparse-checkout"))
+	swapped := map[string]bool{}
+	if st != nil {
+		for _, s := range st.Swaps {
+			swapped[s.Path] = true
+		}
+	}
+	for _, p := range hiddenPaths(string(sparseText)) {
+		swapped[p] = true
+	}
+	if len(swapped) == 0 {
 		return nil, nil
 	}
-	swapped := make(map[string]bool, len(st.Swaps))
-	for _, s := range st.Swaps {
-		swapped[s.Path] = true
+	if !configKnown {
+		return []Violation{{Message: "outfit could not read the git config, so it cannot tell whether swapped files are protected",
+			Fix: "git config --list   (fix what it reports; or commit with OUTFIT_ALLOW=1 on purpose)"}}, nil
 	}
 
 	var out []Violation
-	if v := checkSparse(st, gitDir, gc); v != nil {
+	if v := checkSparse(swapped, gitDir, gc); v != nil {
 		out = append(out, *v)
 	}
 
 	res, err := g.Read(ctx, "diff", "--cached", "--raw", "-z", "--no-renames", "--no-ext-diff")
 	if err != nil {
-		return out, err
+		return append(out, Violation{Message: "outfit could not read the index to check swapped files: " + err.Error(), Fix: "git status"}), nil
 	}
 	allow := getenv("OUTFIT_ALLOW") == "1"
 	merging := exists(filepath.Join(gitDir, "MERGE_HEAD"))
@@ -78,9 +101,25 @@ func Guard(ctx context.Context, g gitx.Client, st *state.State, gitDir string, g
 	return out, nil
 }
 
+// hiddenPaths lists the swapped paths an outfit-managed sparse-checkout file
+// hides (`!/<path>` lines), excluding the inactive-profile pattern.
+func hiddenPaths(text string) []string {
+	if !strings.HasPrefix(text, state.SparseMarker) {
+		return nil
+	}
+	var out []string
+	for _, l := range strings.Split(text, "\n") {
+		if p, ok := strings.CutPrefix(l, "!/"); ok && p != "" && !strings.HasPrefix(p, ".outfit/") {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // checkSparse verifies the sparse-checkout config that keeps swapped paths out
 // of `git add`: enabled, outfit-managed, and hiding every swapped path.
-func checkSparse(st *state.State, gitDir string, gc config.GitConfig) *Violation {
+func checkSparse(swapped map[string]bool, gitDir string, gc config.GitConfig) *Violation {
 	fix := "outfit sync"
 	if !gc.SparseCheckout {
 		return &Violation{Message: "sparse checkout is off, so git no longer hides outfit's swapped files from `git add` and `commit -a`", Fix: fix}
@@ -97,9 +136,14 @@ func checkSparse(st *state.State, gitDir string, gc config.GitConfig) *Violation
 	for _, l := range strings.Split(text, "\n") {
 		lines[l] = true
 	}
-	for _, s := range st.Swaps {
-		if !lines["!/"+s.Path] {
-			return &Violation{Path: s.Path, Message: fmt.Sprintf("the sparse-checkout file no longer hides %s", s.Path), Fix: fix}
+	paths := make([]string, 0, len(swapped))
+	for p := range swapped {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		if !lines["!/"+p] {
+			return &Violation{Path: p, Message: fmt.Sprintf("the sparse-checkout file no longer hides %s", p), Fix: fix}
 		}
 	}
 	return nil

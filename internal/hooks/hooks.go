@@ -7,11 +7,15 @@
 // stdin and exit code intact. If the outfit binary is gone, the shim still runs
 // the team's hook directly: uninstalling the binary must never silently disable
 // team hooks.
+//
+// A shim exists for EVERY client-side hook, whether or not the team has that hook
+// today. git only runs hooks that exist in core.hooksPath, so a fixed set chosen at
+// init would silently skip any hook added later (a merged PR adding a secret scan,
+// or `npm install` creating husky's directory after `outfit init`).
 package hooks
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,9 +25,7 @@ import (
 	"github.com/prosperity-solutions/outfit/internal/config"
 )
 
-// Known is every client-side hook name git may run. Shims are only generated for
-// the ones that matter (see ShimNames): a shim for a hook nobody has would cost
-// a process per git event (reference-transaction runs on every ref update).
+// Known is every hook name git may run.
 var Known = []string{
 	"applypatch-msg", "pre-applypatch", "post-applypatch",
 	"pre-commit", "pre-merge-commit", "prepare-commit-msg", "commit-msg", "post-commit",
@@ -33,6 +35,11 @@ var Known = []string{
 	"p4-changelist", "p4-prepare-changelist", "p4-post-changelist", "p4-pre-submit",
 	"proc-receive", "pre-receive", "update", "post-receive", "post-update",
 }
+
+// Hot are the hooks git runs on (nearly) every ref update, index write or status:
+// a shim would cost a process each time, so they are shimmed only when the team
+// actually has one at init time.
+var Hot = []string{"reference-transaction", "post-index-change", "fsmonitor-watchman"}
 
 // Triggers are the hooks outfit itself needs, with or without a team hook of the
 // same name: pre-commit for the guard, the post-* trio to run `sync`.
@@ -48,61 +55,80 @@ const ShimMarker = "# outfit-generated hook shim"
 // Dir returns outfit's hooks directory for a repository.
 func Dir(commonDir string) string { return filepath.Join(commonDir, "outfit", "hooks") }
 
-// ShimNames returns the hooks to shim: the triggers plus every known hook the
-// team already has as an executable file in origDir.
+// ShimNames returns the hooks to shim: every known hook except the hot ones,
+// plus a hot one the team already has as an executable file in origDir.
 func ShimNames(origDir string) []string {
-	set := map[string]bool{}
-	for _, n := range Triggers {
-		set[n] = true
-	}
-	if ents, err := os.ReadDir(origDir); err == nil {
-		for _, e := range ents {
-			if !IsKnown(e.Name()) || e.IsDir() {
-				continue
-			}
-			if fi, err := os.Stat(filepath.Join(origDir, e.Name())); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
-				set[e.Name()] = true
-			}
+	var out []string
+	for _, n := range Known {
+		if slices.Contains(Hot, n) && !executable(filepath.Join(origDir, n)) {
+			continue
 		}
-	}
-	out := make([]string, 0, len(set))
-	for n := range set {
 		out = append(out, n)
 	}
 	sort.Strings(out)
 	return out
 }
 
+func executable(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0
+}
+
 // shQuote single-quotes s for a POSIX shell.
 func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // Shim renders the dispatcher shim for one hook. bin is the absolute path of the
-// outfit that ran init; origDir is where the team's own hooks live (absolute, or
-// relative to the worktree root exactly as core.hooksPath spelled it).
-func Shim(name, bin, origDir string) string {
+// outfit that ran init.
+//
+// The fallback (outfit gone) resolves the team's hook directory AT RUN TIME with
+// the same rule as OriginalDir (--local, --global, --system core.hooksPath that is
+// not this directory, else <common-dir>/hooks), never from a path baked in at
+// init: husky may set core.hooksPath later, and a stale path would silently skip
+// the team's hook.
+func Shim(name, bin string) string {
 	return fmt.Sprintf(`#!/bin/sh
 %[1]s
 # Runs `+"`outfit hook %[2]s`"+`. If outfit is gone it still runs the team's own hook.
 OUTFIT_BIN=%[3]s
-OUTFIT_ORIG_HOOKS=%[4]s
 if [ -x "$OUTFIT_BIN" ]; then exec "$OUTFIT_BIN" hook %[2]s "$@"; fi
 if command -v outfit >/dev/null 2>&1; then exec outfit hook %[2]s "$@"; fi
 echo "outfit: binary not found at $OUTFIT_BIN; running the team's %[2]s hook directly. Reinstall outfit, or run 'outfit uninstall'." >&2
-case "$OUTFIT_ORIG_HOOKS" in
-  /*) orig=$OUTFIT_ORIG_HOOKS ;;
-  *) orig=$PWD/$OUTFIT_ORIG_HOOKS ;;
-esac
-if [ -x "$orig/%[2]s" ]; then exec "$orig/%[2]s" "$@"; fi
+here=$(cd "$(dirname "$0")" && pwd -P)
+orig=
+for scope in --local --global --system; do
+  p=$(git config "$scope" --get core.hooksPath 2>/dev/null) || continue
+  [ -n "$p" ] || continue
+  # shellcheck disable=SC2088  # git stores a literal ~/ and expands it itself
+  case $p in
+    "~/"*) p=$HOME/${p#"~/"} ;;
+  esac
+  case $p in
+    /*) ;;
+    *) p=$PWD/$p ;;
+  esac
+  d=$(cd "$p" 2>/dev/null && pwd -P) || continue
+  [ "$d" = "$here" ] && continue
+  orig=$d
+  break
+done
+if [ -z "$orig" ]; then
+  c=$(git rev-parse --git-common-dir 2>/dev/null) || c=.git
+  case $c in
+    /*) ;;
+    *) c=$PWD/$c ;;
+  esac
+  orig=$c/hooks
+fi
+if [ -x "$orig/%[2]s" ] && [ "$orig/%[2]s" != "$0" ]; then exec "$orig/%[2]s" "$@"; fi
 exit 0
-`, ShimMarker, name, shQuote(bin), shQuote(origDir))
+`, ShimMarker, name, shQuote(bin))
 }
 
 // OriginalDir finds where the team's hooks live: the effective core.hooksPath
 // that is not outfit's (--local, then --global, then --system), else
 // <common-dir>/hooks. A relative path is relative to the worktree root, where git
-// runs hooks. The second result is the path exactly as configured, for the shim's
-// binary-missing fallback.
-func OriginalDir(gc config.GitConfig, ours, worktree, commonDir, home string) (dir, raw string) {
+// runs hooks; ~/ is expanded.
+func OriginalDir(gc config.GitConfig, ours, worktree, commonDir, home string) string {
 	for _, scope := range []string{config.ScopeLocal, config.ScopeGlobal, config.ScopeSystem} {
 		var val string
 		found := false
@@ -115,13 +141,12 @@ func OriginalDir(gc config.GitConfig, ours, worktree, commonDir, home string) (d
 			continue
 		}
 		abs := expand(val, worktree, home)
-		if samePath(abs, ours) {
+		if sameDir(abs, ours) {
 			continue
 		}
-		return abs, val
+		return abs
 	}
-	d := filepath.Join(commonDir, "hooks")
-	return d, d
+	return filepath.Join(commonDir, "hooks")
 }
 
 // expand resolves ~/ and relative paths the way git does for core.hooksPath.
@@ -138,13 +163,16 @@ func expand(p, worktree, home string) string {
 	return filepath.Clean(p)
 }
 
-func samePath(a, b string) bool {
+// sameDir reports whether a and b are the same directory. It compares inodes, not
+// spellings: on a case-insensitive filesystem `.GIT/outfit/hooks` IS our
+// directory, and treating it as foreign would chain into ourselves forever.
+func sameDir(a, b string) bool {
 	if filepath.Clean(a) == filepath.Clean(b) {
 		return true
 	}
-	ra, err1 := filepath.EvalSymlinks(a)
-	rb, err2 := filepath.EvalSymlinks(b)
-	return err1 == nil && err2 == nil && ra == rb
+	fa, err1 := os.Stat(a)
+	fb, err2 := os.Stat(b)
+	return err1 == nil && err2 == nil && os.SameFile(fa, fb)
 }
 
 // IsOurs reports whether file is a shim generated by outfit.
@@ -153,15 +181,70 @@ func IsOurs(path string) bool {
 	return err == nil && strings.Contains(string(b), ShimMarker)
 }
 
-// Generated lists the outfit-generated shims in dir.
+// Generated lists the outfit-generated shims directly inside dir.
 func Generated(dir string) []string {
-	var out []string
-	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err == nil && d.Type().IsRegular() && IsOurs(p) {
-			out = append(out, filepath.Base(p))
-		}
+	return filter(dir, func(p string) bool { return IsOurs(p) })
+}
+
+// Foreign lists the regular files directly inside dir that are named like a git
+// hook but were NOT generated by outfit: hooks another tool (lefthook install,
+// for one: it writes into `git rev-parse --git-path hooks`) put there.
+func Foreign(dir string) []string {
+	return filter(dir, func(p string) bool { return !IsOurs(p) })
+}
+
+func filter(dir string, keep func(path string) bool) []string {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
 		return nil
-	})
+	}
+	var out []string
+	for _, e := range ents {
+		if !e.Type().IsRegular() || !IsKnown(e.Name()) {
+			continue
+		}
+		if keep(filepath.Join(dir, e.Name())) {
+			out = append(out, e.Name())
+		}
+	}
 	sort.Strings(out)
 	return out
 }
+
+// HooksPathFromFiles reads core.hooksPath straight from git config files (for
+// when `git config --list` itself failed): the repo's config, then the global
+// file, then the system file. Same precedence as OriginalDir. Tiny and tolerant.
+func HooksPathFromFiles(files ...string) string {
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		section := ""
+		val := ""
+		for _, line := range strings.Split(string(b), "\n") {
+			l := strings.TrimSpace(line)
+			if strings.HasPrefix(l, "[") {
+				name := strings.Trim(l, "[] \t")
+				section = strings.ToLower(name)
+				if strings.ContainsAny(name, " \t\"") { // [core "sub"] is not [core]
+					section = ""
+				}
+				continue
+			}
+			if k, v, ok := strings.Cut(l, "="); ok && section == "core" && strings.EqualFold(strings.TrimSpace(k), "hookspath") {
+				val = strings.Trim(strings.TrimSpace(v), `"`)
+			}
+		}
+		if val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
+// ExpandPath resolves a core.hooksPath value (~/ and relative to the worktree).
+func ExpandPath(p, worktree, home string) string { return expand(p, worktree, home) }
+
+// SameDir reports whether a and b are the same directory (by inode, not spelling).
+func SameDir(a, b string) bool { return sameDir(a, b) }

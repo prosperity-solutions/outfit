@@ -1,0 +1,10 @@
+# A team "hook" that is really one of outfit's shims (a symlink, a looping
+# hooksPath) must never fork forever.
+fixture repo plain
+cd repo
+outfit init
+exec ln -s ../outfit/hooks/pre-commit .git/hooks/pre-commit
+exec git commit --allow-empty -qm 'feat: survives'
+stderr 'outfit shim'
+exec git log --format=%s -1
+stdout '^feat: survives$'

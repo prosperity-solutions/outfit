@@ -1,0 +1,43 @@
+# hook.<name>=off reaches the dispatcher from every source: a profile (the `yolo`
+# case: "yolo works for real"), --global, and a one-off `git -c`.
+fixture repo husky
+cd repo
+outfit init
+
+# A profile's [outfit "hook"] toggle.
+exec git config --local outfit.profile yolo
+rm $OUTFIT_TEST_HOOKLOG
+exec git commit --allow-empty -qm 'feat: yolo'
+hooklog
+! stdout 'hook=pre-commit'
+stdout 'hook=commit-msg'
+exec git config --local --unset outfit.profile
+
+# --global (this machine, every repo).
+outfit set hook.pre-commit=off --global
+rm $OUTFIT_TEST_HOOKLOG
+exec git commit --allow-empty -qm 'feat: global'
+hooklog
+! stdout 'hook=pre-commit'
+outfit set hook.pre-commit= --global
+
+# One-off: git -c outfit.hook.pre-commit=off commit.
+rm $OUTFIT_TEST_HOOKLOG
+exec git -c outfit.hook.pre-commit=off commit --allow-empty -qm 'feat: once'
+hooklog
+! stdout 'hook=pre-commit'
+rm $OUTFIT_TEST_HOOKLOG
+exec git commit --allow-empty -qm 'feat: back to normal'
+hooklog
+stdout 'hook=pre-commit'
+
+# When outfit cannot read the git config, the team's hook still runs, from the
+# husky hooksPath (read straight from the config files) and with its exit code.
+exec sh -c 'echo 7 > "$OUTFIT_TEST_HOOKLOG.exit.pre-commit"'
+rm $OUTFIT_TEST_HOOKLOG
+env GIT_TEST_ASSUME_DIFFERENT_OWNER=1
+! outfit hook pre-commit
+stderr 'running the team.s pre-commit hook anyway'
+env GIT_TEST_ASSUME_DIFFERENT_OWNER=
+hooklog
+stdout 'hook=pre-commit'

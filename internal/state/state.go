@@ -19,18 +19,11 @@ const Schema = 1
 // SparseMarker is the first line of the sparse-checkout file outfit manages.
 const SparseMarker = "# outfit-managed (do not edit; run `outfit sync`)"
 
-// State is the content of state.json.
+// State is the content of state.json, kept per worktree.
 type State struct {
 	Schema int `json:"schema"`
 	// GitVersion is `git --version`'s number at init, so hot paths need not ask.
 	GitVersion string `json:"git_version"`
-	// Binary is the absolute path of the outfit that ran init.
-	Binary string `json:"binary"`
-	// Version is that outfit's version.
-	Version string `json:"version"`
-	// WorktreeConfigWasSet records whether extensions.worktreeConfig was already
-	// true before the FIRST init, so uninstall only undoes what outfit did.
-	WorktreeConfigWasSet bool `json:"worktree_config_was_set"`
 	// Swaps are the paths currently swapped by the active profile (filled by
 	// sync). The pre-commit guard protects exactly these.
 	Swaps []Swap `json:"swaps"`
@@ -39,6 +32,74 @@ type State struct {
 // Swap is one swapped path.
 type Swap struct {
 	Path string `json:"path"`
+}
+
+// Setting is one outfit.* git config value.
+type Setting struct {
+	// Where is "local" for the repository's own config, else the name of the
+	// worktree git dir whose config.worktree holds it.
+	Where string `json:"where"`
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// Install is `<common-dir>/outfit/install.json`: facts about the whole
+// repository (not one worktree) that uninstall needs, written BEFORE init changes
+// anything so a half-finished init can still be undone exactly.
+type Install struct {
+	Schema  int    `json:"schema"`
+	Binary  string `json:"binary"`
+	Version string `json:"version"`
+	// WorktreeConfigWasSet records whether extensions.worktreeConfig was already
+	// true before the FIRST init, so uninstall only undoes what outfit did.
+	WorktreeConfigWasSet bool `json:"worktree_config_was_set"`
+	// Preexisting are the outfit.* settings that existed before the first init:
+	// uninstall keeps them and removes the rest.
+	Preexisting []Setting `json:"preexisting"`
+}
+
+// InstallPath returns the install record of a repository.
+func InstallPath(commonDir string) string { return filepath.Join(commonDir, "outfit", "install.json") }
+
+// ReadInstall loads the install record; ErrNone when init never ran.
+func ReadInstall(commonDir string) (*Install, error) {
+	b, err := os.ReadFile(InstallPath(commonDir))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrNone
+	}
+	if err != nil {
+		return nil, err
+	}
+	var in Install
+	if err := json.Unmarshal(b, &in); err != nil {
+		return nil, fmt.Errorf("%s is not valid JSON: %w", InstallPath(commonDir), err)
+	}
+	if in.Schema > Schema {
+		return nil, fmt.Errorf("%s was written by a newer outfit (schema %d): run `outfit update`", InstallPath(commonDir), in.Schema)
+	}
+	in.Schema = Schema
+	if in.Preexisting == nil {
+		in.Preexisting = []Setting{}
+	}
+	return &in, nil
+}
+
+// WriteInstall stores the install record atomically; it reports whether the file changed.
+func WriteInstall(commonDir string, in *Install) (bool, error) {
+	in.Schema = Schema
+	if in.Preexisting == nil {
+		in.Preexisting = []Setting{}
+	}
+	b, err := json.MarshalIndent(in, "", "  ")
+	if err != nil {
+		return false, err
+	}
+	b = append(b, '\n')
+	path := InstallPath(commonDir)
+	if old, err := os.ReadFile(path); err == nil && string(old) == string(b) {
+		return false, nil
+	}
+	return true, WriteFileAtomic(path, b, 0o644)
 }
 
 // Path returns the state file of a per-worktree git dir.
