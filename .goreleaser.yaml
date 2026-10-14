@@ -42,6 +42,12 @@ archives:
     formats: [tar.gz]
     # outfit_<version>_<os>_<arch>.tar.gz, with arch "all" for the macOS universal binary.
     name_template: "outfit_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # With the binary, exactly these are what install.sh (`check_archive`) accepts:
+    # change both together. `outfit update` (internal/update.ExtractBinary) is lenient
+    # about extra plain files on purpose: every INSTALLED copy of it is frozen, so a new
+    # file here must not break their updates. It does need a plain `outfit` and refuses
+    # links, directories and paths. scripts/ci/signing-smoke.sh feeds a snapshot
+    # archive through both checks on every PR.
     files: [LICENSE, README.md, NOTICE]
 
 checksum:

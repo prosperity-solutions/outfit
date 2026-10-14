@@ -3,7 +3,6 @@ package update
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,8 +11,10 @@ import (
 
 // BannerCommands are the human-facing commands that may print the update banner
 // (HANDOVER.md §5). Never sync, get, hook or diff: those run inside git hooks and
-// must stay fast.
-var BannerCommands = map[string]bool{"status": true, "ls": true, "use": true, "set": true, "init": true, "show": true, "new": true}
+// must stay fast, so this is an allowlist.
+// The spec's list also has use, show and new; add each here when the command exists
+// (a name listed before it exists would start a network check for "unknown command").
+var BannerCommands = map[string]bool{"status": true, "ls": true, "set": true, "init": true}
 
 // CacheDir is where outfit keeps update.json and update.lock: the user cache
 // directory, derived from the given environment so tests can point it anywhere.
@@ -144,8 +145,10 @@ func (b *Banner) Start(ctx context.Context) {
 }
 
 // Finish returns the banner line, or "" when there is nothing to say. It waits for
-// the check only as long as the budget leaves; a check that is not done is skipped
-// and tried again next time. The cache is written only after a successful check.
+// the check only as long as the budget leaves; a check that is not done, or was cut
+// off by the budget, is skipped and tried again next time, with nothing cached. A
+// successful check is cached as an answer; a definite failure (offline, 404, no
+// token) only as a back-off marker (Failed), never as an answer.
 func (b *Banner) Finish() string {
 	if b.skip {
 		return ""
@@ -174,7 +177,7 @@ func (b *Banner) Finish() string {
 		if r.err != nil {
 			// A check cut off by the budget is not a verdict: try again next time.
 			// Anything else (offline, 404, no token) is remembered for a while.
-			if !errors.Is(r.err, context.DeadlineExceeded) && !errors.Is(r.err, context.Canceled) {
+			if !IsTimeout(r.err) {
 				_ = writeCache(b.Dir, cacheFile{CheckedAt: b.Now(), Failed: true})
 			}
 			return ""

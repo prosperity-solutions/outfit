@@ -8,8 +8,9 @@
 #      internal/update/keys.txt, so `outfit update` and `curl | sh` trust the
 #      same keys;
 #   4. the variables the updater shares with the installer (token, base and API
-#      URLs) are read by the Go code too, and every OUTFIT_* variable the Go code
-#      reads is documented (docs/*.md other than the spec, README.md, AGENTS.md).
+#      URLs) appear in the Go code as string literals (the names it looks up), and
+#      every OUTFIT_* name the Go code mentions is documented (docs/*.md other than
+#      the spec, README.md, AGENTS.md).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -42,6 +43,8 @@ committed=$(grep -vE '^(#|untrusted comment:|$)' internal/update/keys.txt | tr -
 gofiles=$(find cmd internal -name '*.go' ! -name '*_test.go' ! -path 'internal/testkit/*')
 # shellcheck disable=SC2086
 govars=$(cat $gofiles | vars)
+# shellcheck disable=SC2086
+gostrings=$(cat $gofiles | grep -oE '"OUTFIT_[A-Z0-9_]+"' | sort -u)
 corpus=$(cat README.md AGENTS.md)
 for f in docs/*.md; do
   [ "$f" = docs/HANDOVER.md ] || corpus="$corpus$(cat "$f")"
@@ -53,8 +56,17 @@ for v in $govars; do
 done
 for v in OUTFIT_GITHUB_TOKEN OUTFIT_BASE_URL OUTFIT_API_URL; do
   grep -qx "$v" <<<"$header" || bad "$v is not in install.sh's header"
-  grep -qx "$v" <<<"$govars" || bad "install.sh reads $v but the updater (Go) does not"
+  grep -qF "\"$v\"" <<<"$gostrings" || bad "install.sh reads $v but the updater (Go) has no \"$v\" literal to look it up by"
 done
+
+# 5. install.sh's strict archive allow-list matches what .goreleaser.yaml packs. (The
+# Go side, internal/update.ExtractBinary, is deliberately lenient about extra plain
+# files, so it never refuses an archive install.sh accepts.)
+sh_names=$(sed -n '/^check_archive()/,/^}/p' install.sh | grep -oE 'outfit \| LICENSE \| README\.md \| NOTICE' | tr -d ' |' | head -1)
+[ -n "$sh_names" ] || bad "could not read the allow-list from install.sh's check_archive"
+yaml_files=$(sed -n 's/^    files: \[\(.*\)\]$/\1/p' .goreleaser.yaml | tr -d ' ' | tr ',' '\n' | sort | tr -d '\n')
+want_files=$(printf '%s' "LICENSE README.md NOTICE" | tr ' ' '\n' | sort | tr -d '\n')
+[ "$yaml_files" = "$want_files" ] || bad ".goreleaser.yaml's archive files ($yaml_files) differ from install.sh's allow-list minus the binary ($want_files)"
 
 [ "$fail" = 0 ] && echo "install contract OK ($(wc -w <<<"$header" | tr -d ' ') variables, $(wc -l <<<"$embedded" | tr -d ' ') key(s))"
 exit "$fail"

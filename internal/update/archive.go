@@ -7,15 +7,27 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 )
 
-// allowed is every file a release archive may hold: plain files, plain names.
-var allowed = map[string]bool{"outfit": true, "LICENSE": true, "README.md": true, "NOTICE": true}
+// plainName is every name a release archive entry may have: one path component of
+// ordinary characters. No slash, no "..", no dot-prefix, nothing a shell or a
+// filesystem treats specially.
+var plainName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
 
-// ExtractBinary returns the `outfit` executable from a release archive and refuses
-// the archive when it holds anything else: another name, a directory, a link, a
-// device, a second copy of a file, a path with a slash or "..". The archive is
-// already signature- and checksum-checked; this is the belt to those braces.
+// ExtractBinary returns the `outfit` executable from a release archive. It is the
+// only file outfit ever takes out of it, and it is read into memory, never written
+// to a path the archive names. Everything else in the archive is checked but ignored:
+// other PLAIN FILES with plain names are skipped, so a later release can add a man
+// page or shell completions without every installed outfit refusing to update (the
+// binary that reads archives is frozen on each machine; the archive is not). What is
+// refused: anything that is not a regular file (a link, a directory, a device), a
+// name with a path in it, a second `outfit`, a missing or empty `outfit`, and
+// oversize entries. The archive is already signature- and checksum-checked; this is
+// the belt to those braces. install.sh is stricter (it is fetched fresh, so it can
+// change in step with .goreleaser.yaml); tests/validate-install-contract.sh keeps
+// the two compatible and scripts/ci/signing-smoke.sh feeds a real snapshot archive
+// through here on every PR.
 func ExtractBinary(archive []byte) ([]byte, error) {
 	zr, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
@@ -33,8 +45,8 @@ func ExtractBinary(archive []byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("unreadable archive: %w", err)
 		}
-		if !allowed[h.Name] {
-			return nil, fmt.Errorf("unexpected entry %q", h.Name)
+		if !plainName.MatchString(h.Name) {
+			return nil, fmt.Errorf("unexpected entry %q (not a plain file name)", h.Name)
 		}
 		if h.Typeflag != tar.TypeReg {
 			return nil, fmt.Errorf("entry %q is not a plain file", h.Name)

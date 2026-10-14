@@ -97,6 +97,11 @@ ok "the signed universal binary runs"
 (cd dist && for f in outfit_*_linux_amd64.tar.gz outfit_*_linux_arm64.tar.gz outfit_*_darwin_all.tar.gz; do [ -f "$f" ] || fail "no archive $f (install.sh needs exactly these names)"; done)
 ok "the three archive names install.sh expects"
 
+# What is INSIDE them must pass the allow-list `outfit update` and install.sh apply.
+go run ./internal/tools/checkarchive dist/outfit_*_linux_amd64.tar.gz dist/outfit_*_linux_arm64.tar.gz dist/outfit_*_darwin_all.tar.gz ||
+  fail "an archive would be refused by outfit update and install.sh (see above)"
+ok "the archives pass the checks outfit update and install.sh apply"
+
 go run ./internal/tools/verifysig dist/checksums.txt dist/checksums.txt.minisig "$work/mini.pub" >/dev/null ||
   fail "the minisign signature does not verify"
 ok "checksums.txt is signed with the encrypted key and verifies"

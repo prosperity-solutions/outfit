@@ -17,7 +17,9 @@ func Lock(dir string) (func(), error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "update.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	// Read-only is enough for flock, and works on a lock file left behind by a
+	// `sudo outfit update` that now belongs to root.
+	f, err := os.OpenFile(filepath.Join(dir, "update.lock"), os.O_CREATE|os.O_RDONLY, 0o644)
 	if err != nil {
 		return nil, err
 	}

@@ -27,14 +27,14 @@ import (
 type FakeRelease struct {
 	t *testing.T
 	// URL is the public base (OUTFIT_BASE_URL); APIURL the API base (OUTFIT_API_URL).
+	// API asset downloads always redirect to a second server reached under the name
+	// "localhost" (the API one is 127.0.0.1), as GitHub redirects to its storage.
 	URL, APIURL string
-	// StorageHost, when set before requests, makes asset downloads redirect to a
-	// second server at that host name, as GitHub redirects to its storage.
-	Keys    []minisign.PublicKey // the trusted public key(s) a test passes to the client
-	priv    minisign.PrivateKey
-	Private bool   // public URLs answer 404, the API needs Token
-	Token   string // the token the API accepts when Private
-	Plat    string // the platform being served, e.g. "linux_amd64"
+	Keys        []minisign.PublicKey // the trusted public key(s) a test passes to the client
+	priv        minisign.PrivateKey
+	Private     bool   // public URLs answer 404, the API needs Token
+	Token       string // the token the API accepts when Private
+	Plat        string // the platform being served, e.g. "linux_amd64"
 
 	srv, storage *httptest.Server
 	mu           sync.Mutex

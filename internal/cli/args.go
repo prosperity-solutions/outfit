@@ -21,11 +21,19 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 			pos = append(pos, args[i+1:]...)
 			return pos, fs.Parse(flags)
 		case strings.HasPrefix(a, "-") && a != "-":
-			flags = append(flags, a)
-			if takesValue(fs, a) && i+1 < len(args) {
-				i++
-				flags = append(flags, args[i])
+			// A value is the next argument unless that is itself a flag (or there is
+			// none): `--version --json` means "--version has no value", and the --json
+			// is still seen, so the error comes back as JSON.
+			if takesValue(fs, a) {
+				if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+					flags = append(flags, a, args[i+1])
+					i++
+				} else {
+					flags = append(flags, a+"=")
+				}
+				continue
 			}
+			flags = append(flags, a)
 		default:
 			pos = append(pos, a)
 		}

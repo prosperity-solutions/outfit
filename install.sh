@@ -135,13 +135,17 @@ verify_signature() {
   err "the signature on checksums.txt does not match the outfit release key; nothing was installed"
 }
 
-# Only these files, as plain files, with plain names.
+# Only these files, as plain files, with plain names. The same list is in
+# .goreleaser.yaml (tests/validate-install-contract.sh). `outfit update` is more
+# lenient on purpose (internal/update/archive.go): this script is fetched fresh every
+# time and may be strict; an installed outfit is frozen and must not refuse a newer
+# archive because it holds one more plain file.
 check_archive() {
   tar -tzf "$1" >"$tmp/entries.txt" || err "$2 is not a readable tar.gz"
   while IFS= read -r entry; do
     case "$entry" in
       outfit | LICENSE | README.md | NOTICE) ;;
-      *) err "unexpected entry '$entry' in $2; nothing was installed" ;;
+      *) err "unexpected entry '$entry' in $2; nothing was installed (is .goreleaser.yaml's archive layout in step with install.sh?)" ;;
     esac
   done <"$tmp/entries.txt"
   grep -qx outfit "$tmp/entries.txt" || err "$2 has no outfit binary"

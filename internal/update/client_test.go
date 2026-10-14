@@ -7,6 +7,8 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -130,8 +132,8 @@ func TestFetchRefusesWhatItCannotTrust(t *testing.T) {
 		"missing archive":   {func(f *testkit.FakeRelease) { f.Break.MissingFile = "outfit_0.2.0_" + plat + ".tar.gz" }, "HTTP 404"},
 		"missing checksums": {func(f *testkit.FakeRelease) { f.Break.MissingFile = "checksums.txt" }, "HTTP 404"},
 		"missing signature": {func(f *testkit.FakeRelease) { f.Break.MissingFile = "checksums.txt.minisig" }, "HTTP 404"},
-		"extra file":        {func(f *testkit.FakeRelease) { f.Break.ExtraEntry = "evil" }, "unexpected entry"},
 		"symlink":           {func(f *testkit.FakeRelease) { f.Break.Symlink = true }, "not a plain file"},
+		"path in name":      {func(f *testkit.FakeRelease) { f.Break.ExtraEntry = "../evil" }, "unexpected entry"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -263,11 +265,18 @@ func TestExtractBinaryAllowList(t *testing.T) {
 	if b, err := ExtractBinary(hostile(file("LICENSE", "x"), file("outfit", "BIN"))); err != nil || string(b) != "BIN" {
 		t.Fatalf("good archive: %q, %v", b, err)
 	}
+	// Forward compatible: a later release may add plain files (a man page, completions);
+	// the frozen updater on every machine must still update. They are never extracted.
+	if b, err := ExtractBinary(hostile(file("outfit", "BIN"), file("outfit.1", "man"), file("CHANGELOG.md", "c"), file("outfit.bash", "s"))); err != nil || string(b) != "BIN" {
+		t.Fatalf("archive with extra plain files: %q, %v", b, err)
+	}
 	for name, a := range map[string][]byte{
 		"path traversal": hostile(file("outfit", "x"), file("../outfit", "y")),
 		"absolute":       hostile(file("/tmp/outfit", "x")),
 		"subdirectory":   hostile(file("bin/outfit", "x")),
 		"dot prefix":     hostile(file("./outfit", "x")),
+		"hidden file":    hostile(file("outfit", "x"), file(".hidden", "y")),
+		"space in name":  hostile(file("outfit", "x"), file("a b", "y")),
 		"duplicate":      hostile(file("outfit", "x"), file("outfit", "y")),
 		"no outfit":      hostile(file("LICENSE", "x")),
 		"empty outfit":   hostile(file("outfit", "")),
@@ -344,12 +353,64 @@ func TestErrorsAreRetryableOnlyWhenTransient(t *testing.T) {
 	c := &Client{BaseURL: "http://127.0.0.1:1", Keys: testkit.NewFakeRelease(t, plat).Keys, GOOS: "linux", GOARCH: "amd64"}
 	_, err := c.Latest(context.Background())
 	var ue *Error
-	if !errors.As(err, &ue) || !ue.Retryable || ue.Fix == "" {
+	// Retryable, with no fix of its own (the CLI says which command to run again), and
+	// the cause kept so a deadline can be told from a refusal.
+	if !errors.As(err, &ue) || !ue.Retryable || ue.Cause == nil {
 		t.Fatalf("connection refused: %#v", err)
 	}
 	f := testkit.NewFakeRelease(t, plat) // no releases: 404
 	_, err = newClient(f).Latest(context.Background())
 	if !errors.As(err, &ue) || ue.Retryable {
 		t.Fatalf("404: %#v", err)
+	}
+}
+
+func TestAnIdleDownloadIsCutOffButASlowSteadyOneIsNot(t *testing.T) {
+	steady := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fl := w.(http.Flusher)
+		for i := 0; i < 5; i++ {
+			_, _ = w.Write([]byte("0123456789"))
+			fl.Flush()
+			time.Sleep(60 * time.Millisecond)
+		}
+	}))
+	defer steady.Close()
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.(http.Flusher).Flush()
+		select {
+		case <-time.After(3 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	defer stalled.Close()
+	// 5 chunks 60 ms apart take 300 ms: longer than the 150 ms idle limit overall, but never idle that long.
+	c := &Client{IdleTimeout: 150 * time.Millisecond}
+	if b, err := c.get(context.Background(), steady.URL, "", false, 10*time.Second, c.idleTimeout(), 1<<20); err != nil || len(b) != 50 {
+		t.Fatalf("steady download: %d bytes, %v", len(b), err)
+	}
+	start := time.Now()
+	_, err := c.get(context.Background(), stalled.URL, "", false, 10*time.Second, c.idleTimeout(), 1<<20)
+	if err == nil || !IsTimeout(err) || time.Since(start) > 2*time.Second {
+		t.Fatalf("stalled download: err=%v after %v", err, time.Since(start))
+	}
+}
+
+func TestTokenLessArchiveIsFetchedFromTheVersionTheListNames(t *testing.T) {
+	f := testkit.NewFakeRelease(t, plat)
+	f.Add("0.1.0")
+	f.Add("0.2.0")
+	c := newClient(f)
+	if _, err := c.Fetch(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	var archive string
+	for _, r := range f.Requests() {
+		if strings.HasSuffix(r.Path, ".tar.gz") {
+			archive = r.Path
+		}
+	}
+	if archive != "/releases/download/v0.2.0/outfit_0.2.0_"+plat+".tar.gz" {
+		t.Fatalf("the archive came from %q", archive)
 	}
 }

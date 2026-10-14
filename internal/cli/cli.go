@@ -65,9 +65,17 @@ func Run(ctx context.Context, b Build, args []string, stdout, stderr io.Writer) 
 		Exe: stableExe(), IsTTY: isTTY(os.Stderr), GHToken: update.GHAuthToken}, args)
 }
 
+// isTTY reports whether f is a terminal: a character device that is not /dev/null
+// (`outfit status 2>/dev/null` is a redirect, and must not count).
 func isTTY(f *os.File) bool {
 	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	if null, err := os.Stat(os.DevNull); err == nil && os.SameFile(fi, null) {
+		return false
+	}
+	return true
 }
 
 // stableExe is the path recorded in hook shims. Package managers install a

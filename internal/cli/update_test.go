@@ -374,3 +374,59 @@ func TestReadOnlyFixSaysWhatToDoNext(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateRetryFixKeepsWhatWasAsked(t *testing.T) {
+	f := newUpdate(t)
+	f.env["OUTFIT_BASE_URL"] = "http://127.0.0.1:1"
+	for args, want := range map[string]string{
+		"update --version 0.2.0": "outfit update --version 0.2.0",
+		"update --check":         "outfit update --check",
+		"update":                 "fix: outfit update   (try again",
+	} {
+		f.run("0.1.0", strings.Fields(args)...)
+		if !strings.Contains(f.errb.String(), want) {
+			t.Errorf("%q: err = %q, want %q", args, f.errb.String(), want)
+		}
+	}
+	// A dev build cannot run a bare `outfit update`, so its retry is --check.
+	f.run("dev", "update")
+	f.run("dev", "update", "--check")
+	if !strings.Contains(f.errb.String(), "outfit update --check   (try again") {
+		t.Errorf("dev --check retry: %q", f.errb.String())
+	}
+}
+
+func TestUpdateTokenFixDependsOnWhereTheTokenCameFrom(t *testing.T) {
+	f := newUpdate(t)
+	f.rel.Private, f.rel.Token = true, "ghp_theright1token"
+	f.env["GH_TOKEN"] = "ghp_stale0token"
+	f.run("0.1.0", "update")
+	if got := f.errb.String(); !strings.Contains(got, "fix: unset GH_TOKEN") || strings.Contains(got, "ghp_stale0token") {
+		t.Fatalf("env token: %q", got)
+	}
+	delete(f.env, "GH_TOKEN")
+	cli.Execute(context.Background(), cli.Env{
+		Build: cli.Build{Version: "0.1.0"}, Dir: f.home, Getenv: func(k string) string { return f.env[k] },
+		Stdout: &f.out, Stderr: &f.errb, Exe: f.exe, UpdateKeys: f.rel.Keys,
+		GHToken: func(context.Context) string { return "ghp_wrongaccount" },
+	}, []string{"update"})
+	if got := f.errb.String(); !strings.Contains(got, "gh auth status") || !strings.Contains(got, "gh auth switch") {
+		t.Fatalf("gh token: %q", got)
+	}
+}
+
+func TestUpdateVersionFlagMistakes(t *testing.T) {
+	f := newUpdate(t)
+	for _, args := range [][]string{{"update", "--version="}, {"update", "--version", ""}, {"update", "--version"}} {
+		if code := f.run("0.1.0", args...); code != cli.ExitUsage {
+			t.Errorf("%q: code=%d err=%q", args, code, f.errb.String())
+		}
+	}
+	// `--version --json`: the value is missing, and the error is still JSON.
+	if code := f.run("0.1.0", "update", "--version", "--json"); code != cli.ExitUsage || !strings.HasPrefix(f.out.String(), `{"error"`) {
+		t.Fatalf("code=%d out=%q err=%q", code, f.out.String(), f.errb.String())
+	}
+	if f.installed() != string(testkit.Binary("0.1.0")) {
+		t.Fatal("a usage error changed the binary")
+	}
+}

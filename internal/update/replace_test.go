@@ -3,6 +3,8 @@ package update
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -81,10 +83,44 @@ func TestReplaceReadOnlyDirectory(t *testing.T) {
 	}
 }
 
+func TestReplaceSweepsStaleTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "outfit")
+	_ = os.WriteFile(exe, []byte("old"), 0o755)
+	stale := filepath.Join(dir, ".outfit-update-stale")
+	fresh := filepath.Join(dir, ".outfit-update-fresh")
+	for _, p := range []string{stale, fresh} {
+		_ = os.WriteFile(p, []byte("x"), 0o644)
+	}
+	old := time.Now().Add(-time.Hour)
+	_ = os.Chtimes(stale, old, old)
+	if _, err := Replace(exe, []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); err == nil {
+		t.Error("an hour-old leftover temp file was not removed")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Error("a fresh temp file (maybe a running update's) was removed")
+	}
+}
+
 func TestReplaceMissingExecutable(t *testing.T) {
 	if _, err := Replace(filepath.Join(t.TempDir(), "nope"), []byte("x")); err == nil {
 		t.Fatal("replaced something that is not there")
 	}
+}
+
+func TestLockSurvivesALockFileOwnedBySomeoneElse(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "update.lock"), nil, 0o444); err != nil { // read-only, like root's after a sudo run
+		t.Fatal(err)
+	}
+	unlock, err := Lock(dir)
+	if err != nil {
+		t.Fatalf("a read-only lock file stopped the lock: %v", err)
+	}
+	unlock()
 }
 
 func TestLock(t *testing.T) {
@@ -243,5 +279,33 @@ func TestCacheDirIgnoresARelativeXDGCacheHome(t *testing.T) {
 	get := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 	if d := CacheDir(get(map[string]string{"XDG_CACHE_HOME": ".cache", "HOME": "/h"})); !filepath.IsAbs(d) {
 		t.Fatalf("a relative XDG_CACHE_HOME was used: %q", d)
+	}
+}
+
+// The real check cut off by the budget must not be cached as a failure: its error
+// has to say "deadline", through the *Error the client returns.
+func TestBannerTimeoutFromTheRealClientIsNotCached(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(2 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	defer slow.Close()
+	c := &Client{BaseURL: slow.URL, GOOS: "linux", GOARCH: "amd64", MetaTimeout: time.Minute}
+	b := &Banner{Current: "0.1.0", Dir: t.TempDir(), Check: c.Latest, Budget: 100 * time.Millisecond}
+	b.Start(context.Background())
+	time.Sleep(400 * time.Millisecond) // the command outlives the budget; the check hit its deadline
+	if got := b.Finish(); got != "" {
+		t.Fatalf("banner %q", got)
+	}
+	if cf, ok := readCache(b.Dir); ok {
+		t.Fatalf("a deadline was cached as %+v: it says nothing about the network", cf)
+	}
+}
+
+func TestIsTimeout(t *testing.T) {
+	if !IsTimeout(context.DeadlineExceeded) || !IsTimeout(&Error{Cause: context.Canceled}) || IsTimeout(errors.New("HTTP 404")) {
+		t.Fatal("IsTimeout misclassifies")
 	}
 }

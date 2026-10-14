@@ -4,3 +4,4 @@
 /outfit
 *.test
 .DS_Store
+/.local/

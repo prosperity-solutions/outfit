@@ -15,17 +15,21 @@ outfit update --json             # every command takes --json
    it asks the GitHub API and downloads through the asset endpoints; without one it tries
    the public `releases/latest/download/…` URLs, which start working by themselves once
    the repository is public. With neither it stops and says: `gh auth login`, or set
-   `OUTFIT_GITHUB_TOKEN`. The token is never printed, never put on a command line, sent
+   `OUTFIT_GITHUB_TOKEN`. outfit never prints the token or puts it on a command line, and sends
    only to `https://api.github.com` (or, for tests, to this machine; an `OUTFIT_API_URL`
    naming anywhere else is refused before any request), and not forwarded when GitHub
    redirects the download to its storage or anywhere over plain http. One attempt per
-   request, no retry loops: 5 seconds for the small files, **60 seconds for the archive**
-   (a few MB; the spec's 5 s is for the metadata, this is a deliberate exception).
+   request, no retry loops: 5 seconds for the small files; the archive (3 to 6 MB) is cut
+   off when **no data arrives for 15 seconds** or after 10 minutes in all, so a slow link
+   that keeps delivering is not abandoned (a deliberate exception to the spec's flat 5 s).
 2. **Verifies, and fails closed.** `checksums.txt.minisig` must be a valid minisign
    signature of `checksums.txt` by one of the keys compiled into this binary
    ([`internal/update/keys.txt`](../internal/update/keys.txt)); then the archive's
-   SHA-256 must match `checksums.txt`; then the archive may hold only `outfit`,
-   `LICENSE`, `README.md` and `NOTICE`, as plain files. With a token it also requires
+   SHA-256 must match `checksums.txt`; then the archive must hold a plain `outfit`
+   file, and nothing that is not a plain file with a plain name (no links, directories,
+   paths, duplicates). Other plain files are skipped, never extracted: an installed outfit
+   cannot be changed, so a later release may add a man page without breaking every update.
+   (`install.sh`, which is fetched fresh each time, is stricter.) With a token it also requires
    the archive to be the build the release is named for, so an old, validly signed build
    cannot be re-uploaded under a newer release. "Is there a newer release?" is also
    answered from the signed checksum list, so an unsigned answer cannot make outfit
@@ -48,8 +52,9 @@ outfit update --json             # every command takes --json
 ## The update banner
 
 `Update available: 0.1.0 → 0.2.0. Run outfit update` is printed (to stderr) after the
-human-facing commands (`status`, `ls`, `use`, `set`, `init`, `show`, `new`), and only when
-stderr is a terminal, `--json` is off, `CI` is unset and `OUTFIT_NO_UPDATE_CHECK` is
+human-facing commands (`status`, `ls`, `set`, `init`; `use`, `show` and `new` join the
+list when they exist: `update.BannerCommands`), and only when stderr is a terminal (not
+a redirect to /dev/null), `--json` is off, `CI` is unset and `OUTFIT_NO_UPDATE_CHECK` is
 unset. It is **never** shown, and the network is never touched, by `sync`, `get`, `hook`
 or `diff`: git runs those inside hooks and they must stay fast.
 
@@ -64,6 +69,21 @@ round trip on every command, and a real answer is never hidden for a day. (The s
 says to cache only successes; this back-off is a deliberate exception.) The banner is
 also off when a git hook is running (`OUTFIT_HOOK_ACTIVE`, or the index git exports to
 hooks).
+
+## Debugging the banner
+
+"It never shows" has a few causes, in the order `internal/cli/cmd_update.go`
+(`bannerEnabled`) checks them: not a terminal (stderr redirected, even to `/dev/null`);
+`--json`; `CI` or `OUTFIT_NO_UPDATE_CHECK` set; running inside a git hook
+(`OUTFIT_HOOK_ACTIVE`, or the index git exports to hooks); a command that is not in
+`update.BannerCommands`; a development build (no version to compare); the answer cached
+less than 24 hours ago says you are current; or the last check **failed** less than an
+hour ago (see above). The two files live in the cache directory, next to each other:
+`update.json` (the cached answer, or the back-off marker) and `update.lock` (the update
+lock). Delete the directory to reset them. The test harness sets
+`OUTFIT_NO_UPDATE_CHECK=1` for every fixture (`internal/testkit/env.go`), so no
+testscript run sees a banner; the banner is tested through `cli.Execute` with
+`Env.IsTTY` set (`internal/cli/update_test.go`).
 
 ## Environment variables
 

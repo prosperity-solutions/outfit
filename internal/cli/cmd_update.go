@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"time"
 
@@ -40,11 +41,14 @@ func updateClient(ctx context.Context, e Env) (*update.Client, string) {
 }
 
 // asCLIError turns an update failure into a CLI error carrying its fix.
-func asCLIError(err error) error {
+func asCLIError(err error, retry string) error {
 	var ue *update.Error
 	if errors.As(err, &ue) {
 		fix := ue.Fix
-		if fix == "" {
+		switch {
+		case fix == "" && ue.Retryable:
+			fix = retry + "   (try again; it was a network problem)"
+		case fix == "":
 			fix = "outfit update --check   (see what is published; if it persists, reinstall: docs/install.md)"
 		}
 		e := Errorf("%s", ue.Msg).WithFix(fix)
@@ -58,7 +62,7 @@ func asCLIError(err error) error {
 				"then put that folder before " + nw.Dir + " on your PATH, and run `outfit init` in each repository so the hook shims point at the new copy"}).
 			WithFix(installCommand)
 	}
-	return Errorf("%v", err).WithFix("outfit update --check")
+	return Errorf("%v", err).WithFix(retry)
 }
 
 type updateJSON struct {
@@ -98,11 +102,14 @@ func cmdUpdate(ctx context.Context, e Env, args []string) int {
 		return ExitOK
 	}
 
-	if *check && *version != "" {
+	// Was --version passed at all? An empty value is a mistake to report, not "absent".
+	givenVersion := false
+	fs.Visit(func(f *flag.Flag) { givenVersion = givenVersion || f.Name == "version" })
+	if *check && givenVersion {
 		return fail(Usagef("--check and --version cannot be combined").WithFix("outfit update --check"))
 	}
 	var want *update.Version
-	if *version != "" {
+	if givenVersion {
 		v, err := update.ParseVersion(*version)
 		if err != nil {
 			return fail(Usagef("%v", err).WithFix("outfit update --check   (shows the latest release)"))
@@ -112,6 +119,17 @@ func cmdUpdate(ctx context.Context, e Env, args []string) int {
 	cur, curErr := update.ParseVersion(e.Build.Version)
 	dev := curErr != nil
 
+	// The command to run again after a transient failure: what was asked, not a bare
+	// `outfit update` (which would drop --check or --version, or refuse on a dev build).
+	retry := "outfit update"
+	switch {
+	case *check:
+		retry += " --check"
+	case givenVersion:
+		retry += " --version " + *version
+	case dev:
+		retry += " --check"
+	}
 	client, ignored := updateClient(ctx, e)
 	if ignored != "" {
 		fmt.Fprintln(e.Stderr, "warning: "+ignored)
@@ -120,7 +138,7 @@ func cmdUpdate(ctx context.Context, e Env, args []string) int {
 	if *check {
 		latest, err := client.LatestVerified(ctx)
 		if err != nil {
-			return fail(asCLIError(err))
+			return fail(asCLIError(err, retry))
 		}
 		avail := dev || cur.Less(latest)
 		j := updateJSON{Current: e.Build.Version, Latest: latest.String(), UpdateAvailable: &avail}
@@ -160,7 +178,7 @@ func cmdUpdate(ctx context.Context, e Env, args []string) int {
 		// no archive but cannot be made to believe it is up to date by an unsigned answer.
 		latest, err := client.LatestVerified(ctx)
 		if err != nil {
-			return fail(asCLIError(err))
+			return fail(asCLIError(err, retry))
 		}
 		if !cur.Less(latest) {
 			return emit(updateJSON{Current: e.Build.Version, Latest: latest.String()}, fmt.Sprintf("outfit %s is up to date", cur))
@@ -168,14 +186,15 @@ func cmdUpdate(ctx context.Context, e Env, args []string) int {
 	}
 	pkg, err := client.Fetch(ctx, want)
 	if err != nil {
-		return fail(asCLIError(err))
+		return fail(asCLIError(err, retry))
 	}
-	if !dev && want == nil && !cur.Less(pkg.Version) {
+	// Race guard: a release may land between the signed look above and the fetch.
+	if want == nil && !cur.Less(pkg.Version) {
 		return emit(updateJSON{Current: e.Build.Version, Latest: pkg.Version.String()}, fmt.Sprintf("outfit %s is up to date", cur))
 	}
 	path, err := update.Replace(e.Exe, pkg.Binary)
 	if err != nil {
-		return fail(asCLIError(err))
+		return fail(asCLIError(err, retry))
 	}
 	verb := "Updated"
 	switch {

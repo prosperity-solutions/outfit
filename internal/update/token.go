@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -58,6 +59,11 @@ func validToken(v string) bool {
 // GHAuthToken runs `gh auth token` for github.com, within ctx and at most 2 seconds.
 // Empty when gh is missing, not logged in, or slow.
 func GHAuthToken(ctx context.Context) string {
+	// Without a home directory gh falls back to writing its state (a device id) next
+	// to the current directory, which may be someone's git checkout: do not ask.
+	if os.Getenv("HOME") == "" {
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "gh", "auth", "token", "--hostname", "github.com").Output()

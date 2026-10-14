@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"syscall"
+	"time"
 )
 
 // NotWritableError is returned when the directory holding the executable cannot
@@ -17,6 +18,26 @@ type NotWritableError struct{ Dir string }
 
 func (e *NotWritableError) Error() string {
 	return fmt.Sprintf("%s is not writable, so outfit cannot replace itself there", e.Dir)
+}
+
+// notWritable maps a permission failure to NotWritableError, so the user gets the
+// install command instead of a raw errno.
+func notWritable(err error, dir string) error {
+	if errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM) {
+		return &NotWritableError{Dir: dir}
+	}
+	return err
+}
+
+// sweep removes temp files an interrupted update left behind (a SIGINT during the
+// write): ours, hidden, and older than ten minutes so a running update is not touched.
+func sweep(dir string) {
+	matches, _ := filepath.Glob(filepath.Join(dir, ".outfit-update-*"))
+	for _, m := range matches {
+		if fi, err := os.Lstat(m); err == nil && fi.Mode().IsRegular() && time.Since(fi.ModTime()) > 10*time.Minute {
+			_ = os.Remove(m)
+		}
+	}
 }
 
 // Replace puts bin at the running executable's real path, atomically: a temp file
@@ -31,12 +52,10 @@ func Replace(exe string, bin []byte) (string, error) {
 		return "", fmt.Errorf("cannot resolve %s: %w", exe, err)
 	}
 	dir := filepath.Dir(real)
+	sweep(dir)
 	f, err := os.CreateTemp(dir, ".outfit-update-*")
 	if err != nil {
-		if errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS) || errors.Is(err, syscall.EACCES) {
-			return "", &NotWritableError{Dir: dir}
-		}
-		return "", err
+		return "", notWritable(err, dir)
 	}
 	tmp := f.Name()
 	cleanup := func() { _ = os.Remove(tmp) }
@@ -61,7 +80,8 @@ func Replace(exe string, bin []byte) (string, error) {
 	}
 	if err := os.Rename(tmp, real); err != nil {
 		cleanup()
-		return "", err
+		// A sticky directory, an immutable target: not writable in the way that matters.
+		return "", notWritable(err, dir)
 	}
 	if runtime.GOOS == "darwin" {
 		// Best effort, and only ever removes the quarantine flag: a download by

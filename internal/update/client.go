@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -22,18 +24,31 @@ import (
 type Error struct {
 	Msg       string
 	Fix       string
-	Retryable bool // a transient failure (network, 5xx, 429): the same command may work later
+	Retryable bool  // a transient failure (network, 5xx, 429): the same command may work later
+	Cause     error // what went wrong underneath, for errors.Is/As (a deadline, say)
 }
 
 func (e *Error) Error() string { return e.Msg }
+func (e *Error) Unwrap() error { return e.Cause }
+
+// IsTimeout reports whether err was caused by a deadline or cancellation: a check
+// cut short by its time budget, which says nothing about the network.
+func IsTimeout(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+		(errors.As(err, &ne) && ne.Timeout())
+}
 
 func fixf(fix, format string, a ...any) *Error {
 	return &Error{Msg: fmt.Sprintf(format, a...), Fix: fix}
 }
 
-// retryf is a transient failure: trying again is the fix.
-func retryf(format string, a ...any) *Error {
-	return &Error{Msg: fmt.Sprintf(format, a...), Fix: "outfit update   (try again)", Retryable: true}
+// retryf is a transient failure: trying the same command again is the fix. cause (may be nil) is kept
+// for errors.Is/As; its text, with the token scrubbed, is part of the message.
+func retryf(cause error, format string, a ...any) *Error {
+	// No Fix: the command to retry depends on what was asked (--check, --version),
+	// so the CLI fills it in.
+	return &Error{Msg: fmt.Sprintf(format, a...), Retryable: true, Cause: cause}
 }
 
 // Client fetches, verifies and unpacks a release. One attempt per request, no
@@ -46,9 +61,12 @@ type Client struct {
 	Keys    []minisign.PublicKey
 	GOOS    string
 	GOARCH  string
-	// MetaTimeout bounds each small request (release metadata, checksums, signature),
-	// DownloadTimeout the archive. Zero means 5 s and 60 s.
+	// MetaTimeout bounds each small request (release metadata, checksums, signature)
+	// as a whole: 5 s. The archive is bounded by IdleTimeout (no data for that long:
+	// 15 s) and by DownloadTimeout in total (10 min), so a slow link that keeps
+	// delivering is not cut off at an arbitrary second.
 	MetaTimeout     time.Duration
+	IdleTimeout     time.Duration
 	DownloadTimeout time.Duration
 }
 
@@ -146,12 +164,34 @@ func (c *Client) downloadTimeout() time.Duration {
 	if c.DownloadTimeout > 0 {
 		return c.DownloadTimeout
 	}
-	return 60 * time.Second
+	return 10 * time.Minute
+}
+
+func (c *Client) idleTimeout() time.Duration {
+	if c.IdleTimeout > 0 {
+		return c.IdleTimeout
+	}
+	return 15 * time.Second
+}
+
+// resetReader restarts a timer whenever data arrives: an idle timeout.
+type resetReader struct {
+	r    io.Reader
+	t    *time.Timer
+	idle time.Duration
+}
+
+func (r *resetReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if n > 0 {
+		r.t.Reset(r.idle)
+	}
+	return n, err
 }
 
 // get fetches one URL, bounded in time and size. auth sends the token, and
 // refuses to when the URL is not secure.
-func (c *Client) get(ctx context.Context, rawURL, accept string, auth bool, timeout time.Duration, limit int64) ([]byte, error) {
+func (c *Client) get(ctx context.Context, rawURL, accept string, auth bool, timeout, idle time.Duration, limit int64) ([]byte, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
@@ -161,6 +201,11 @@ func (c *Client) get(ctx context.Context, rawURL, accept string, auth bool, time
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	var idleTimer *time.Timer
+	if idle > 0 {
+		idleTimer = time.AfterFunc(idle, cancel)
+		defer idleTimer.Stop()
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
@@ -175,15 +220,20 @@ func (c *Client) get(ctx context.Context, rawURL, accept string, auth bool, time
 	}
 	resp, err := c.http().Do(req)
 	if err != nil {
-		return nil, retryf("could not reach %s: %v", u.Host, scrub(err, c.Token.Value))
+		return nil, retryf(err, "could not reach %s: %v", u.Host, scrub(err, c.Token.Value))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, c.statusError(u, resp.StatusCode, auth)
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	var body io.Reader = resp.Body
+	if idleTimer != nil {
+		idleTimer.Reset(idle)
+		body = &resetReader{r: resp.Body, t: idleTimer, idle: idle}
+	}
+	b, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
-		return nil, retryf("could not read from %s: %v", u.Host, scrub(err, c.Token.Value))
+		return nil, retryf(err, "could not read from %s: %v", u.Host, scrub(err, c.Token.Value))
 	}
 	if int64(len(b)) > limit {
 		return nil, fixf("", "%s sent more than %d bytes; not an outfit release file", u.Path, limit)
@@ -203,17 +253,22 @@ func (c *Client) statusError(u *url.URL, status int, auth bool) error {
 	switch {
 	case auth && (status == 401 || status == 403 || status == 404):
 		msg := fmt.Sprintf("GitHub answered %d to the token from %s: it cannot read %s, or that release does not exist", status, c.Token.Source, Repo)
-		if c.Token.Source != "gh auth token" {
-			// An exported variable wins over `gh auth`, so a stale one is the usual cause.
-			msg += ". A stale GH_TOKEN or GITHUB_TOKEN wins over `gh auth`: unset it, or set OUTFIT_GITHUB_TOKEN to the one you want"
+		if c.Token.Source == "gh auth token" {
+			// The active gh account cannot read the repository: another may.
+			return fixf("gh auth status   (shows the active account; then `gh auth switch`, or `gh auth login` with one that can read "+Repo+")", "%s", msg)
 		}
-		return fixf("gh auth login   (or set OUTFIT_GITHUB_TOKEN to a token that can read "+Repo+")", "%s", msg)
+		// An exported variable wins over `gh auth`, so logging in again would not help.
+		return fixf("unset "+c.Token.Source+"   (or set OUTFIT_GITHUB_TOKEN to a token that can read "+Repo+")",
+			"%s. An exported token wins over `gh auth`", msg)
 	case !auth && (status == 401 || status == 403 || status == 404):
-		return fixf("gh auth login   (or set OUTFIT_GITHUB_TOKEN)",
-			"could not download %s (HTTP %d): that release does not exist, or the repository is private and needs a GitHub token", u.Path, status)
+		fix := "gh auth login   (or set OUTFIT_GITHUB_TOKEN)"
+		if _, err := exec.LookPath("gh"); err != nil {
+			fix = "install the GitHub CLI (brew install gh, or https://cli.github.com), then gh auth login   (or set OUTFIT_GITHUB_TOKEN)"
+		}
+		return fixf(fix, "could not download %s%s (HTTP %d): that release does not exist, or the repository is private and needs a GitHub token", u.Host, u.Path, status)
 	}
 	if status >= 500 || status == 429 {
-		return retryf("GitHub answered %d for %s", status, u.Path)
+		return retryf(nil, "GitHub answered %d for %s", status, u.Path)
 	}
 	return fixf("outfit update --check", "GitHub answered %d for %s", status, u.Path)
 }
@@ -242,7 +297,7 @@ func (c *Client) open(ctx context.Context, want *Version) (*source, error) {
 		if want != nil {
 			rel = "tags/v" + want.String()
 		}
-		raw, err := c.get(ctx, c.api()+"/releases/"+rel, "application/vnd.github+json", true, c.metaTimeout(), maxMeta)
+		raw, err := c.get(ctx, c.api()+"/releases/"+rel, "application/vnd.github+json", true, c.metaTimeout(), 0, maxMeta)
 		if err != nil {
 			return nil, err
 		}
@@ -270,22 +325,23 @@ func (c *Client) open(ctx context.Context, want *Version) (*source, error) {
 }
 
 // file downloads one asset of the release.
-func (s *source) file(ctx context.Context, name string, timeout time.Duration, limit int64) ([]byte, error) {
+func (s *source) file(ctx context.Context, name string, timeout, idle time.Duration, limit int64) ([]byte, error) {
 	if s.c.Token.Value != "" {
 		id, ok := s.assets[name]
 		if !ok {
 			return nil, fixf("", "release %s has no file named %s", s.tag, name)
 		}
-		return s.c.get(ctx, fmt.Sprintf("%s/releases/assets/%d", s.c.api(), id), "application/octet-stream", true, timeout, limit)
+		return s.c.get(ctx, fmt.Sprintf("%s/releases/assets/%d", s.c.api(), id), "application/octet-stream", true, timeout, idle, limit)
 	}
-	return s.c.get(ctx, s.pub+"/"+name, "", false, timeout, limit)
+	return s.c.get(ctx, s.pub+"/"+name, "", false, timeout, idle, limit)
 }
 
 var sumLine = regexp.MustCompile(`^([0-9a-f]{64})  (\S+)$`)
 
 // archiveFor picks the one archive for plat out of checksums.txt, and its hash.
 func archiveFor(checksums []byte, plat string) (name, sum string, v Version, err error) {
-	re := regexp.MustCompile(`^outfit_([0-9]+\.[0-9]+\.[0-9]+)_` + regexp.QuoteMeta(plat) + `\.tar\.gz$`)
+	num := `(?:0|[1-9][0-9]*)`
+	re := regexp.MustCompile(`^outfit_(` + num + `\.` + num + `\.` + num + `)_` + regexp.QuoteMeta(plat) + `\.tar\.gz$`)
 	n := 0
 	for _, line := range strings.Split(strings.TrimRight(string(checksums), "\n"), "\n") {
 		m := sumLine.FindStringSubmatch(strings.TrimRight(line, "\r"))
@@ -295,7 +351,11 @@ func archiveFor(checksums []byte, plat string) (name, sum string, v Version, err
 		if vm := re.FindStringSubmatch(m[2]); vm != nil {
 			n++
 			name, sum = m[2], m[1]
-			v, _ = ParseVersion(vm[1])
+			pv, perr := ParseVersion(vm[1])
+			if perr != nil {
+				return "", "", Version{}, fixf("", "checksums.txt lists %s, which is not a version outfit understands", m[2])
+			}
+			v = pv
 		}
 	}
 	if n != 1 {
@@ -319,7 +379,7 @@ func (c *Client) Latest(ctx context.Context) (Version, error) {
 	if s.tag != "" {
 		return ParseVersion(s.tag)
 	}
-	sums, err := s.file(ctx, "checksums.txt", c.metaTimeout(), maxMeta)
+	sums, err := s.file(ctx, "checksums.txt", c.metaTimeout(), 0, maxMeta)
 	if err != nil {
 		return Version{}, err
 	}
@@ -353,11 +413,11 @@ func (c *Client) verified(ctx context.Context, want *Version) (*release, error) 
 	if err != nil {
 		return nil, err
 	}
-	sums, err := s.file(ctx, "checksums.txt", c.metaTimeout(), maxMeta)
+	sums, err := s.file(ctx, "checksums.txt", c.metaTimeout(), 0, maxMeta)
 	if err != nil {
 		return nil, err
 	}
-	sig, err := s.file(ctx, "checksums.txt.minisig", c.metaTimeout(), maxMeta)
+	sig, err := s.file(ctx, "checksums.txt.minisig", c.metaTimeout(), 0, maxMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -375,6 +435,12 @@ func (c *Client) verified(ctx context.Context, want *Version) (*release, error) 
 		if tv, _ := ParseVersion(s.tag); tv != v {
 			return nil, fixf("", "release %s holds %s, which is not its own build; nothing was installed", s.tag, name)
 		}
+	}
+	if s.tag == "" {
+		// Token-less path: the checksum list came from "latest"; fetch the archive from
+		// the exact version it names, so a release published in between cannot make the
+		// archive 404 under the old name.
+		s.pub = c.base() + "/releases/download/v" + v.String()
 	}
 	return &release{s: s, name: name, sum: sum, v: v}, nil
 }
@@ -397,7 +463,7 @@ func (c *Client) Fetch(ctx context.Context, want *Version) (*Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	archive, err := r.s.file(ctx, r.name, c.downloadTimeout(), maxArchive)
+	archive, err := r.s.file(ctx, r.name, c.downloadTimeout(), c.idleTimeout(), maxArchive)
 	if err != nil {
 		return nil, err
 	}

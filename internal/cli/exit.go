@@ -12,7 +12,7 @@ const (
 	ExitOK         = 0
 	ExitError      = 1
 	ExitUsage      = 2 // usage, or unknown profile/key
-	ExitNeedsHuman = 3 // conflict or quarantine
+	ExitNeedsHuman = 3 // conflict or quarantine, or a folder outfit cannot write to (update)
 	ExitOutOfSync  = 4 // out of sync or stale (status only)
 )
 
