@@ -29,8 +29,9 @@ outfit update --json             # every command takes --json
    paths, duplicates). Other plain files are skipped, never extracted: an installed outfit
    cannot be changed, so a later release may add a man page without breaking every update.
    (`install.sh`, which is fetched fresh each time, is stricter.) With a token it also requires
-   the archive to be the build the release is named for, so an old, validly signed build
-   cannot be re-uploaded under a newer release. "Is there a newer release?" is also
+   the archive to be the build the API says the release is named for, which narrows (does not close)
+   re-uploading an old, validly signed build under a newer release: neither the release's tag
+   nor "latest" is part of what the signature covers, on either path (a known limit, see `security.md`). "Is there a newer release?" is also
    answered from the signed checksum list, so an unsigned answer cannot make outfit
    believe it is up to date (the banner is the one exception: it is only a hint). A
    development build has no version to compare and refuses a plain `outfit update` (it
@@ -45,7 +46,7 @@ outfit update --json             # every command takes --json
    printed (exit 3; outfit never uses `sudo`). It installs the latest release into
    `~/.local/bin`; put that folder before the old one on your PATH and run `outfit init`
    in each repository, so the hook shims point at the new copy:
-   `curl -fsSL -H "Authorization: Bearer $(gh auth token)" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | OUTFIT_INSTALL_DIR="$HOME/.local/bin" sh`.
+   `curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | OUTFIT_INSTALL_DIR="$HOME/.local/bin" sh`.
 5. **One at a time.** A second `outfit update` while one runs exits 0 with a note.
 
 ## The update banner
@@ -87,7 +88,7 @@ testscript run sees a banner; the banner is tested through `cli.Execute` with
 
 | Variable | Effect |
 |---|---|
-| `OUTFIT_GITHUB_TOKEN` | A GitHub token that can read the repository (first in the lookup order above). |
+| `OUTFIT_GITHUB_TOKEN` | A GitHub token that can read the repository. The only token outfit ever uses, and only when set (the public download needs none). |
 | `OUTFIT_NO_UPDATE_CHECK` | Set to anything to switch the banner off. |
 | `OUTFIT_BASE_URL` | Public download base. For tests; same meaning as in `install.sh`. |
 | `OUTFIT_API_URL` | API base. For tests; same meaning as in `install.sh`. |

@@ -49,8 +49,8 @@ https.
    not match the pinned hash, the script does not suggest skipping anything.
    With a token, the script also requires the archive to be the build the release is
    named for, so an old, validly signed build cannot be re-uploaded under a newer
-   release; the public URL path cannot check that, because GitHub's "latest" redirect
-   is not signed.
+   release (a narrowing, not a seal: the tag it compares with is the API's, and no tag or "latest"
+   pointer is part of what the signature covers). The public URL path has no such comparison.
 5. Looks inside the archive and accepts only `outfit`, `LICENSE`, `README.md` and
    `NOTICE`, as plain files.
 6. Puts `outfit` next to the existing one (the folder `command -v outfit` finds), or

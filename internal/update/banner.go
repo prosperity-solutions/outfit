@@ -40,9 +40,9 @@ func CacheDir(getenv func(string) string) string {
 type cacheFile struct {
 	CheckedAt time.Time `json:"checked_at"`
 	Latest    string    `json:"latest,omitempty"`
-	// Failed marks a check that got a definite error (no token, offline, 404): it
+	// Failed marks a check that got a definite error (offline, a rate limit, 404): it
 	// is not retried for FailureBackoff, so a user who can never reach the release
-	// does not pay a network round trip and a `gh` process on every command.
+	// does not pay a network round trip on every command.
 	Failed bool `json:"failed,omitempty"`
 }
 
@@ -190,8 +190,8 @@ func (b *Banner) Start(ctx context.Context) {
 // Finish returns the banner line, or "" when there is nothing to say. It waits for
 // the check only as long as the budget leaves; a check that is not done, or was cut
 // off by the budget, is skipped and tried again next time, with nothing cached. A
-// successful check is cached as an answer; a definite failure (offline, 404, no
-// token) only as a back-off marker (Failed), never as an answer.
+// successful check is cached as an answer; a definite failure (offline, 404, a rate
+// limit) only as a back-off marker (Failed), never as an answer.
 func (b *Banner) Finish() string {
 	if b.skip {
 		return ""
@@ -219,7 +219,7 @@ func (b *Banner) Finish() string {
 		}
 		if r.err != nil {
 			// A check cut off by the budget is not a verdict: try again next time.
-			// Anything else (offline, 404, no token) is remembered for a while.
+			// Anything else (offline, 404, a rate limit) is remembered for a while.
 			if !IsTimeout(r.err) {
 				_ = writeCache(b.Dir, cacheFile{CheckedAt: b.Now(), Failed: true})
 			}

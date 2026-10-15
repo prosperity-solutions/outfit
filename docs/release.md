@@ -47,7 +47,7 @@ version → build → smoke (4 runners) ┐
    state, flip to published, read it back. Any failure leaves a draft, which users
    cannot see; re-running the job tops it up.
 5. **verify.** On the same four runners, the real install exactly as a teammate runs
-   it (the script downloaded from raw.githubusercontent.com with the workflow token, its
+   it (the script downloaded from raw.githubusercontent.com with no token, its
    SHA-256 logged, then run; the `curl | sh` pipe form is covered by `tests/install-test.sh`),
    retried every minute for up to ten minutes because raw.githubusercontent.com caches
    for about five. It asserts `outfit version` equals the tag, then downloads this runner's
@@ -131,8 +131,7 @@ jedisct1/minisign's own static build and runs it only when its SHA-256 equals th
 written in the script (`BOOT_LINUX_*` and `BOOT_MACOS_*`, at the top). Those builds
 are release files upstream could replace; if it ever does, installs without minisign
 stop (the hash no longer matches) until the pin is updated, and CI's real-download test
-is what shows it first (on pushes to `main` for the macOS pin, on pull requests for
-Linux; there is no scheduled run). To move to a newer minisign:
+is what shows it first (on every pull request and every push to `main`, Linux and macOS; there is no scheduled run). To move to a newer minisign:
 download the release files, verify them with the upstream key (printed in
 [minisign's README](https://github.com/jedisct1/minisign#readme)), run
 `shasum -a 256` on them, list the archive (`tar -tzf`, `unzip -l`) to check that the

@@ -303,8 +303,10 @@ check "  and the token is never printed" bash -c '! grep -q "$1" "$2"' _ "$TOKEN
 rm -rf "$REL/pub"
 publish_api
 D=$WORK/api-badtoken
-run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" 'GH_TOKEN=bad token"quote'
+run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" 'OUTFIT_GITHUB_TOKEN=bad token"quote'
 check "a token with odd characters is ignored (and the public URLs are tried)" rc_is 1
+check "  and says so, without printing it" out_has "ignoring OUTFIT_GITHUB_TOKEN"
+check "  and never prints it" bash -c '! grep -q "quote" "$1"' _ "$WORK/out"
 check "  with the hint" out_has "set OUTFIT_GITHUB_TOKEN"
 
 # ── minisign ────────────────────────────────────────────────────────────────

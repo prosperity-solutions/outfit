@@ -2,8 +2,8 @@
 
 Everything here was **verified against real git 2.43 on Linux** unless marked
 otherwise. macOS (Apple git and Homebrew git) was **not** tested when this
-was written; CI exercises it on every PR (Apple git) and on every push to `main`
-(Homebrew git, Intel). Treat every claim as a hypothesis that a test must pin; when git
+was written; CI exercises it on every PR and every push to `main` (Apple git,
+Homebrew git, the Intel Mac). Treat every claim as a hypothesis that a test must pin; when git
 disagrees with this file, write the failing test, adapt the code, and record the
 real behaviour here.
 

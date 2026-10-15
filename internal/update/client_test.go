@@ -63,7 +63,7 @@ func TestFetchThroughTheAPIWithAToken(t *testing.T) {
 	f.Private, f.Token = true, "ghp_secrettoken123"
 	f.Add("0.2.0")
 	c := newClient(f)
-	c.Token = Token{Value: "ghp_secrettoken123", Source: "GH_TOKEN"}
+	c.Token = Token{Value: "ghp_secrettoken123", Source: "OUTFIT_GITHUB_TOKEN"}
 
 	p, err := c.Fetch(context.Background(), nil)
 	if err != nil || p.Version.String() != "0.2.0" {
@@ -114,8 +114,27 @@ func TestPrivateForkErrorsNameTheFix(t *testing.T) {
 	}
 }
 
+func TestStatusErrorsWithoutATokenSayWhatHappened(t *testing.T) {
+	c := &Client{}
+	u := &url.URL{Scheme: "https", Host: "github.com", Path: "/x/checksums.txt"}
+	for status, want := range map[int]string{404: "that release does not exist", 403: "a rate limit or a proxy", 401: "a rate limit or a proxy"} {
+		err := c.statusError(u, status, false)
+		var ue *Error
+		if !errors.As(err, &ue) || !strings.Contains(ue.Msg, want) || strings.Contains(ue.Msg+ue.Fix, "gh auth") {
+			t.Errorf("HTTP %d without a token: %#v", status, err)
+		}
+		if status != 404 && !strings.Contains(ue.Fix, "OUTFIT_GITHUB_TOKEN") {
+			t.Errorf("HTTP %d: the fix must name OUTFIT_GITHUB_TOKEN: %q", status, ue.Fix)
+		}
+	}
+	var ue *Error
+	if err := c.statusError(u, 503, false); !errors.As(err, &ue) || !ue.Retryable {
+		t.Errorf("a 5xx is worth a retry: %v", err)
+	}
+}
+
 func TestTokenIsNeverSentInTheClear(t *testing.T) {
-	c := &Client{APIURL: "http://example.invalid/api", Token: Token{Value: "ghp_x", Source: "GH_TOKEN"}, Keys: testkit.NewFakeRelease(t, plat).Keys, GOOS: "linux", GOARCH: "amd64"}
+	c := &Client{APIURL: "http://example.invalid/api", Token: Token{Value: "ghp_x", Source: "OUTFIT_GITHUB_TOKEN"}, Keys: testkit.NewFakeRelease(t, plat).Keys, GOOS: "linux", GOARCH: "amd64"}
 	_, err := c.Fetch(context.Background(), nil)
 	if err == nil || !strings.Contains(err.Error(), "refusing to send a GitHub token") {
 		t.Fatalf("err = %v", err)
@@ -308,7 +327,7 @@ func TestTokenGoesOnlyToTheRealAPIHostOrThisMachine(t *testing.T) {
 	}
 	// And the client enforces it: a token with an https API URL elsewhere is refused
 	// before any request is made.
-	c := &Client{APIURL: "https://evil.example/api", Token: Token{Value: "ghp_x", Source: "GH_TOKEN"}, Keys: testkit.NewFakeRelease(t, plat).Keys, GOOS: "linux", GOARCH: "amd64"}
+	c := &Client{APIURL: "https://evil.example/api", Token: Token{Value: "ghp_x", Source: "OUTFIT_GITHUB_TOKEN"}, Keys: testkit.NewFakeRelease(t, plat).Keys, GOOS: "linux", GOARCH: "amd64"}
 	if _, err := c.Latest(context.Background()); err == nil || !strings.Contains(err.Error(), "refusing to send a GitHub token") {
 		t.Fatalf("err = %v", err)
 	}
@@ -320,7 +339,7 @@ func TestRedirectToPlainHTTPIsRefused(t *testing.T) {
 	f.Add("0.2.0")
 	f.Break.InsecureRedirect = true
 	c := newClient(f)
-	c.Token = Token{Value: "ghp_ok", Source: "GH_TOKEN"}
+	c.Token = Token{Value: "ghp_ok", Source: "OUTFIT_GITHUB_TOKEN"}
 	_, err := c.Fetch(context.Background(), nil)
 	if err == nil || !strings.Contains(err.Error(), "refusing a redirect") {
 		t.Fatalf("err = %v", err)

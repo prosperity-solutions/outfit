@@ -2,9 +2,8 @@
 """Assert that no GitHub Actions job can run on a draft pull request.
 
 Draft PRs are where an agentic contributor's intermediate commits land, and
-`.github/workflows/ci.yml` is expensive to run on a private repository: a
-pull_request run reaches several macOS legs, and macOS minutes count about ten
-times against the account's quota. The house workflow (AGENTS.md -> PR Workflow)
+`.github/workflows/ci.yml` is expensive to run: a pull_request run reaches
+several macOS legs and a long fault-injection and property suite. The house workflow (AGENTS.md -> PR Workflow)
 reviews locally first and marks the PR ready for review second, so a draft has by
 definition not earned a CI run yet.
 
@@ -277,8 +276,8 @@ def check_doc(doc, name):
 
 
 # The signing secrets (MINISIGN_*, MACOS_*) belong to release.yml alone, and
-# release.yml must only ever run on a push to main. In a private repository a
-# pull request from a branch in the same repo receives repository secrets, so a
+# release.yml must only ever run on a push to main. A pull request from a branch in
+# the same repository (a collaborator's, not a fork's) receives repository secrets, so a
 # later `secrets.X` in any other workflow would put the release key within reach
 # of whoever opens a PR. Nothing else checks this.
 SECRETS_HOME = "release.yml"
@@ -662,7 +661,7 @@ def main(argv):
             print(
                 "\nThe signing secrets belong to .github/workflows/release.yml alone, which runs "
                 "only on pushes to main (docs/release.md). A pull request from a branch in this "
-                "private repo receives repository secrets."
+                "repository receives repository secrets."
             )
         return 1
 

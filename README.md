@@ -155,6 +155,7 @@ MIT licensed.
 
 Issues and pull requests are welcome. Every change here goes through one required workflow
 ([docs/ship.md](docs/ship.md)) whose check, `Ship Workflow`, looks for a stamp that only that workflow
-produces: a pull request from outside it stays red until a maintainer adds the `no-ship` label, so
-open an issue first for anything big. To report a security problem privately, see
+produces: a pull request from outside it stays red until a maintainer adds the `no-ship` label (the check reads
+the labels when it starts, so a push after the label is what turns it green), so open an issue first
+for anything big. To report a security problem privately, see
 [SECURITY.md](SECURITY.md).

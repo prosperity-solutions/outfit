@@ -5,8 +5,9 @@ about the installer, the updater, the release signing or anything that could ove
 bytes are welcome and taken seriously.
 
 **Report privately** through GitHub: *Security* tab > *Report a vulnerability*
-(<https://github.com/prosperity-solutions/outfit/security/advisories/new>). Please do not open a public
-issue for something exploitable. Include what you ran, what you expected and what happened; a
+(<https://github.com/prosperity-solutions/outfit/security/advisories/new>). If that button is not there
+yet, open an issue that says only that you have a security report (no details), and a maintainer will
+arrange a private channel. Please do not put anything exploitable in a public issue. Include what you ran, what you expected and what happened; a
 reproduction in a throwaway repository is the fastest way to a fix.
 
 Which release is affected: the latest one (`outfit version`), and anything built from `main`. Older

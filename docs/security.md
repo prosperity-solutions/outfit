@@ -107,3 +107,17 @@ default branch:
 Releases push **tags** only, so the ruleset does not touch them. Change it under Settings > Rules; to
 recreate it, `gh api -X POST repos/<owner>/<repo>/rulesets` with the JSON of the existing one
 (`gh api repos/<owner>/<repo>/rulesets/<id>`).
+
+## Known limits
+
+- **Nothing signed says which release is the latest.** The signature covers `checksums.txt` (and so the
+  archive's hash and its version in the file name), not a "this is the newest release" statement. Someone
+  with write access to the releases could put an older signed build under a newer release or mark an
+  older release as latest: a fresh install gets that old, genuinely signed build, and `outfit update`
+  says "up to date". The token path's tag comparison narrows this a little; a seal would need the
+  version in the signed data. Write access to the repository is what an attacker would need, which is
+  why the ruleset, the `release` environment and the stamp rules above matter.
+- **The stamp is a workflow nudge, not a gate against strangers.** Its key is in the public source, and a
+  pull request from a fork runs its own copy of `ci.yml`: a green `Ship Workflow` or `all-green` on a
+  fork's pull request proves nothing. Merging needs write access, so the model holds through review.
+- The git history carries the maintainer's commit address.

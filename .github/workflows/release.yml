@@ -373,7 +373,7 @@ jobs:
           fi
 
   # ── 3b. Main's own CI must be green for this commit ──────────────────────
-  # ci.yml runs the full test matrix (every git version, both macOS legs) on the
+  # ci.yml runs the full test matrix (every git version, all three macOS legs) on the
   # same push. Publishing waits for its `all-green` check, so a red main never
   # produces a release.
   ci:
