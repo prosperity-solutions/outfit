@@ -126,7 +126,21 @@ func (m *model) swapped() []string {
 
 func (m *model) statusClean() bool {
 	out, err := m.r.GitErr("status", "--short")
-	return err == nil && strings.TrimSpace(out) == ""
+	if err != nil {
+		return false
+	}
+	for _, l := range strings.Split(out, "\n") {
+		l = strings.TrimSpace(l)
+		// git 2.36 moves outfit's link aside to `<path>~cruft` when a merge or rebase stops on a
+		// swapped path (git-behavior row 42); `--abort` runs no hook, so it stays untracked until
+		// the next sync removes it. The commit guard refuses it (swaps-cruft-guard.txtar), so it
+		// is not "dirty" in the sense this invariant protects.
+		if l == "" || (strings.HasPrefix(l, "?? ") && strings.HasSuffix(l, "~cruft")) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // ---------------- the steps ----------------
