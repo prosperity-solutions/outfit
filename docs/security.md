@@ -14,7 +14,7 @@ only the repository owner can switch on.
 | The tag is created through the API with the job's token, not `git push` | no git credential is stored in the checkout | review |
 | `timeout-minutes` on every job | a hung job does not hold a runner (or a secret) for six hours | review |
 | No `pull_request_target`, no untrusted text in a `run:` line (values go through `env:`) | template injection | `zizmor` (dangerous-triggers, template-injection) |
-| `GOTOOLCHAIN=local`, `go mod verify`, `govulncheck` | Go never fetches a toolchain on its own; modules match the checksum database; known-vulnerable code fails CI | `lint` job |
+| `go mod verify`, `govulncheck`; Go's toolchain comes from `go.mod` through setup-go (which also sets `GOTOOLCHAIN=local`, so Go never fetches another one) | modules match the checksum database; known-vulnerable code fails CI; the release is built with the Go version CI tested | `lint` job |
 | Tools are pinned: `go run tool@vX.Y.Z`, `golangci-lint` by version, Python packages by hash (`scripts/ci/*-requirements.txt`) | nothing floats to "latest" | review |
 
 These checks are hygiene for honest changes. They run from the pull request's own copy of the

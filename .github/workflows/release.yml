@@ -34,8 +34,6 @@ defaults:
 
 env:
   REPO: prosperity-solutions/outfit
-  # Go never downloads a different toolchain than setup-go installed from go.mod.
-  GOTOOLCHAIN: local
 
 jobs:
   # ── 1. What version, if any ───────────────────────────────────────────────
@@ -278,7 +276,9 @@ jobs:
           [ "$(find out -type f | wc -l)" -eq 5 ] || { echo "::error::expected 3 archives, checksums.txt and its signature in out/"; exit 1; }
           if [ -f dist/CHANGELOG.md ]; then cp dist/CHANGELOG.md notes.md; else printf 'Release %s\n' "$TAG" > notes.md; fi
           # The release text travels as an artifact too: publish checks it against this hash.
-          echo "sha256=$(sha256sum notes.md | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          notes_hash=$(shasum -a 256 notes.md | awk '{print $1}')
+          [ -n "$notes_hash" ] || { echo "::error::could not hash notes.md"; exit 1; }
+          echo "sha256=$notes_hash" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

@@ -19,10 +19,6 @@ on:
 permissions:
   contents: read # checkout; nothing in this workflow writes to the repository
 
-# Go never downloads a different toolchain than the one setup-go installed from go.mod.
-env:
-  GOTOOLCHAIN: local
-
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -144,7 +140,7 @@ jobs:
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: Workflows do not run on draft PRs
         run: |
-          pip install --require-hashes --only-binary=:all: -r scripts/ci/pyyaml-requirements.txt
+          pip install --require-hashes --only-binary ':all:' -r scripts/ci/pyyaml-requirements.txt
           python3 tests/validate-workflow-gates.py --selftest
           python3 tests/validate-workflow-gates.py
       - name: goreleaser check
