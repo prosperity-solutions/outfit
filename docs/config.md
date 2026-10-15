@@ -51,6 +51,22 @@ continuation), so outfit users and teammates running
 `git config -f .outfit/config --get …` see the same values; a test compares the two
 over a corpus.
 
+## `[outfit "profile"] replace`: directories a profile replaces
+
+A profile's own `profile.config` (not `.outfit/config`, never a toggle: it does not reach `outfit get`, `git -c`
+or the resolution order below) may name directories it replaces as a whole, one `replace` line each:
+
+```ini
+[outfit "profile"]
+    replace = .claude/skills
+    replace = docs/agents
+```
+
+While that profile is active, every tracked file below each directory is hidden for you, the team's later
+additions included, and the profile's files at paths the repository tracks are linked in. See
+[profiles.md](profiles.md). A path is clean and relative (no `..`, not inside `.git` or `.outfit`); one
+directory may not be inside another.
+
 ## Values
 
 A toggle is a string. By convention it is exactly `on` or `off`, and hooks compare

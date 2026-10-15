@@ -37,6 +37,14 @@ type State struct {
 	// AuthorProfiles are committed profiles kept on disk one by one (`outfit author on <name>`),
 	// in addition to the active one; ignored while Author (all of them) is on.
 	AuthorProfiles []string `json:"author_profiles,omitempty"`
+	// ReplaceDirs are the directories the active profile replaces as a whole
+	// (`[outfit "profile"] replace = <dir>`): the guard keeps staging out of them and uninstall
+	// looks in them. Schema 1 stays: an older outfit ignores the field.
+	ReplaceDirs []string `json:"replace_dirs,omitempty"`
+	// ReplaceSeen is, per replaced directory, a digest of the team's tracked files under it
+	// (path and blob) when the replacement was made or last acknowledged: a pull that changes
+	// them is told once, not once per file (`outfit ack <dir>` clears it).
+	ReplaceSeen map[string]string `json:"replace_seen,omitempty"`
 	// CommittedProfiles remembers that the repository has committed profiles, so
 	// the no-op sync path can keep inactive ones hidden without asking git.
 	CommittedProfiles bool `json:"committed_profiles,omitempty"`

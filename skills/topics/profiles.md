@@ -48,6 +48,15 @@ the git dir for a local or worktree one. So `git status` stays clean and `git ad
   directory** needs `git add --sparse -f .outfit/profiles/<name>`.
 - The pre-commit guard refuses a commit that stages a swapped path or a symlink at one.
 
+## Replacing a whole directory
+
+A profile can own a directory: its `profile.config` says `[outfit "profile"]` / `replace = .claude/skills`,
+and its files at the same relative paths replace the team's. While it is active every tracked file below
+the directory is hidden for you (the team's later additions too), the profile's files at tracked paths are
+linked in, `git status` stays clean and the guard refuses to commit anything staged below it. A team change
+there is reported once (`outfit ack <dir>`). `outfit status` has a `dirs` line. outfit refuses to start, to
+stop, or to uninstall while uncommitted, staged or untracked work is in the way: it names the files.
+
 ## What `outfit sync` does per path
 
 | What is there | What sync does |

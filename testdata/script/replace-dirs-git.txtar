@@ -1,0 +1,112 @@
+# Replaced directories under the things git does to a tree: a pull that adds or changes files
+# below one, a checkout, a merge conflict, uncommitted work, staging, and `uninstall`.
+fixture repo team upstream
+cd repo
+exec mkdir -p skills
+exec sh -c 'echo team-a > skills/a.md; echo team-b > skills/b.md'
+exec git add skills
+exec git commit -qm 'docs: team skills'
+exec git push -q origin HEAD:main
+exec mkdir -p .outfit/profiles/mine/skills
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = skills\n" > .outfit/profiles/mine/profile.config'
+exec sh -c 'echo my-a > .outfit/profiles/mine/skills/a.md'
+exec git add --sparse -f .outfit/profiles/mine
+exec git commit -qm 'feat: replace skills'
+exec git push -q origin HEAD:main
+outfit init
+outfit use mine
+! exists skills/b.md
+
+# --- the team adds and changes files below it, I pull ---------------------------------------
+cd ..
+exec git clone -q repo-upstream.git other
+cd other
+exec git config user.email a@b
+exec git config user.name a
+exec sh -c 'echo team-c > skills/c.md; echo team-b2 > skills/b.md'
+exec git add -A
+exec git commit -qm 'docs: more team skills'
+exec git push -q origin HEAD:main
+cd ../repo
+exec git pull -q --ff-only origin main
+# still hidden (the pattern does it, no sync needed), nothing dirty, my link stands
+! exists skills/c.md
+! exists skills/b.md
+islink skills/a.md .outfit/profiles/mine/skills/a.md
+exec git status --short
+! stdout .
+# ... and I am told once, not once per file
+outfit sync
+stderr 'the team changed files below it'
+stderr 'outfit ack skills'
+! outfit status
+stdout 'dirs     replaced by the profile'
+outfit ack skills
+stdout 'new base is recorded'
+outfit sync
+! stderr 'the team changed'
+outfit ack skills
+stdout 'nothing to acknowledge'
+outfit diff skills
+stdout 'a directory your profile replaces'
+
+# --- a checkout that changes files below it -------------------------------------------------
+exec git checkout -q -b side
+exec git commit -q --allow-empty -m 'chore: side'
+exec git checkout -q main
+islink skills/a.md .outfit/profiles/mine/skills/a.md
+! exists skills/b.md
+exec git status --short
+! stdout .
+
+# --- uncommitted work below it stops switching to it, and staged work too -------------------
+outfit use base
+exists skills/b.md
+exec sh -c 'echo wip >> skills/b.md'
+! outfit use mine
+stderr 'files below skills have uncommitted changes'
+stderr 'skills/b.md'
+exists skills/b.md
+exec git stash -q
+exec sh -c 'echo staged >> skills/b.md'
+exec git add skills/b.md
+! outfit use mine
+stderr 'files below skills are staged'
+exec git reset -q
+exec git checkout -q -- skills/b.md
+outfit use mine
+! exists skills/b.md
+
+# --- a file written below it while hidden is the person's: it is not lost ------------------
+exec mkdir -p skills
+exec sh -c 'echo agent > skills/new.md'
+! outfit use base
+stderr 'are in skills'
+stderr 'skills/new.md'
+exists skills/new.md
+! outfit uninstall
+stderr 'skills/new.md'
+exists skills/new.md
+exec rm skills/new.md
+outfit use base
+exists skills/b.md
+
+# --- the guard: nothing below a replaced directory is committed from a checkout that hides it --
+outfit use mine
+exec sh -c 'echo agent > skills/new.md'
+exec git add --sparse -f skills/new.md
+! exec git commit -qm 'oops'
+stderr 'skills/new.md is below skills, which your active profile replaces'
+exec git reset -q
+exec rm skills/new.md
+exec git status --short
+! stdout .
+
+# --- uninstall puts everything back ---------------------------------------------------------
+outfit uninstall
+exists skills/b.md
+exists skills/a.md
+! islink skills/a.md
+exec git status --short
+! stdout .
+! exists .git/info/sparse-checkout

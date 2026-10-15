@@ -124,15 +124,44 @@ type Facts struct {
 	// reverted behind its back: an editor's save is not absorbed into the profile's
 	// (tracked) file until the operation is over.
 	GitBusy string
+	// Dirs describes each directory the active profile replaces (Want.ReplaceDirs).
+	Dirs map[string]DirFacts
+	// DirIssues are reasons a replace declaration cannot be honoured (a nested pair, a path that is
+	// a tracked file or link, a submodule inside, too many files): each refuses the whole sync.
+	DirIssues []string
+	// UnhideStrays are, per directory that the patterns hide now and will no longer hide, the
+	// regular files found on disk below it: git would leave them where they are and call that
+	// success when the directory comes back.
+	UnhideStrays map[string][]string
 	// SameProfile says the active profile is the one the last sync recorded: a path it
 	// no longer lists then went away from the profile itself (removed), not
 	// because of a switch.
 	SameProfile bool
 }
 
+// DirFacts is what sync learned about one replaced directory.
+type DirFacts struct {
+	Tracked int    // tracked files below it
+	Digest  string // of their paths and blobs
+	Seen    string // the digest recorded when the replacement was made or acknowledged
+	Hidden  bool   // the patterns in force already hide it
+	// Visible are tracked files below it that git has NOT hidden (a merge that touched them
+	// clears the bit): the patterns must be applied again.
+	Visible []string
+	// Unmerged says a merge conflict has files below it: nothing about it is touched.
+	Unmerged bool
+	// Staged and Dirty are changes below it, filled only when the directory is about to be hidden:
+	// hiding would take them off disk (docs/git-behavior.md rows 35 and 40).
+	Staged, Dirty []string
+}
+
 // Want is the desired state, derived from the active profile.
 type Want struct {
 	Swaps []Swap
+	// ReplaceDirs are the directories the profile replaces as a whole: every tracked file below
+	// them is hidden (Sparse says so), the profile's own files are linked in. Sorted, clean, not
+	// nested in each other.
+	ReplaceDirs []string
 	// Sparse is the managed sparse-checkout text, or "" when sparse checkout is not
 	// needed (nothing swapped, nothing to hide).
 	Sparse  string
@@ -229,7 +258,46 @@ func Plan(w Want, f Facts) []Action {
 			Reason: "profile files are staged but not committed (" + strings.Join(firstN(f.StagedProfiles, 3), ", ") + "): hiding the inactive profiles would take them off disk, and the staged copy is the only one",
 			Fix:    "git commit -m 'feat: add profile'   (or: outfit author on, which keeps every profile on disk)"})
 	}
+	for _, issue := range f.DirIssues {
+		refuse = append(refuse, Action{Kind: Refuse, Reason: issue,
+			Fix: "fix the `replace` lines of the profile (profile.config, [outfit \"profile\"] section), then: outfit sync"})
+	}
 	var skips, conflicts []Action
+	var dirStale []Action
+	reapply := false
+	for _, d := range w.ReplaceDirs {
+		df := f.Dirs[d]
+		switch {
+		case df.Unmerged:
+			conflicts = append(conflicts, Action{Kind: Conflict, Path: d,
+				Reason: d + " has files in the middle of a merge conflict: outfit leaves the directory alone until it is resolved",
+				Fix:    "resolve it, then: git add --sparse " + shq(d) + " && git commit, then outfit sync"})
+			continue
+		case !df.Hidden && len(df.Staged) > 0:
+			refuse = append(refuse, Action{Kind: Refuse, Path: d,
+				Reason: "files below " + d + " are staged (" + strings.Join(firstN(df.Staged, 3), ", ") + "): replacing the directory would take them off disk, and the staged copy is the only one",
+				Fix:    "git commit -m 'wip'   (or git restore --staged " + shq(d) + "), then: outfit sync"})
+		case !df.Hidden && len(df.Dirty) > 0:
+			refuse = append(refuse, Action{Kind: Refuse, Path: d,
+				Reason: "files below " + d + " have uncommitted changes (" + strings.Join(firstN(df.Dirty, 3), ", ") + "): replacing the directory would leave the tree half-switched",
+				Fix:    "git stash push -- " + shq(d) + "   (or commit them), then: outfit sync"})
+		}
+		if df.Hidden && len(df.Visible) > 0 {
+			reapply = true
+		}
+		if df.Seen != "" && df.Digest != "" && df.Seen != df.Digest {
+			dirStale = append(dirStale, Action{Kind: Stale, Path: d,
+				Reason: d + ": the team changed files below it (" + fmt.Sprint(df.Tracked) + " tracked now) since outfit replaced it; your profile's copy stands. When that is fine: outfit ack " + shq(d),
+				Fix:    "git log --stat -- " + shq(d)})
+		}
+	}
+	for _, d := range sortedDirKeys(f.UnhideStrays) {
+		if len(f.UnhideStrays[d]) > 0 && !containsStr(w.ReplaceDirs, d) {
+			refuse = append(refuse, Action{Kind: Refuse, Path: d,
+				Reason: "regular files that are not outfit's links are in " + d + ", which the profile no longer replaces (" + strings.Join(firstN(f.UnhideStrays[d], 3), ", ") + "): git would leave them half-present when the team's files come back",
+				Fix:    "move or commit them, then: outfit sync"})
+		}
+	}
 	inConflict := map[string]bool{} // paths in the middle of a merge: nothing about them is touched
 	for _, p := range paths {
 		pf := f.Paths[p]
@@ -274,6 +342,7 @@ func Plan(w Want, f Facts) []Action {
 	var out []Action
 	out = append(out, skips...)
 	out = append(out, conflicts...)
+	out = append(out, dirStale...)
 
 	needSparse := w.Sparse != "" || len(want) > 0
 	if needSparse && !f.ExpectFiles {
@@ -335,7 +404,7 @@ func Plan(w Want, f Facts) []Action {
 	}
 
 	switch {
-	case w.Sparse != "" && (!f.SparseOn || f.SparseText != w.Sparse):
+	case w.Sparse != "" && (!f.SparseOn || f.SparseText != w.Sparse || reapply):
 		out = append(out, Action{Kind: WriteSparse, Text: w.Sparse})
 	case w.Sparse == "" && f.SparseOn && managed(f.SparseText):
 		out = append(out, Action{Kind: DisableSparse})
@@ -461,6 +530,24 @@ func firstN(s []string, n int) []string {
 }
 
 func sortedKeys(m map[string]PathFacts) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func containsStr(s []string, x string) bool {
+	for _, v := range s {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedDirKeys(m map[string][]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)

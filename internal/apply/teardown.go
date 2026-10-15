@@ -92,6 +92,27 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 		}
 	}
 
+	// A directory the profile replaced holds the team's files only in git; a regular file the person
+	// (or an agent) wrote below it while it was hidden is theirs, and sparse checkout coming off would
+	// leave it half-present ("already present, not updated"). Stop and say where.
+	replSparse, _ := readInside(w.GitDir, "info/sparse-checkout")
+	replaced := append([]string(nil), st.ReplaceDirs...)
+	if parsed, ok := plan.ParseSparse(string(replSparse)); ok {
+		for _, d := range parsed.HideDirs {
+			if !containsStr(replaced, d) {
+				replaced = append(replaced, d)
+			}
+		}
+	}
+	for _, d := range replaced {
+		if plan.ValidSwapPath(d) != nil || !realParents(w.WorkTree, d+"/x") {
+			continue
+		}
+		if strays := strayFilesIn(w.WorkTree, d); len(strays) > 0 {
+			failed = append(failed, fmt.Sprintf("%s, which the profile replaced, holds regular files outfit did not make (%s): left alone; move or commit them, then rerun", d, strings.Join(firstFew(strays, 3), ", ")))
+		}
+	}
+
 	// A link that could not be removed (or a regular file where one was) stops here:
 	// sparse checkout stays on, because switching it off while a link still stands at a
 	// tracked path shows ` T` in status and lets `commit -a` commit the symlink. The
@@ -275,4 +296,20 @@ func cleanBaseFile(ctx context.Context, g gitx.Client, rel string) bool {
 func dirExists(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
+}
+
+func containsStr(s []string, x string) bool {
+	for _, v := range s {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+func firstFew(s []string, n int) []string {
+	if len(s) > n {
+		return append(append([]string(nil), s[:n]...), "…")
+	}
+	return s
 }

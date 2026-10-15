@@ -107,3 +107,42 @@ func (in Input) currentBlob(ctx context.Context, path string) (string, error) {
 	}
 	return e.blob, nil
 }
+
+// IsReplacedDir says path is a directory the active profile replaces (state.json records it).
+func IsReplacedDir(in Input, path string) bool {
+	st, err := readState(in)
+	return err == nil && st != nil && contains(st.ReplaceDirs, path)
+}
+
+// AckDir records the team's current files below a replaced directory as the ones the replacement
+// stands on, so the "the team changed files below it" note goes away. It changes nothing else.
+func AckDir(ctx context.Context, in Input, dir string) (changed bool, err error) {
+	lock, err := AcquireLock(in.W.GitDir)
+	if err != nil {
+		return false, err
+	}
+	defer lock.Release()
+	st, err := readState(in)
+	if err != nil {
+		return false, err
+	}
+	if !contains(st.ReplaceDirs, dir) {
+		return false, ErrNotSwapped
+	}
+	res, err := in.Git.Read(ctx, "--literal-pathspecs", "ls-files", "-s", "-t", "-z", "--", dir)
+	if err != nil {
+		return false, fmt.Errorf("cannot read the index: %w", err)
+	}
+	_, digest := dirDigest(dir, parseLsFiles(res.Stdout))
+	if st.ReplaceSeen[dir] == digest {
+		return false, nil
+	}
+	next := *st
+	next.ReplaceSeen = map[string]string{}
+	for k, v := range st.ReplaceSeen {
+		next.ReplaceSeen[k] = v
+	}
+	next.ReplaceSeen[dir] = digest
+	_, err = state.Write(in.W.GitDir, &next)
+	return err == nil, err
+}

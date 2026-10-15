@@ -1,0 +1,57 @@
+# Replace declarations that cannot be honoured stop `use` with the reason and the fix, and change nothing.
+fixture repo team
+cd repo
+exec mkdir -p skills/inner
+exec sh -c 'echo team-a > skills/a.md; echo team-i > skills/inner/i.md; echo file > notadir'
+exec git add skills notadir
+exec git commit -qm 'docs: team skills'
+outfit init
+
+# a path that is a tracked FILE
+exec mkdir -p .outfit/profiles/p1
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = notadir\n" > .outfit/profiles/p1/profile.config'
+# one directory inside another
+exec mkdir -p .outfit/profiles/p2
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = skills\n    replace = skills/inner\n" > .outfit/profiles/p2/profile.config'
+# a path that leaves the repository
+exec mkdir -p .outfit/profiles/p3
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = ../elsewhere\n" > .outfit/profiles/p3/profile.config'
+# the same, committed in `.outfit/config` (not allowed there)
+exec git add --sparse -f .outfit
+exec git commit -qm 'feat: three bad profiles'
+
+! outfit use p1
+stderr 'tracks notadir as a file or link, not a directory'
+stderr 'fix: fix the `replace` lines'
+exists skills/a.md
+exists notadir
+! outfit use p2
+stderr 'skills/inner is inside replace = skills'
+! outfit use p3
+stderr 'replace = ../elsewhere'
+exec git status --short
+! stdout .
+exists skills/inner/i.md
+# nothing was switched
+outfit status
+stdout 'profile  base'
+
+# a linked worktree gets the same replacement from the clone's profile on its own sync
+exec mkdir -p .outfit/profiles/ok/skills
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = skills\n" > .outfit/profiles/ok/profile.config'
+exec sh -c 'echo mine > .outfit/profiles/ok/skills/a.md'
+exec git add --sparse -f .outfit/profiles/ok
+exec git commit -qm 'feat: a good one'
+outfit use ok
+! exists skills/inner
+exec git worktree add -q ../wt2
+cd ../wt2
+outfit sync
+! exists skills/inner/i.md
+islink skills/a.md ../.outfit/profiles/ok/skills/a.md
+cd ../repo
+outfit uninstall
+exists skills/inner/i.md
+cd ../wt2
+exists skills/inner/i.md
+! islink skills/a.md

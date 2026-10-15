@@ -89,6 +89,20 @@ func cmdDiff(ctx context.Context, e Env, args []string) int {
 		return code
 	}
 	fail := func(err error) int { return report(e.Stdout, e.Stderr, asJSON, err) }
+	if apply.IsReplacedDir(in, path) {
+		note := path + " is a directory your profile replaces: the team's files below it are hidden and yours stand in. What the team changed there: git log --stat -- " + plan.Quote(path) + "   (when that is fine: outfit ack " + plan.Quote(path) + ")"
+		if asJSON {
+			out, _ := json.Marshal(struct {
+				Path     string `json:"path"`
+				Replaced bool   `json:"replaced"`
+				Note     string `json:"note"`
+			}{path, true, note})
+			fmt.Fprintln(e.Stdout, string(out))
+			return ExitOK
+		}
+		fmt.Fprintln(e.Stdout, note)
+		return ExitOK
+	}
 	b, err := apply.BaseOf(ctx, in, path)
 	if errors.Is(err, apply.ErrNotSwapped) {
 		return fail(notSwapped(path))
@@ -141,7 +155,13 @@ func cmdAck(ctx context.Context, e Env, args []string) int {
 		return code
 	}
 	fail := func(err error) int { return report(e.Stdout, e.Stderr, asJSON, err) }
-	changed, err := apply.Ack(ctx, in, path)
+	var changed bool
+	var err error
+	if apply.IsReplacedDir(in, path) {
+		changed, err = apply.AckDir(ctx, in, path)
+	} else {
+		changed, err = apply.Ack(ctx, in, path)
+	}
 	if errors.Is(err, apply.ErrNotSwapped) {
 		return fail(notSwapped(path))
 	}

@@ -304,6 +304,21 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 	}
 	next.Author = in.Author
 	next.AuthorProfiles = in.AuthorProfiles
+	// The replaced directories, and what the team's files below each looked like when they were
+	// replaced (an acknowledged change moves it): the guard and uninstall read the list, the
+	// plan compares the digest.
+	next.ReplaceDirs, next.ReplaceSeen = nil, nil
+	for _, d := range want.ReplaceDirs {
+		next.ReplaceDirs = append(next.ReplaceDirs, d)
+		if next.ReplaceSeen == nil {
+			next.ReplaceSeen = map[string]string{}
+		}
+		seen := st.ReplaceSeen[d]
+		if seen == "" {
+			seen = facts.Dirs[d].Digest
+		}
+		next.ReplaceSeen[d] = seen
+	}
 	next.CommittedProfiles = in.CommittedProfiles
 	fault.Point("before the state is written")
 	changed, werr := state.Write(in.W.GitDir, &next)

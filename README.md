@@ -43,6 +43,9 @@ without outfit, and `uninstall`.
   hook off here, nowhere else: `outfit init`, then `outfit set hook.pre-commit=off --global`.
 - **Trying your own agent instructions.** Edit your `AGENTS.md` without a diff in
   everyone's way, and when it is good, share it as a profile colleagues can opt into.
+- **Your own skills directory.** A profile can replace a whole directory (`replace = .claude/skills` in
+  its `profile.config`): the team's files below it are hidden for you and yours stand in
+  ([docs/profiles.md](docs/profiles.md)).
 - **A permanent personal setup.** A `yolo` profile that skips most local checks. Local
   hooks are a convenience and CI is the real gate, so that is a fair choice. (Keys the
   team marks `locked`, such as a secret scan, cannot be skipped.)

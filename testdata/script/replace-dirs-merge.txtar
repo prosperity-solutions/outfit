@@ -1,0 +1,70 @@
+# A merge that touches files below a replaced directory: git writes the team's files there (its
+# conflict markers too) because it must; outfit leaves the directory alone while the merge is open,
+# and once it is over hides it again and puts the profile's link back. Also the hot path.
+fixture repo team
+cd repo
+exec mkdir -p skills
+exec sh -c 'echo team-a > skills/a.md; echo team-b > skills/b.md'
+exec git add skills
+exec git commit -qm 'docs: team skills'
+exec git branch other
+exec mkdir -p .outfit/profiles/mine/skills
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = skills\n" > .outfit/profiles/mine/profile.config'
+exec sh -c 'echo my-a > .outfit/profiles/mine/skills/a.md'
+exec git add --sparse -f .outfit/profiles/mine
+exec git commit -qm 'feat: replace skills'
+exec sh -c 'echo main-b > skills/b.md'
+exec git commit -qam 'docs: main changes b'
+exec git checkout -q other
+exec sh -c 'echo other-b > skills/b.md; echo other-c > skills/c.md'
+exec git add -A
+exec git commit -qm 'docs: other changes b and adds c'
+exec git checkout -q main
+outfit init
+outfit use mine
+! exists skills/b.md
+
+# the budget: a no-op sync with a replaced directory still asks git two things at most
+gitcalls reset
+outfit sync
+gitcalls 2
+
+# a CLEAN merge below it: git has nothing to write for hidden files
+exec git branch clean other
+exec git checkout -q -b cleanside main
+exec sh -c 'echo x > README.md'
+exec git commit -qam 'docs: readme'
+exec git checkout -q main
+exec git merge -q --no-edit cleanside
+! exists skills/b.md
+islink skills/a.md .outfit/profiles/mine/skills/a.md
+
+# the CONFLICTING merge
+! exec git merge --no-edit other
+exec git ls-files -u -- skills/b.md
+stdout 'skills/b.md'
+# while it is open, outfit leaves the directory alone and says so (exit 3)
+! outfit sync
+stderr 'skills has files in the middle of a merge conflict'
+! outfit status
+stdout 'NEEDS A PERSON'
+# resolving: the person edits the file git left, adds and commits
+exec sh -c 'echo resolved > skills/b.md'
+exec git add --sparse skills/b.md
+exec git commit -qm 'merge: resolve'
+# after it, one sync hides the directory again and the profile's link stands
+outfit sync
+! exists skills/b.md
+! exists skills/c.md
+islink skills/a.md .outfit/profiles/mine/skills/a.md
+exec git status --short
+! stdout .
+exec git show HEAD:skills/b.md
+stdout '^resolved$'
+outfit use base
+exists skills/b.md
+exists skills/c.md
+exec cat skills/b.md
+stdout '^resolved$'
+exec git status --short
+! stdout .

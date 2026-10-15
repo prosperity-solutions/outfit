@@ -126,6 +126,16 @@ func faultScenarios() []faultScenario {
 			}
 			writeToken(t, r, tokens, "AGENTS.md", true) // an editor replaces the link
 		}, op: []string{"sync"}, recover: []string{"sync"}},
+		{name: "replace-a-directory", setup: func(t *testing.T, r *testkit.Repo, bin string, tokens *[]string) {
+			// The team has skills/a.md and skills/b.md; the profile `repl` replaces the directory and brings its own a.md.
+			r.Write("skills/a.md", "team a\n")
+			r.Write("skills/b.md", "team b\n")
+			r.Write(".outfit/profiles/repl/profile.config", "[outfit \"profile\"]\n    replace = skills\n")
+			r.Write(".outfit/profiles/repl/skills/a.md", "my a\n")
+			r.Git("add", "skills")
+			r.Git("add", "--sparse", "-f", ".outfit/profiles/repl")
+			r.Git("commit", "-qm", "feat: replace skills")
+		}, op: []string{"use", "repl"}, recover: []string{"sync"}},
 		{name: "author-on", setup: use("yolo"), op: []string{"author", "on"}, recover: []string{"sync"}},
 		{name: "author-on-one", setup: use("yolo"), op: []string{"author", "on", "lean"}, recover: []string{"sync"}},
 		{name: "author-off", setup: func(t *testing.T, r *testkit.Repo, bin string, tokens *[]string) {

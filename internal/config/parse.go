@@ -31,6 +31,10 @@ type File struct {
 	Keys map[string]string
 	// Locked is the union of every `locked` line (team files only).
 	Locked []string
+	// Replace lists the directories a profile replaces as a whole (`[outfit "profile"]
+	// replace = <dir>`, one line each; profile.config only). Only the syntax is checked here:
+	// what a path may be is decided where it is used (internal/plan.ValidSwapPath).
+	Replace []string
 	// Warnings lists everything that was ignored, with line numbers.
 	Warnings []Warning
 }
@@ -96,9 +100,9 @@ func ParseFile(r io.Reader, source string, kind Kind) *File {
 				continue
 			}
 			section, subsection = name, sub
-			accepted = section == "outfit" && (subsection == "" || subsection == "hook")
+			accepted = section == "outfit" && (subsection == "" || subsection == "hook" || subsection == "profile")
 			if !accepted {
-				warn(start, "section [%s] is not allowed in committed outfit config (only [outfit] and [outfit \"hook\"]); its keys are ignored", sectionLabel(name, sub))
+				warn(start, "section [%s] is not allowed in committed outfit config (only [outfit], [outfit \"hook\"] and, in a profile, [outfit \"profile\"]); its keys are ignored", sectionLabel(name, sub))
 			}
 			rest = strings.TrimSpace(rest)
 			if rest == "" || rest[0] == '#' || rest[0] == ';' {
@@ -118,6 +122,23 @@ func ParseFile(r io.Reader, source string, kind Kind) *File {
 		}
 		if !accepted {
 			warn(start, "ignored %s.%s: only outfit.* keys are accepted", sectionLabel(section, subsection), key)
+			continue
+		}
+		if subsection == "profile" {
+			// [outfit "profile"] replace = <dir>: not a toggle (it never reaches `outfit get`, `git -c` or
+			// the resolution order); a profile's own declaration, read from its own file.
+			switch {
+			case !strings.EqualFold(key, "replace"):
+				warn(start, "unknown key %s in [outfit \"profile\"] (only `replace`): ignored", esc(key))
+			case kind != KindProfile:
+				warn(start, "`replace` is only valid in a profile's profile.config: ignored")
+			case !hasVal || strings.TrimSpace(val) == "":
+				warn(start, "`replace` needs a directory (replace = .claude/skills): ignored")
+			case strings.ContainsFunc(val, isControl) || !utf8.ValidString(val):
+				warn(start, "value of replace contains control characters or invalid UTF-8: ignored")
+			default:
+				f.Replace = append(f.Replace, strings.TrimSpace(val))
+			}
 			continue
 		}
 		if subsection == "hook" {

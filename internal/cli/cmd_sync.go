@@ -62,10 +62,16 @@ func syncInput(ctx context.Context, e Env, l *loaded, useHead bool) apply.Input 
 	if l.Profile != nil {
 		// HEAD only while the profile's files are not on disk yet (right after a
 		// switch). Once they are, the disk is the truth, uncommitted files included.
+		var pcfg *config.File
 		if l.Profile.Tier == profiles.Committed && !profiles.RealDir(l.Profile.Dir) {
 			in.Files = profiles.HeadFiles(ctx, l.Git, l.Profile.Name)
+			pcfg = profiles.HeadConfig(ctx, l.Git, l.Profile.Name)
 		} else {
 			in.Files = profiles.Files(*l.Profile)
+			pcfg, _ = profiles.ReadConfig(*l.Profile)
+		}
+		if pcfg != nil {
+			in.ReplaceDirs = pcfg.Replace
 		}
 	}
 	if useHead && !in.CommittedProfiles {

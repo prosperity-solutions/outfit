@@ -147,6 +147,42 @@ has an `author` line while anything extra is shown (`author`/`author_profiles` i
 `outfit ls --json` says per profile whether it is `on_disk`. Local and worktree profiles are never
 hidden (they live in the git directory, outside the tree: `outfit show <profile>` prints where).
 
+## Replacing a whole directory
+
+A profile can say that a directory is **its own**: the team's files below it disappear for you, and the
+profile's stand in. In the profile's `profile.config`:
+
+```ini
+[outfit "profile"]
+    replace = .claude/skills
+```
+
+and the profile's files at the same relative paths under it (`.outfit/profiles/<name>/.claude/skills/…`).
+While the profile is active:
+
+- **Every tracked file below the directory is hidden** (one `!/dir/` pattern in the sparse patterns, so a
+  file the team adds there later stays hidden too, with nothing to sync), whether the profile has a
+  counterpart or not.
+- **The profile's files at paths the repository tracks are linked in** like any swapped file (editing
+  through the link edits the profile, an editor's atomic save is absorbed, and so on). A file the profile has
+  that the repository does not track is skipped with a note, as always: adding files is not part of this yet.
+- `git status` stays clean; the **pre-commit guard** refuses to commit anything staged below the
+  directory (to do it on purpose: `OUTFIT_ALLOW=1`, or `outfit use base` first).
+- **What the team changes below it is told once**: a pull that adds or edits files there prints one note
+  naming the directory (`outfit ack <dir>` clears it, `outfit diff <dir>` says where to look), not one per
+  file. `outfit status` has a `dirs` line.
+- Switching profiles or `outfit uninstall` brings the team's files back.
+
+outfit **refuses** (nothing changes) to start replacing a directory while files below it are staged or have
+uncommitted changes (they would be taken off disk), to stop replacing it, or uninstall, while a regular file
+that is not outfit's link stands below it (git would leave it half-present and call that success), or when
+the declaration is unsound: the path is a tracked file or link, it holds a submodule, another declared
+directory is inside it, or it has more than 2000 tracked files. While a merge has conflicts below the
+directory, outfit leaves it alone (exit 3) and tidies up once the merge is over.
+
+Limits: `git add -A` fails while an untracked file stands in a hidden directory (git's own rule: use `git add
+--sparse`); `git clean -fdx` and `git stash -u` leave the directory as it is (the links are tracked paths).
+
 ## `outfit sync`
 
 `sync` computes what the active profile wants, compares it with what is there, and fixes

@@ -47,7 +47,10 @@ type statusJSON struct {
 	AgentsSessionStart bool `json:"agents_session_start"`
 	// Author says which inactive committed profiles are on disk (`outfit author on`): all of
 	// them, or just AuthorProfiles. Omitted while they are hidden (the default).
-	Author         bool         `json:"author,omitempty"`
+	Author bool `json:"author,omitempty"`
+	// ReplacedDirs are the directories the active profile replaces as a whole: the team's files
+	// below them are hidden here and the profile's stand in.
+	ReplacedDirs   []string     `json:"replaced_dirs,omitempty"`
 	AuthorProfiles []string     `json:"author_profiles,omitempty"`
 	Locked         []string     `json:"locked"`
 	Files          []statusFile `json:"files"`
@@ -121,6 +124,9 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 	}
 	st.Dispatcher = dispatcherHealth(ctx, l, e.Getenv("HOME"))
 	st.AgentsSessionStart = agents.Installed(l.Repo.WorkTree)
+	if rs, rerr := state.Read(l.Repo.GitDir); rerr == nil && rs != nil {
+		st.ReplacedDirs = rs.ReplaceDirs
+	}
 	if av := authorFor(ctx, l); av.Author || len(av.Profiles) > 0 {
 		st.Author, st.AuthorProfiles = av.Author, av.Profiles
 	}
@@ -230,6 +236,9 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 	}
 	if st.AgentsSessionStart {
 		fmt.Fprintln(w, "agents   Claude Code SessionStart entry installed ("+agents.SettingsFile+")")
+	}
+	if len(st.ReplacedDirs) > 0 {
+		fmt.Fprintln(w, "dirs     replaced by the profile (the team's files below are hidden): "+strings.Join(st.ReplacedDirs, ", "))
 	}
 	switch {
 	case st.Author:

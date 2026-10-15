@@ -1,0 +1,47 @@
+# A profile can REPLACE a directory (`[outfit "profile"] replace = <dir>`): the team's files below
+# it are hidden for this user (with a single `!/dir/` pattern, so files the team adds later stay
+# hidden without a sync), the profile's own tracked-path files are linked in. Nothing changes
+# for teammates, `git status` stays clean, switching back or `uninstall` restores everything.
+fixture repo team
+cd repo
+exec mkdir -p skills/deep
+exec sh -c 'echo team-a > skills/a.md; echo team-b > skills/b.md; echo team-deep > skills/deep/c.md'
+exec git add skills
+exec git commit -qm 'docs: team skills'
+# a profile that replaces skills/ and brings its own a.md
+exec mkdir -p .outfit/profiles/mine/skills
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = skills\n" > .outfit/profiles/mine/profile.config'
+exec sh -c 'echo my-a > .outfit/profiles/mine/skills/a.md'
+exec git add --sparse -f .outfit/profiles/mine
+exec git commit -qm 'feat: a profile that replaces skills'
+outfit init
+exists skills/b.md
+outfit use mine
+# the team's b.md and deep/c.md are gone for me; a.md is mine; status is clean
+! exists skills/b.md
+! exists skills/deep
+islink skills/a.md .outfit/profiles/mine/skills/a.md
+grep '^my-a$' skills/a.md
+exec git status --short
+! stdout .
+grep '^!/skills/$' .git/info/sparse-checkout
+outfit status
+stdout 'skills/a.md ← mine'
+# editing through the link edits the profile's file
+exec sh -c 'echo more >> skills/a.md'
+exec git status --short
+stdout '^ M .outfit/profiles/mine/skills/a.md'
+exec git checkout -q -- .outfit/profiles/mine/skills/a.md
+# a sync changes nothing
+outfit sync
+exec git status --short
+! stdout .
+# back to base: the team's files are back, no links
+outfit use base
+exists skills/b.md
+exists skills/deep/c.md
+! islink skills/a.md
+grep '^team-a$' skills/a.md
+exec git status --short
+! stdout .
+! grep 'skills' .git/info/sparse-checkout
