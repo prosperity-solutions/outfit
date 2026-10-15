@@ -58,9 +58,12 @@ repository is private and for once it is public, the first commands, and the sni
 read a toggle with or without outfit). Nothing is committed: the command prints the `git add` and
 `git commit` to run. It is idempotent (the line is added once; an existing `docs/outfit.md` is left
 exactly as it is, so a team's own edits are never overwritten), never writes through a link, and when
-`AGENTS.md` is swapped by your active profile it writes nothing at all (exit 3: `outfit use base`
-first, so the team's file is the one edited). With no `AGENTS.md` it only writes the document and
-prints the line to place. `--dry-run` says what it would do. Nothing else changes for non-users
+`AGENTS.md` is swapped by your active profile it writes none of the team's files (exit 3, after the
+hooks were installed as usual: `outfit use base` first, so the team's file is the one edited). A link
+the team itself committed (`AGENTS.md -> CLAUDE.md`) is followed while it stays inside the worktree;
+one that cannot be followed, or no `AGENTS.md` at all, gets the document and the line printed for you
+to place. Every check runs before the first write and the document is written before the line that
+points to it, so a failure never leaves the line without its document. `--dry-run` says what it would do. Nothing else changes for non-users
 (docs/HANDOVER.md §3.0).
 
 ## Chaining

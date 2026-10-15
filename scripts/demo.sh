@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# A walkthrough of outfit in a throwaway git repository, about two minutes long (a few
-# seconds with --quick).
+# A walkthrough of outfit in a throwaway git repository, about half a minute long (a few
+# seconds less with --quick).
 # Every step is printed before it runs, and the script checks what it claims, so
 # CI runs it too (`scripts/demo.sh --quick`).
 #
@@ -18,7 +18,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --quick) quick=1 ;;
     --outfit) shift; bin=${1:?--outfit needs a path} ;;
-    -h | --help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
   esac
   shift
@@ -120,6 +120,11 @@ run git commit -m "add a shared yolo profile"
 [ "$(runs)" = 4 ] || fail "the hook should have run for that commit (no profile yet)"
 run outfit ls
 
+step "Teammates who do not use outfit: one line and one document, nothing committed for you (a dry run here)"
+run outfit init --team --dry-run
+[ ! -e docs/outfit.md ] || fail "a dry run must not write docs/outfit.md"
+git diff --quiet -- AGENTS.md || fail "a dry run must not change AGENTS.md"
+
 step "Use it: AGENTS.md is now YOUR copy, and git status stays clean"
 run outfit use yolo
 run cat AGENTS.md
@@ -159,18 +164,24 @@ run git commit -m "share the mine profile"
 
 step "Inactive profiles are hidden from the working tree (agents would find them in every search); show one when you need to edit it"
 run outfit author on mine
+[ -d .outfit/profiles/mine ] || fail "author on mine should put the profile on disk"
 run outfit author
 run outfit author off mine
+[ ! -e .outfit/profiles/mine ] || fail "author off mine should hide it again"
 
-step "Teammates who do not use outfit: one line and one document, nothing committed for you"
+step "Back to the committed files: AGENTS.md is the team's again"
 run outfit use base
-run outfit init --team --dry-run
+[ ! -L AGENTS.md ] || fail "outfit use base should put the team's AGENTS.md back"
 
 step "Documentation for coding agents is carried by the binary"
 run outfit skills basics | head -n 5 || true
 
 step "Is there a newer release? (needs the network and, while the repository is private, a GitHub token)"
-(outfit update --check 2>&1 || true) | sed 's/^/    /'
+if [ "$quick" = 1 ]; then
+  echo "    (skipped with --quick: CI has no business asking GitHub from here)"
+else
+  (outfit update --check 2>&1 || true) | sed 's/^/    /'
+fi
 
 step "outfit uninstall: everything init added is removed"
 run outfit uninstall

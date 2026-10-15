@@ -24,14 +24,15 @@ lefthook, plain `.git/hooks`).
 cd your-repo
 outfit init                          # put outfit in front of your git hooks (they keep running)
 outfit set hook.pre-commit=off       # skip the slow pre-commit hook, only for you
-outfit use yolo                      # swap in a profile's files (your AGENTS.md instead of the team's)
+outfit ls                            # the profiles your team committed in .outfit/profiles (or: outfit new mine)
+outfit use <profile>                 # swap in its files (your AGENTS.md instead of the team's)
 git status                           # clean: nothing to commit, nothing for teammates to see
 outfit uninstall                     # put everything back as it was
 ```
 
 No repository of your own handy? `scripts/demo.sh` in a clone of this one
 (`gh repo clone prosperity-solutions/outfit`) builds a throwaway repository with a husky hook and
-walks through all of it in about two minutes, printing each step before it runs and checking what
+walks through all of it in about half a minute, printing each step before it runs and checking what
 it claims: init, switching a hook off, a shared profile, editing through the link, an editor's atomic
 save, a new worktree, your own profile and `promote`, showing hidden profiles, the line for teammates
 without outfit, and `uninstall`.
