@@ -32,9 +32,20 @@ at least **seven days old**. An exception is a fix for a known vulnerability (a 
 Examples: `zizmor` 1.31.0 shipped the day 1.30.1 was pinned, so CI uses 1.30.1; GoReleaser 2.18.3
 (six days old) and `govulncheck` 1.9.0 (four) were not taken, 2.18.2 and 1.8.0 are.
 
-`scripts/ci/dep-age.py` (the `Dependency age` CI job) enforces it for everything pinned: `go.mod`,
-action SHAs, `go run tool@v`, the pip requirements and the minisign downloads in `install.sh`. A
-version younger than seven days fails unless `.github/fresh-deps.txt` names it with the reason.
+`scripts/ci/dep-age.py` (the `Dependency age` CI job) enforces it for everything pinned: `go.mod`
+(requires, `replace` targets, the `toolchain` line), action SHAs, `go run tool@v`, the pip
+requirements, golangci-lint and the minisign downloads in `install.sh`. A version younger than
+seven days fails unless `.github/fresh-deps.txt` names it with the reason. It also fails on a
+registry that answers "no such version" or "not allowed", and on any line that looks like a pin
+but that it cannot read (`@latest`, a branch ref, `docker://`), so a pin written in an unusual way
+cannot slip past; an unreachable registry (a timeout) fails on a pull request and only warns on a
+push to `main`, because that job gates the release.
+
+What "published" means: for Go modules it is the proxy's time, which is the tag commit's
+committer date, so a maintainer *could* back-date a release; the rule stops "adopt it today", not
+that. For an action it is the GitHub release's publish date (the registry's own clock), and only
+for an action with no release the commit date. zizmor's online `ref-version-mismatch` audit is what
+checks that a pinned SHA is the commit of the version in its comment.
 `.github/dependabot.yml` sets `cooldown: default-days: 7` so Dependabot waits too (security
 updates are not delayed). The pip pins and `go run tool@v` lines are updated by hand, following the
 same rule; the job will say when one is too new. Example found while adding it: `golang.org/x/crypto`

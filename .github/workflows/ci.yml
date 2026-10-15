@@ -195,9 +195,12 @@ jobs:
           persist-credentials: false
       - name: Selftest
         run: python3 scripts/ci/dep-age.py --selftest
+      # On a pull request a registry that cannot be reached fails the job (strict); on a push to
+      # main, which gates the release, it only warns.
       - name: Every pinned version is old enough
         env:
           GH_TOKEN: ${{ github.token }}
+          OUTFIT_DEP_AGE_STRICT: ${{ github.event_name == 'pull_request' && '1' || '0' }}
         run: python3 scripts/ci/dep-age.py
 
   unit:
