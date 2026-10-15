@@ -8,8 +8,11 @@ name: Release
 #         \-> ci (waits for main's all-green) ----+-> publish -> verify (4 runners)
 #                                                           \-> verify-signing
 #
-# This is the ONLY workflow that references the MINISIGN_* and MACOS_* secrets,
-# and it only runs on pushes to main, so a pull request can never reach them.
+# This is the ONLY workflow that references the MINISIGN_* and MACOS_* secrets, and only
+# its `build` job does, in the `release` environment, on a push to main. Until the owner
+# scopes the secrets to that environment with deployment branches = main (docs/security.md),
+# they are still repository secrets, which a pull request from a branch of this repository
+# can read by editing a workflow: review and the ruleset are what stop that today.
 on:
   push:
     branches: [main]
@@ -31,6 +34,8 @@ defaults:
 
 env:
   REPO: prosperity-solutions/outfit
+  # Go never downloads a different toolchain than setup-go installed from go.mod.
+  GOTOOLCHAIN: local
 
 jobs:
   # ── 1. What version, if any ───────────────────────────────────────────────
@@ -127,6 +132,7 @@ jobs:
     outputs:
       signed: ${{ steps.cfg.outputs.signed }}
       notary: ${{ steps.cfg.outputs.notary }}
+      notes_sha256: ${{ steps.notes.outputs.sha256 }}
     # Notarization alone may wait 20 minutes; nothing else here should take long.
     timeout-minutes: 60
     env:
@@ -222,7 +228,7 @@ jobs:
           gobin=$(go env GOPATH)/bin
           export PATH="$PATH:$gobin"
           git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || git tag "$TAG"
-          go run github.com/goreleaser/goreleaser/v2@v2.18.3 release --clean --skip=publish
+          go run github.com/goreleaser/goreleaser/v2@v2.18.2 release --clean --skip=publish
 
       - name: Remove the signing key
         if: always()
@@ -253,6 +259,7 @@ jobs:
           exit 1
 
       - name: Gather the release files
+        id: notes
         run: |
           set -e
           # A new kind of asset (an SBOM, another archive format) must be added here,
@@ -270,6 +277,8 @@ jobs:
           ls -l out
           [ "$(find out -type f | wc -l)" -eq 5 ] || { echo "::error::expected 3 archives, checksums.txt and its signature in out/"; exit 1; }
           if [ -f dist/CHANGELOG.md ]; then cp dist/CHANGELOG.md notes.md; else printf 'Release %s\n' "$TAG" > notes.md; fi
+          # The release text travels as an artifact too: publish checks it against this hash.
+          echo "sha256=$(sha256sum notes.md | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -398,15 +407,15 @@ jobs:
   # ── 4. Publish: tag, then a verified draft-first release ──────────────────
   publish:
     name: Publish
-    needs: [version, smoke, ci]
+    needs: [version, build, smoke, ci]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: write # create the tag and the release; the only job that can write
     env:
       TAG: ${{ needs.version.outputs.tag }}
-      GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      NOTES_SHA256: ${{ needs.build.outputs.notes_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -432,23 +441,31 @@ jobs:
         run: |
           set -e
           (cd out && sha256sum -c checksums.txt)
+          # The release text came through the same artifact storage: it must be what build wrote.
+          [ "$(sha256sum notes/notes.md | awk '{print $1}')" = "$NOTES_SHA256" ] || { echo "::error::notes.md is not the release text the build job wrote"; exit 1; }
           go run ./internal/tools/verifysig out/checksums.txt out/checksums.txt.minisig
       # The tag is created through the API with the job's token, so no git credential is stored
       # in the checkout (persist-credentials: false) for a later step to find.
       - name: Push the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -e
           sha=$(git rev-parse HEAD)
-          # Exit status, not output: on a 404 gh prints the error JSON on stdout too.
-          if gh api "repos/$GH_REPO/git/ref/tags/$TAG" --silent 2>/dev/null; then
+          # Only a 404 means "no such tag"; anything else (a 403, a 5xx) stops here with its message.
+          if out=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --silent 2>&1); then
             # Whatever kind of tag it is, ask what commit it resolves to.
-            have=$(gh api "repos/$GH_REPO/commits/$TAG" --jq '.sha')
+            have=$(gh api "repos/$GH_REPO/commits/refs/tags/$TAG" --jq '.sha')
             [ "$have" = "$sha" ] || { echo "::error::$TAG already exists on a different commit"; exit 1; }
             echo "$TAG is already pushed at this commit (re-run)."
-          else
+          elif printf '%s' "$out" | grep -q 'HTTP 404'; then
             gh api "repos/$GH_REPO/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$sha" --silent
+          else
+            echo "::error::could not look up $TAG: $out"; exit 1
           fi
       - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: scripts/release/publish.sh "$TAG" out notes/notes.md
 
   # ── 5. The real install, exactly as a teammate does it ────────────────────

@@ -127,7 +127,7 @@ jobs:
           version: v2.14.0
       # v1.1.4 panics under Go 1.27 (found on the first CI run); bump deliberately.
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       - name: shellcheck
         run: |
           # By shebang, so a new script cannot silently go unlinted: sh scripts
@@ -144,12 +144,12 @@ jobs:
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: Workflows do not run on draft PRs
         run: |
-          pip install --require-hashes -r scripts/ci/pyyaml-requirements.txt
+          pip install --require-hashes --only-binary=:all: -r scripts/ci/pyyaml-requirements.txt
           python3 tests/validate-workflow-gates.py --selftest
           python3 tests/validate-workflow-gates.py
       - name: goreleaser check
         run: |
-          go run github.com/goreleaser/goreleaser/v2@v2.18.3 check
+          go run github.com/goreleaser/goreleaser/v2@v2.18.2 check
 
   # The workflows themselves: zizmor audits them for the mistakes that turn a CI job into a way
   # in (credentials left in the checkout, template injection, over-broad permissions, secrets
@@ -168,11 +168,18 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install zizmor
-        run: pip install --require-hashes -r scripts/ci/zizmor-requirements.txt
+        run: pip install --require-hashes --only-binary ':all:' -r scripts/ci/zizmor-requirements.txt
+      # Online on a pull request (known-vulnerable actions, impostor commits). On a push to main
+      # it runs offline: this job gates the release, and an API hiccup or a new advisory against
+      # an action that is already pinned must not block it.
       - name: Audit the workflows
         env:
           GH_TOKEN: ${{ github.token }}
-        run: zizmor --persona auditor --min-severity low --format plain .github/workflows
+          EVENT: ${{ github.event_name }}
+        run: |
+          offline=""
+          [ "$EVENT" = pull_request ] || offline="--offline"
+          zizmor $offline --persona auditor --min-severity low --format plain .github/workflows
 
   unit:
     name: Unit (${{ matrix.os }})
@@ -327,7 +334,7 @@ jobs:
           go-version-file: go.mod
       - name: Install goreleaser and minisign
         run: |
-          go install github.com/goreleaser/goreleaser/v2@v2.18.3
+          go install github.com/goreleaser/goreleaser/v2@v2.18.2
           go install aead.dev/minisign/cmd/minisign@v0.3.0
       - run: scripts/ci/signing-smoke.sh
 

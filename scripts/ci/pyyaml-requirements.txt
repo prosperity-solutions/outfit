@@ -1,6 +1,5 @@
 # PyYAML for tests/validate-workflow-gates.py, pinned by hash (pip --require-hashes).
-# 6.0.3 is from 2025-09-25. One hash per platform CI uses (Python 3.12 on Linux x86_64) plus
-# the source archive.
+# 6.0.3 is from 2025-09-25. The one wheel CI uses (Python 3.12 on Linux x86_64): installed with
+# --only-binary, so pip never builds from source with build tools that are not hash-checked.
 pyyaml==6.0.3 \
-    --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc \
-    --hash=sha256:d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f
+    --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc
