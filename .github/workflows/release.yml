@@ -412,6 +412,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write # create the tag and the release; the only job that can write
+      id-token: write # the attestation is signed with this run's OIDC identity (Sigstore)
+      attestations: write # ... and stored with the repository
     env:
       TAG: ${{ needs.version.outputs.tag }}
       GH_REPO: ${{ github.repository }}
@@ -444,6 +446,15 @@ jobs:
           # The release text came through the same artifact storage: it must be what build wrote.
           [ "$(sha256sum notes/notes.md | awk '{print $1}')" = "$NOTES_SHA256" ] || { echo "::error::notes.md is not the release text the build job wrote"; exit 1; }
           go run ./internal/tools/verifysig out/checksums.txt out/checksums.txt.minisig
+      # A signed statement, made by this workflow run, that these exact files were built from this
+      # commit: `gh attestation verify` checks it against the repository and workflow. It is made
+      # here, after the files were re-checked and before they become public. Private
+      # repositories need GitHub Enterprise Cloud (this one is on it).
+      - name: Attest the build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: out/*
+
       # The tag is created through the API with the job's token, so no git credential is stored
       # in the checkout (persist-credentials: false) for a later step to find.
       - name: Push the tag
@@ -476,6 +487,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      attestations: read # gh attestation verify reads the attestation of the published archive
     strategy:
       fail-fast: false
       matrix:
@@ -525,6 +537,29 @@ jobs:
             sleep 60
           done
           echo "::error::could not install $TAG within ten minutes"
+          exit 1
+
+      # The archive for this runner, straight from the release, must carry an attestation made
+      # by this repository's release workflow. (The index can lag a moment: retry.)
+      - name: Check the build provenance of the published archive
+        run: |
+          case "$RUNNER_OS/$RUNNER_ARCH" in
+            Linux/X64) plat=linux_amd64 ;;
+            Linux/ARM64) plat=linux_arm64 ;;
+            *) plat=darwin_all ;;
+          esac
+          mkdir "$RUNNER_TEMP/prov"
+          cd "$RUNNER_TEMP/prov"
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "outfit_*_${plat}.tar.gz"
+          for attempt in 1 2 3 4 5 6; do
+            if gh attestation verify ./outfit_*_"${plat}".tar.gz -R "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"; then
+              echo "build provenance verified for $plat on $RUNNER_OS/$RUNNER_ARCH" | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "attempt $attempt of 6 failed; retrying in 30s"
+            sleep 30
+          done
+          echo "::error::no valid build provenance for the published $plat archive"
           exit 1
 
       # Only once the previous release itself has `outfit update`; until then it is

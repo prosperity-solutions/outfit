@@ -101,6 +101,9 @@ ever disagree.
 gh release download v0.1.0 -R prosperity-solutions/outfit -p 'checksums.txt*' -p 'outfit_*_darwin_all.tar.gz'
 shasum -a 256 -c --ignore-missing checksums.txt     # Linux: sha256sum -c --ignore-missing checksums.txt
 minisign -Vm checksums.txt -P RWQwzESR8TzokwCh60NclFts0vEw5Co4E72Bdf8LX03rafQUTVhhKUWU
+# and that this repository's release workflow built the archive (a signed build provenance):
+gh attestation verify outfit_*_darwin_all.tar.gz -R prosperity-solutions/outfit \
+  --signer-workflow prosperity-solutions/outfit/.github/workflows/release.yml
 ```
 
 ## Updating

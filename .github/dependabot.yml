@@ -1,0 +1,32 @@
+# Version updates, never the day a release ships: `cooldown` makes Dependabot wait seven days
+# after a release before it proposes it (a fix for a known vulnerability is a security update,
+# which Dependabot does not delay). scripts/ci/dep-age.py enforces the same rule for anything
+# updated by hand. docs/security.md.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"
+    open-pull-requests-limit: 5
+    groups:
+      go-modules:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "ci(deps)"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]

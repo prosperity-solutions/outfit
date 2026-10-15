@@ -1,0 +1,5 @@
+# Versions allowed although they are younger than seven days (scripts/ci/dep-age.py), one per line:
+#
+#   <name>@<version>   # why it cannot wait (the advisory it fixes)
+#
+# A version that is old enough needs no line. Remove a line once the version is a week old.
