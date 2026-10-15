@@ -176,7 +176,7 @@ run outfit use base
 step "Documentation for coding agents is carried by the binary"
 run outfit skills basics | head -n 5 || true
 
-step "Is there a newer release? (needs the network and, while the repository is private, a GitHub token)"
+step "Is there a newer release? (needs the network)"
 if [ "$quick" = 1 ]; then
   echo "    (skipped with --quick: CI has no business asking GitHub from here)"
 else

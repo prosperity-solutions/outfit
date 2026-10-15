@@ -222,10 +222,9 @@ jobs:
       - name: go test -race
         run: go test -race -short ./...
 
-  # Which git/OS legs run. Linux is cheap, so every Linux leg runs on PRs; macOS
-  # minutes count about 10x against a private repo's quota, so a PR gets only
-  # Apple git on macos-latest and the rest runs on push to main (and in
-  # release.yml).
+  # Which git/OS legs run: all of them, on pull requests and on push alike. The repository is
+  # public, so macOS runners cost nothing, and a leg that only ran after the merge (the Intel
+  # Mac, Homebrew's git) would find its failures on `main`, where the release waits for them.
   plan:
     name: Plan test matrix
     runs-on: ubuntu-24.04
@@ -235,17 +234,10 @@ jobs:
       matrix: ${{ steps.m.outputs.matrix }}
     steps:
       - id: m
-        env:
-          EVENT: ${{ github.event_name }}
         run: |
           linux='{"os":"ubuntu-24.04","git":"2.36.6"},{"os":"ubuntu-24.04","git":"latest"},{"os":"ubuntu-24.04-arm","git":"latest"}'
-          mac='{"os":"macos-latest","git":"apple"}'
-          full='{"os":"macos-latest","git":"brew"},{"os":"macos-15-intel","git":"apple"}'
-          if [ "$EVENT" = push ]; then
-            echo "matrix={\"include\":[$linux,$mac,$full]}" >> "$GITHUB_OUTPUT"
-          else
-            echo "matrix={\"include\":[$linux,$mac]}" >> "$GITHUB_OUTPUT"
-          fi
+          mac='{"os":"macos-latest","git":"apple"},{"os":"macos-latest","git":"brew"},{"os":"macos-15-intel","git":"apple"}'
+          echo "matrix={\"include\":[$linux,$mac]}" >> "$GITHUB_OUTPUT"
 
   # Integration (real git in temp dirs) and e2e (testscript, which re-executes
   # the test binary as `outfit`) in ONE job: the whole suite, including what
@@ -302,7 +294,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-24.04","macos-latest"]' || '["ubuntu-24.04"]') }}
+        os: [ubuntu-24.04, macos-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -327,7 +319,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-24.04","macos-latest"]' || '["ubuntu-24.04"]') }}
+        os: [ubuntu-24.04, macos-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -343,7 +335,7 @@ jobs:
   # the universal binary, and the signed binary must run. (A real Developer ID
   # chain is what macOS judged in the first release attempt; a throwaway certificate
   # cannot reproduce that, so the release's smoke legs stay the guard for it.) One
-  # short macOS job; AGENTS.md has the cost note.
+  # short macOS job.
   signing:
     name: Signing smoke
     runs-on: macos-latest

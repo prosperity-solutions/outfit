@@ -9,15 +9,14 @@ outfit update --json             # every command takes --json
 
 `outfit update` does the work itself; it does not re-run the install script.
 
-1. **Finds the release.** The latest one, or exactly `--version`. While the repository
-   is private it needs a GitHub token that can read it, looked for in this order:
-   `OUTFIT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, then `gh auth token`. With a token
-   it asks the GitHub API and downloads through the asset endpoints; without one it tries
-   the public `releases/latest/download/…` URLs, which start working by themselves once
-   the repository is public. With neither it stops and says: `gh auth login`, or set
-   `OUTFIT_GITHUB_TOKEN`. outfit never prints the token or puts it on a command line, and sends
-   only to `https://api.github.com` (or, for tests, to this machine; an `OUTFIT_API_URL`
-   naming anywhere else is refused before any request), and not forwarded when GitHub
+1. **Finds the release.** The latest one, or exactly `--version`. The repository and its releases are
+   public, so it downloads from the public `releases/latest/download/…` URLs with no login and no token.
+   A token is used only when `OUTFIT_GITHUB_TOKEN` is set on purpose (a private fork or mirror, or a
+   network that rate-limits anonymous downloads): then it asks the GitHub API and downloads through the
+   asset endpoints. `GH_TOKEN`, `GITHUB_TOKEN` and `gh auth` are **not** looked at (a stale ambient
+   token would only make a public update fail). outfit never prints the token or puts it on a command
+   line, and sends it only to `https://api.github.com` (or, for tests, to this machine; an
+   `OUTFIT_API_URL` naming anywhere else is refused before any request), and not forwarded when GitHub
    redirects the download to its storage or anywhere over plain http. One attempt per
    request, no retry loops: 5 seconds for the small files; the archive (3 to 6 MB) is cut
    off when **no data arrives for 15 seconds** or after 10 minutes in all, so a slow link
@@ -62,8 +61,7 @@ The check happens at most once every 24 hours; the answer is cached in
 `<user cache dir>/outfit/update.json` (`~/Library/Caches` on macOS, an absolute
 `$XDG_CACHE_HOME` or `~/.cache` elsewhere). It runs in the background with an 800 ms
 budget: if it is not done by the time the command is, it is skipped and tried next time,
-and nothing is cached. A check that fails outright (no token while the repository is
-private, offline, a 404) is remembered for **one hour** only as "do not ask again yet",
+and nothing is cached. A check that fails outright (offline, a rate limit, a 404) is remembered for **one hour** only as "do not ask again yet",
 never as an answer, so someone who cannot reach the release does not pay a network
 round trip on every command, and a real answer is never hidden for a day. (The spec
 says to cache only successes; this back-off is a deliberate exception.) The banner is

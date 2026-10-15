@@ -3,39 +3,24 @@
 outfit is one static binary: Linux (amd64, arm64) and macOS (universal, so Apple
 Silicon and Intel). It needs git 2.36 or newer.
 
-## While the repository is private
+## Install
 
-The release files are only readable with a GitHub token that can read the
-repository. If you use the GitHub CLI (`gh auth login` once):
-
-```sh
-curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
-  https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
-```
-
-That puts your token in the command line, visible to other users of the same machine
-while it runs. To keep it out, let `gh` fetch the script:
-
-```sh
-gh api -H 'Accept: application/vnd.github.raw' repos/prosperity-solutions/outfit/contents/install.sh | sh
-```
-
-The first token is for fetching the script itself; the script then looks for a token
-on its own, in this order: `OUTFIT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, then
-`gh auth token`. It uses the first one it finds to ask the GitHub API for the
-release and to download its files. The token is never printed, never placed on a
-command line, sent only to the API host (not to wherever GitHub redirects the
-download), and only over https.
-
-## Once the repository is public
-
-No token needed:
+The repository and its releases are public: no login and no token.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
 ```
 
-With no token the script uses the public `releases/latest/download/…` URLs.
+The script uses the public `releases/latest/download/…` URLs (or `releases/download/v<version>/…` with
+`OUTFIT_VERSION`).
+
+**A token is used only when you set `OUTFIT_GITHUB_TOKEN` yourself**: a private fork or mirror, or a
+network that rate-limits anonymous downloads. The script then asks the GitHub API for the release
+and downloads its files through it. `GH_TOKEN`, `GITHUB_TOKEN` and `gh auth` are deliberately **not**
+looked at: an ambient token that is stale or belongs to another account would only make a public install
+fail, and is one more place a credential gets sent. The token is never printed, never placed on a
+command line, sent only to the API host (not to wherever GitHub redirects the download), and only over
+https.
 
 ## What the script does
 
@@ -83,7 +68,7 @@ With no token the script uses the public `releases/latest/download/…` URLs.
 |---|---|
 | `OUTFIT_VERSION` | Install this release (`0.3.1` or `v0.3.1`) instead of the latest. |
 | `OUTFIT_INSTALL_DIR` | Where to put the binary on a first install (default `~/.local/bin`). |
-| `OUTFIT_GITHUB_TOKEN` | A GitHub token with read access to the repository. |
+| `OUTFIT_GITHUB_TOKEN` | A GitHub token with read access to the repository (optional: the public download needs none; see above). |
 | `OUTFIT_BASE_URL` | Public download base. For tests. |
 | `OUTFIT_API_URL` | API base. For tests. |
 | `OUTFIT_SKIP_SIGNATURE` | `1` installs with the SHA-256 check only, when no signature checker can be had (no `minisign` on PATH and the pinned download failed). It never skips a check that can run. Prints a warning. |

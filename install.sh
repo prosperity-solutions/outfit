@@ -2,20 +2,21 @@
 # Install outfit from a GitHub release. Ported in spirit from veld's installer
 # (MIT; see NOTICE).
 #
-#   curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
-#     https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
 #
-# While the repository is private the download needs a GitHub token that can read
-# it. The script finds one the way `outfit update` does: OUTFIT_GITHUB_TOKEN,
-# GH_TOKEN, GITHUB_TOKEN, then `gh auth token`. With none, it uses the public
-# release URLs, which work once the repository is public.
+# The repository and its releases are public, so nothing needs a login or a token. A token
+# is used only when you set OUTFIT_GITHUB_TOKEN yourself (a private fork or mirror, or a
+# network that rate-limits anonymous downloads): then the script reads the release through
+# the GitHub API with it. GH_TOKEN, GITHUB_TOKEN and `gh auth` are deliberately not looked
+# at: an ambient token that is stale or for another account would only make a public
+# install fail, and is one more place a credential gets sent.
 #
 # Environment:
 #   OUTFIT_VERSION        Install this release (for example 0.3.1) instead of the latest.
 #   OUTFIT_INSTALL_DIR    Where to put the binary when outfit is not installed yet
 #                         (default ~/.local/bin). An existing install is replaced in
 #                         place, wherever `command -v outfit` finds it.
-#   OUTFIT_GITHUB_TOKEN   A GitHub token with read access to the repository.
+#   OUTFIT_GITHUB_TOKEN   A GitHub token with read access to the repository (optional, see above).
 #   OUTFIT_BASE_URL       Public download base (default https://github.com/prosperity-solutions/outfit).
 #                         For tests.
 #   OUTFIT_API_URL        API base (default https://api.github.com/repos/prosperity-solutions/outfit).
@@ -79,26 +80,18 @@ platform() {
 }
 
 find_token() {
-  token_source=""
-  for name in OUTFIT_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN; do
-    eval "token=\${$name:-}"
-    if [ -n "$token" ]; then token_source=$name; break; fi
-  done
-  if [ -z "$token" ] && command -v gh >/dev/null 2>&1; then
-    token=$(gh auth token --hostname github.com 2>/dev/null || true)
-    [ -z "$token" ] || token_source="gh auth token"
-  fi
+  token=${OUTFIT_GITHUB_TOKEN:-}
   # Tokens are [A-Za-z0-9_] plus dots and dashes. Anything else would break out of
   # the curl config line below, so treat it as no token.
   case "$token" in
-    *[!A-Za-z0-9_.-]*) say "ignoring the GitHub token from $token_source: it has unexpected characters" >&2; token="" ;;
+    *[!A-Za-z0-9_.-]*) say "ignoring OUTFIT_GITHUB_TOKEN: it has unexpected characters" >&2; token="" ;;
   esac
 }
 
 # fetch_public URL OUT
 fetch_public() {
   curl -fsSL --retry 3 --retry-delay 2 -o "$2" "$1" ||
-    err "could not download $1 (a private repository needs a token: set OUTFIT_GITHUB_TOKEN or run \`gh auth login\`)"
+    err "could not download $1 (is there a release, and are you online? behind a proxy or for a private fork, set OUTFIT_GITHUB_TOKEN)"
 }
 
 # fetch_api URL OUT ACCEPT. The token travels in a curl config on stdin, not in
@@ -107,7 +100,7 @@ fetch_public() {
 fetch_api() {
   printf 'header = "Authorization: Bearer %s"\n' "$token" |
     curl -fsSL --retry 3 --retry-delay 2 -K - -H "Accept: $3" -H "X-GitHub-Api-Version: 2022-11-28" -o "$2" "$1" ||
-    err "could not download $1 with the GitHub token from $token_source (does it have read access to $REPO? A stale GH_TOKEN or GITHUB_TOKEN wins over \`gh auth\`: unset it, or set OUTFIT_GITHUB_TOKEN to the one you want)"
+    err "could not download $1 with OUTFIT_GITHUB_TOKEN (does it have read access to $REPO? unset it to use the public download)"
 }
 
 # asset_list JSON prints "<id> <name>" for each release asset.

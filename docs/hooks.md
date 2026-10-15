@@ -53,8 +53,7 @@ back exactly (a test compares it). Your local and worktree profiles are kept (`-
 
 Whoever introduces outfit to a repository runs `outfit init --team` once. It adds one line to the
 **base** `AGENTS.md` (*"Optional: this repo supports outfit profiles; see docs/outfit.md to
-install."*) and writes `docs/outfit.md` (what outfit is, the install command for while the
-repository is private and for once it is public, the first commands, and the snippet a hook uses to
+install."*) and writes `docs/outfit.md` (what outfit is, the install command, the first commands, and the snippet a hook uses to
 read a toggle with or without outfit). Nothing is committed: the command prints the `git add` and
 `git commit` to run. It is idempotent (the line is added once; an existing `docs/outfit.md` is left
 exactly as it is, so a team's own edits are never overwritten), never writes through a link, and when

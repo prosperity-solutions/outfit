@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -252,20 +251,14 @@ func scrub(err error, token string) error {
 func (c *Client) statusError(u *url.URL, status int, auth bool) error {
 	switch {
 	case auth && (status == 401 || status == 403 || status == 404):
-		msg := fmt.Sprintf("GitHub answered %d to the token from %s: it cannot read %s, or that release does not exist", status, c.Token.Source, Repo)
-		if c.Token.Source == "gh auth token" {
-			// The active gh account cannot read the repository: another may.
-			return fixf("gh auth status   (shows the active account; then `gh auth switch`, or `gh auth login` with one that can read "+Repo+")", "%s", msg)
-		}
-		// An exported variable wins over `gh auth`, so logging in again would not help.
-		return fixf("unset "+c.Token.Source+"   (or set OUTFIT_GITHUB_TOKEN to a token that can read "+Repo+")",
-			"%s. An exported token wins over `gh auth`", msg)
-	case !auth && (status == 401 || status == 403 || status == 404):
-		fix := "gh auth login   (or set OUTFIT_GITHUB_TOKEN)"
-		if _, err := exec.LookPath("gh"); err != nil {
-			fix = "install the GitHub CLI (brew install gh, or https://cli.github.com), then gh auth login   (or set OUTFIT_GITHUB_TOKEN)"
-		}
-		return fixf(fix, "could not download %s%s (HTTP %d): that release does not exist, or the repository is private and needs a GitHub token", u.Host, u.Path, status)
+		return fixf("unset "+tokenEnv+"   (the public download needs no token), or set it to one that can read "+Repo,
+			"GitHub answered %d to the token from %s: it cannot read %s, or that release does not exist", status, c.Token.Source, Repo)
+	case !auth && status == 404:
+		return fixf("outfit update --check   (is there such a release? see https://github.com/"+Repo+"/releases)",
+			"could not download %s%s (HTTP 404): that release does not exist", u.Host, u.Path)
+	case !auth && (status == 401 || status == 403):
+		return fixf("try again later, or set "+tokenEnv+" to a GitHub token (it lifts the anonymous rate limit)",
+			"GitHub refused the download from %s%s (HTTP %d): a rate limit or a proxy in the way", u.Host, u.Path, status)
 	}
 	if status >= 500 || status == 429 {
 		return retryf(nil, "GitHub answered %d for %s", status, u.Path)

@@ -48,7 +48,7 @@ gofmt -l . && go vet ./... && golangci-lint run && go test -race ./...
 
 ## Pushing
 
-- `origin` is `github.com/prosperity-solutions/outfit`, a **private** repo. Plain
+- `origin` is `github.com/prosperity-solutions/outfit`, a **public** repo. Plain
   `git push` over SSH is the default. If you have no SSH key loaded, HTTPS with
   your `gh` login (`gh auth login`, scopes `repo` and `workflow`) works too; run
   once per clone:
@@ -85,10 +85,10 @@ gofmt -l . && go vet ./... && golangci-lint run && go test -race ./...
   prefer GoReleaser's quill; it was tried on the first release and macOS killed the
   signed binary on launch. The spec's own fallback is what ships. Why:
   `docs/macos-signing.md` ("Why not quill"). Do not switch back.
-- macOS minutes count about 10× against a private repo's quota. On PRs macOS runs
-  `unit`, one `e2e` leg and the short `signing` smoke job (it must run on macOS: the
-  release signs with the native `codesign`); the full macOS matrix runs on push to
-  `main` and in `release.yml`, which waits for that run before it publishes.
+- macOS runners are free for a public repository, so every leg (Apple git, Homebrew git, the Intel
+  Mac) runs on pull requests as well as on push; `release.yml` still waits for the run on `main`
+  before it publishes. The `signing` smoke job must run on macOS: the release signs with the native
+  `codesign`.
 - `all-green` is the check that stands for every job; the ruleset also names `Ship Workflow` and
   `Conventional Commits` (`docs/security.md`). Matrix jobs report
   expanded names (`e2e (ubuntu-24.04, 2.36)`), so a check called `e2e` never
@@ -136,5 +136,5 @@ A purely internal change says so in the PR body.
   `docs/HANDOVER.md` §7.2. When git disagrees with the docs, write the failing
   test, adapt the code, record it in `docs/git-behavior.md`.
 - Never disable a test to get to green.
-- macOS and Linux only. MIT licence. Private repo: install and update authenticate
-  with a GitHub token.
+- macOS and Linux only. MIT licence. Public repo: install and update need no token
+  (`OUTFIT_GITHUB_TOKEN` is used only when set, for a private fork or mirror).

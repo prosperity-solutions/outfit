@@ -253,22 +253,20 @@ check "an unknown argument is refused" rc_is 1
 rm -rf "$REL/pub"
 publish_api
 TOKEN=ghp_FAKEtoken0123456789
-for how in "OUTFIT_GITHUB_TOKEN" "GH_TOKEN" "GITHUB_TOKEN"; do
-  D=$WORK/api-$how
-  run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" "$how=$TOKEN"
-  check "token from $how: installs through the API" rc_is 0
-  check "  and never prints the token" bash -c '! grep -q "$1" "$2"' _ "$TOKEN" "$WORK/out"
-  check "  and the binary works" installed "$D"
-done
+D=$WORK/api-token
+run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" "OUTFIT_GITHUB_TOKEN=$TOKEN"
+check "OUTFIT_GITHUB_TOKEN: installs through the API" rc_is 0
+check "  and never prints the token" bash -c '! grep -q "$1" "$2"' _ "$TOKEN" "$WORK/out"
+check "  and the binary works" installed "$D"
 publish_api minify
 D=$WORK/api-min
-run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN
+run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" OUTFIT_GITHUB_TOKEN=$TOKEN
 check "a minified API response installs too" rc_is 0
 D=$WORK/api-pin
-run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN OUTFIT_VERSION=$VER
+run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" OUTFIT_GITHUB_TOKEN=$TOKEN OUTFIT_VERSION=$VER
 check "a pinned version installs through the API" rc_is 0
 D=$WORK/api-missing
-run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN OUTFIT_VERSION=9.9.9
+run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" OUTFIT_GITHUB_TOKEN=$TOKEN OUTFIT_VERSION=9.9.9
 check "a missing release fails" rc_is 1
 check "  and installs nothing" nothing_in "$D"
 # A validly signed OLDER build re-uploaded under a newer release is refused.
@@ -276,34 +274,38 @@ sed 's/"tag_name":"v'$VER'"/"tag_name":"v9.9.10"/; s/"tag_name": *"v'$VER'"/"tag
 cp "$REL/api/releases/latest" "$WORK/latest.orig"
 cp "$WORK/latest.json" "$REL/api/releases/latest"
 D=$WORK/api-replay
-run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN
+run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" OUTFIT_GITHUB_TOKEN=$TOKEN
 check "a build that is not the release's own is refused" rc_is 1
 check "  with the reason" out_has "not its own build"
 check "  and nothing was installed" nothing_in "$D"
 cp "$WORK/latest.orig" "$REL/api/releases/latest"
 D=$WORK/api-http
-run_install OUTFIT_API_URL="http://evil.example/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN
+run_install OUTFIT_API_URL="http://evil.example/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" OUTFIT_GITHUB_TOKEN=$TOKEN
 check "a token is never sent over plain http" rc_is 1
 check "  with the reason" out_has "refusing to send a GitHub token"
 for evil in "https://evil.example/api" "https://api.github.com.evil.example/api" "http://localhost:80@evil.example/api" "https://api.github.com@evil.example/api"; do
   D=$WORK/api-evil
-  run_install OUTFIT_API_URL="$evil" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN
+  run_install OUTFIT_API_URL="$evil" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" OUTFIT_GITHUB_TOKEN=$TOKEN
   check "a token is not sent to $evil" out_has "refusing to send a GitHub token"
 done
-# gh as the last-resort token source
+# Ambient tokens are not looked at: a stale GH_TOKEN, GITHUB_TOKEN or `gh auth` login must not turn a
+# public install into a failing API call (the API URL here is dead; the public layout is served).
+publish_public
 mkdir -p "$WORK/ghbin"
 cp -P "$WORK/bin"/* "$WORK/ghbin/"
-printf '#!/bin/sh\n[ "$1 $2" = "auth token" ] && echo %s\n' "$TOKEN" >"$WORK/ghbin/gh"
+printf '#!/bin/sh\necho gh-was-asked >>"%s/gh-asked"\necho %s\n' "$WORK" "$TOKEN" >"$WORK/ghbin/gh"
 chmod +x "$WORK/ghbin/gh"
-D=$WORK/api-gh
-env -i HOME="$H" PATH="$WORK/ghbin" OUTFIT_SKIP_SIGNATURE=1 OUTFIT_BOOTSTRAP_URL=file:///nonexistent OUTFIT_BOOTSTRAP_SHA256=0000000000000000000000000000000000000000000000000000000000000000 OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" sh "$ROOT/install.sh" >"$WORK/out" 2>&1
-RC=$?
-check "gh auth token is used when no variable is set" rc_is 0
-check "  and not printed" bash -c '! grep -q "$1" "$2"' _ "$TOKEN" "$WORK/out"
+D=$WORK/ambient
+run_install "$(base_env)" OUTFIT_API_URL="file://$REL/dead-api" OUTFIT_INSTALL_DIR="$D" GH_TOKEN=$TOKEN GITHUB_TOKEN=$TOKEN "PATH=$WORK/ghbin"
+check "GH_TOKEN and GITHUB_TOKEN are not used: the public download installs" rc_is 0
+check "  and gh is never asked for a login" bash -c '! test -e "$1"' _ "$WORK/gh-asked"
+check "  and the token is never printed" bash -c '! grep -q "$1" "$2"' _ "$TOKEN" "$WORK/out"
+rm -rf "$REL/pub"
+publish_api
 D=$WORK/api-badtoken
 run_install OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" 'GH_TOKEN=bad token"quote'
 check "a token with odd characters is ignored (and the public URLs are tried)" rc_is 1
-check "  with the token-needed hint" out_has "needs a token"
+check "  with the hint" out_has "set OUTFIT_GITHUB_TOKEN"
 
 # ── minisign ────────────────────────────────────────────────────────────────
 if [ "$HAVE_MINISIGN" = 1 ]; then

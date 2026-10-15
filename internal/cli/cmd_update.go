@@ -14,19 +14,15 @@ import (
 // installScript installs the latest release; installCommand does so into a folder
 // the user owns, for when outfit cannot replace itself where it lives.
 const (
-	installScript  = `curl -fsSL -H "Authorization: Bearer $(gh auth token)" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh`
-	installCommand = `curl -fsSL -H "Authorization: Bearer $(gh auth token)" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | OUTFIT_INSTALL_DIR="$HOME/.local/bin" sh`
+	installScript  = `curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh`
+	installCommand = `curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | OUTFIT_INSTALL_DIR="$HOME/.local/bin" sh`
 )
 
 // updateClient builds the release client from the environment: the token from
-// OUTFIT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN or `gh auth token`, the two bases
+// OUTFIT_GITHUB_TOKEN (none by default: the releases are public), the two bases
 // from OUTFIT_BASE_URL and OUTFIT_API_URL (for tests), the keys compiled in.
 func updateClient(ctx context.Context, e Env) (*update.Client, string) {
-	var gh func() string
-	if e.GHToken != nil {
-		gh = func() string { return e.GHToken(ctx) }
-	}
-	tok, ignored := update.FindToken(e.Getenv, gh)
+	tok, ignored := update.FindToken(e.Getenv)
 	keys := e.UpdateKeys
 	if keys == nil {
 		keys = update.Keys()
@@ -217,8 +213,7 @@ func bannerEnabled(e Env, args []string) bool {
 }
 
 // newBanner builds the banner for an eligible command. Everything that can be slow
-// (the `gh auth token` lookup included) happens inside the check, which runs in a
-// goroutine under an 800 ms budget.
+// happens inside the check, which runs in a goroutine under an 800 ms budget.
 func newBanner(e Env) *update.Banner {
 	return &update.Banner{
 		Current: e.Build.Version,

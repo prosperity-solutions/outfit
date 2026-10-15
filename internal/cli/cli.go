@@ -44,8 +44,6 @@ type Env struct {
 	// IsTTY reports whether stderr is a terminal (the update banner only shows
 	// there).
 	IsTTY bool
-	// GHToken returns the output of `gh auth token`, within ctx; nil means do not look.
-	GHToken func(context.Context) string
 	// opDone is set for the post-rewrite hook: the rebase it reports is over, so sync may
 	// absorb an editor's save that it would hold back while a rebase is open.
 	opDone bool
@@ -68,7 +66,7 @@ func Run(ctx context.Context, b Build, args []string, stdout, stderr io.Writer) 
 		return report(stdout, stderr, false, Errorf("cannot determine the working directory: %v", err))
 	}
 	return Execute(ctx, Env{Build: b, Dir: dir, Getenv: os.Getenv, Stdout: stdout, Stderr: stderr, Stdin: os.Stdin,
-		Exe: stableExe(), IsTTY: isTTY(os.Stderr), GHToken: update.GHAuthToken}, args)
+		Exe: stableExe(), IsTTY: isTTY(os.Stderr)}, args)
 }
 
 // isTTY reports whether f is a terminal: a character device that is not /dev/null

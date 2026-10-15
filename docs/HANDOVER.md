@@ -1,5 +1,13 @@
 # Handover: build `outfit`, fully autonomous
 
+> **Update, 2026-10-15:** the owner made the repository **public** after the build. This document is the
+> spec the build followed and is otherwise unedited, so where it says the repository is private (the
+> "stays private" rule, the token lookup in §5 and §8.5, the install command "while the repo is
+> private", the macOS minutes cost) read it as history. Today: no token is needed to install or update
+> (`OUTFIT_GITHUB_TOKEN` is used only when set), macOS runners are free, and the settings that matter
+> for a public repository are in [security.md](security.md). §12 also no longer holds: a profile can
+> replace a whole directory ([profiles.md](profiles.md)).
+
 ## For you, the human: 10 minutes before you paste
 
 1. **The repo `prosperity-solutions/outfit` already exists and is PRIVATE. It stays private.** The agent must never change its visibility. Everything below works against a private repo: install and update authenticate with a GitHub token (§5, §8.5).

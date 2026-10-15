@@ -3,11 +3,10 @@
 Your own setup of a git repository, without touching anyone else's.
 
 ```sh
-curl -fsSL -H "Authorization: Bearer $(gh auth token)" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
 ```
 
-(One line, while the repository is private: it needs a GitHub login that can read it. No token once it
-is public. More below.)
+(One line, no login and no token. More below.)
 
 A **profile** changes two things, only on your machine:
 
@@ -52,23 +51,7 @@ without outfit, and `uninstall`.
 
 ## Install
 
-The repository is private for now, so the download needs a GitHub token that can
-read it. With the GitHub CLI signed in (`gh auth login`):
-
-```sh
-curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
-  https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
-```
-
-That puts your token on the command line, where other users of a shared machine can
-see it. To keep it out, let `gh` fetch the script instead (the script then finds the
-token itself):
-
-```sh
-gh api -H 'Accept: application/vnd.github.raw' repos/prosperity-solutions/outfit/contents/install.sh | sh
-```
-
-Once the repository is public, no token is needed:
+No login and no token:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
@@ -167,3 +150,11 @@ gofmt -l . && go vet ./... && golangci-lint run && go test -race ./...
 ```
 
 MIT licensed.
+
+## Contributing
+
+Issues and pull requests are welcome. Every change here goes through one required workflow
+([docs/ship.md](docs/ship.md)) whose check, `Ship Workflow`, looks for a stamp that only that workflow
+produces: a pull request from outside it stays red until a maintainer adds the `no-ship` label, so
+open an issue first for anything big. To report a security problem privately, see
+[SECURITY.md](SECURITY.md).

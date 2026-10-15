@@ -51,13 +51,7 @@ without a dirty ` + "`git status`" + `. **You do not need it:** without outfit, 
 
 ## Install
 
-While the outfit repository is private, with a GitHub login that can read it:
-
-` + "```sh" + `
-curl -fsSL -H "Authorization: Bearer $(gh auth token)" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
-` + "```" + `
-
-Once it is public (no login needed):
+One line, no login and no token:
 
 ` + "```sh" + `
 curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh

@@ -9,8 +9,9 @@ outfit uninstall           # puts every file back, undoes hooks and settings (yo
 outfit uninstall --purge   # ... and deletes your local and worktree profiles
 ```
 
-While the repository is private, installing and updating need a GitHub token that can read it:
-`OUTFIT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth login`. Both verify the SHA-256
+The repository and its releases are public: installing and updating need no login and no token.
+Only `OUTFIT_GITHUB_TOKEN` is ever used, and only when you set it (a private fork or mirror, or a
+rate-limited network); `GH_TOKEN`, `GITHUB_TOKEN` and `gh auth` are not looked at. Both verify the SHA-256
 and the minisign signature of the release. `outfit update` does it in-process; `install.sh`
 uses a `minisign` on your PATH or, when there is none, downloads a pinned copy of the
 official build and checks its hash first, so nothing has to be installed beforehand. `outfit update` never

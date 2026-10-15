@@ -94,7 +94,7 @@ func TestFetchThroughTheAPIWithAToken(t *testing.T) {
 	}
 }
 
-func TestPrivateRepositoryErrorsNameTheFix(t *testing.T) {
+func TestPrivateForkErrorsNameTheFix(t *testing.T) {
 	f := testkit.NewFakeRelease(t, plat)
 	f.Private, f.Token = true, "ghp_right"
 	f.Add("0.2.0")
@@ -102,14 +102,14 @@ func TestPrivateRepositoryErrorsNameTheFix(t *testing.T) {
 	// No token: the public URLs answer 404.
 	_, err := newClient(f).Fetch(context.Background(), nil)
 	var ue *Error
-	if !errors.As(err, &ue) || !strings.Contains(ue.Fix, "gh auth login") || !strings.Contains(ue.Fix, "OUTFIT_GITHUB_TOKEN") {
+	if !errors.As(err, &ue) || !strings.Contains(ue.Msg, "HTTP 404") || strings.Contains(ue.Fix+ue.Msg, "gh auth") {
 		t.Fatalf("no-token error = %#v", err)
 	}
 	// A wrong token: names where it came from, never its value.
 	c := newClient(f)
-	c.Token = Token{Value: "ghp_wrongtoken", Source: "GITHUB_TOKEN"}
+	c.Token = Token{Value: "ghp_wrongtoken", Source: "OUTFIT_GITHUB_TOKEN"}
 	_, err = c.Fetch(context.Background(), nil)
-	if !errors.As(err, &ue) || !strings.Contains(ue.Msg, "GITHUB_TOKEN") || strings.Contains(ue.Msg+ue.Fix, "ghp_wrongtoken") {
+	if !errors.As(err, &ue) || !strings.Contains(ue.Msg, "OUTFIT_GITHUB_TOKEN") || !strings.Contains(ue.Fix, "unset OUTFIT_GITHUB_TOKEN") || strings.Contains(ue.Msg+ue.Fix, "ghp_wrongtoken") {
 		t.Fatalf("wrong-token error = %#v", err)
 	}
 }
@@ -216,28 +216,19 @@ func TestParseVersion(t *testing.T) {
 	}
 }
 
-func TestFindTokenOrderAndCharacters(t *testing.T) {
-	env := map[string]string{"GITHUB_TOKEN": "c", "GH_TOKEN": "b", "OUTFIT_GITHUB_TOKEN": "a"}
+func TestFindTokenReadsOnlyOutfitGithubToken(t *testing.T) {
+	env := map[string]string{"GITHUB_TOKEN": "c", "GH_TOKEN": "b"}
 	get := func(k string) string { return env[k] }
-	gh := func() string { return "fromgh" }
-	if tok, _ := FindToken(get, gh); tok.Value != "a" || tok.Source != "OUTFIT_GITHUB_TOKEN" {
+	if tok, _ := FindToken(get); tok.Value != "" {
+		t.Fatalf("an ambient GH_TOKEN or GITHUB_TOKEN must not be used: %+v", tok)
+	}
+	env["OUTFIT_GITHUB_TOKEN"] = " a "
+	if tok, _ := FindToken(get); tok.Value != "a" || tok.Source != "OUTFIT_GITHUB_TOKEN" {
 		t.Fatalf("tok = %+v", tok)
 	}
-	delete(env, "OUTFIT_GITHUB_TOKEN")
-	if tok, _ := FindToken(get, gh); tok.Source != "GH_TOKEN" {
-		t.Fatalf("tok = %+v", tok)
-	}
-	delete(env, "GH_TOKEN")
-	delete(env, "GITHUB_TOKEN")
-	if tok, _ := FindToken(get, gh); tok.Source != "gh auth token" || tok.Value != "fromgh" {
-		t.Fatalf("tok = %+v", tok)
-	}
-	if tok, _ := FindToken(get, nil); tok.Value != "" {
-		t.Fatalf("a nil gh must not be called: %+v", tok)
-	}
-	env["GH_TOKEN"] = "bad token\"quote"
-	tok, ignored := FindToken(get, gh)
-	if tok.Value != "" || !strings.Contains(ignored, "GH_TOKEN") || strings.Contains(ignored, "quote") {
+	env["OUTFIT_GITHUB_TOKEN"] = "bad token\"quote"
+	tok, ignored := FindToken(get)
+	if tok.Value != "" || !strings.Contains(ignored, "OUTFIT_GITHUB_TOKEN") || strings.Contains(ignored, "quote") {
 		t.Fatalf("tok = %+v ignored = %q", tok, ignored)
 	}
 }

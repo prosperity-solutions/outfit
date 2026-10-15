@@ -204,13 +204,18 @@ func TestUpdateSecondRunExitsZeroWithANote(t *testing.T) {
 	}
 }
 
-func TestUpdatePrivateRepoWithAndWithoutAToken(t *testing.T) {
+func TestUpdatePrivateForkNeedsAnExplicitToken(t *testing.T) {
 	f := newUpdate(t)
 	f.rel.Private, f.rel.Token = true, "ghp_theright1token"
-	if code := f.run("0.1.0", "update"); code != cli.ExitError || !strings.Contains(f.errb.String(), "fix: gh auth login") {
+	if code := f.run("0.1.0", "update"); code != cli.ExitError || !strings.Contains(f.errb.String(), "HTTP 404") {
 		t.Fatalf("no token: code=%d err=%q", code, f.errb.String())
 	}
-	f.env["GH_TOKEN"] = "ghp_theright1token"
+	// Ambient tokens are not looked at, however right they are.
+	f.env["GH_TOKEN"], f.env["GITHUB_TOKEN"] = "ghp_theright1token", "ghp_theright1token"
+	if code := f.run("0.1.0", "update"); code != cli.ExitError || f.installed() != string(testkit.Binary("0.1.0")) {
+		t.Fatalf("an ambient token was used: code=%d err=%q", code, f.errb.String())
+	}
+	f.env["OUTFIT_GITHUB_TOKEN"] = "ghp_theright1token"
 	if code := f.run("0.1.0", "update"); code != 0 || f.installed() != string(testkit.Binary("0.2.0")) {
 		t.Fatalf("token: code=%d err=%q", code, f.errb.String())
 	}
@@ -400,22 +405,13 @@ func TestUpdateRetryFixKeepsWhatWasAsked(t *testing.T) {
 	}
 }
 
-func TestUpdateTokenFixDependsOnWhereTheTokenCameFrom(t *testing.T) {
+func TestUpdateStaleTokenIsNamedAndNeverPrinted(t *testing.T) {
 	f := newUpdate(t)
 	f.rel.Private, f.rel.Token = true, "ghp_theright1token"
-	f.env["GH_TOKEN"] = "ghp_stale0token"
+	f.env["OUTFIT_GITHUB_TOKEN"] = "ghp_stale0token"
 	f.run("0.1.0", "update")
-	if got := f.errb.String(); !strings.Contains(got, "fix: unset GH_TOKEN") || strings.Contains(got, "ghp_stale0token") {
-		t.Fatalf("env token: %q", got)
-	}
-	delete(f.env, "GH_TOKEN")
-	cli.Execute(context.Background(), cli.Env{
-		Build: cli.Build{Version: "0.1.0"}, Dir: f.home, Getenv: func(k string) string { return f.env[k] },
-		Stdout: &f.out, Stderr: &f.errb, Exe: f.exe, UpdateKeys: f.rel.Keys,
-		GHToken: func(context.Context) string { return "ghp_wrongaccount" },
-	}, []string{"update"})
-	if got := f.errb.String(); !strings.Contains(got, "gh auth status") || !strings.Contains(got, "gh auth switch") {
-		t.Fatalf("gh token: %q", got)
+	if got := f.errb.String(); !strings.Contains(got, "fix: unset OUTFIT_GITHUB_TOKEN") || strings.Contains(got, "ghp_stale0token") {
+		t.Fatalf("stale token: %q", got)
 	}
 }
 

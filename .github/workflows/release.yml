@@ -327,8 +327,7 @@ jobs:
           python3 -m http.server 8123 --bind 127.0.0.1 --directory site >server.log 2>&1 &
           for _ in $(seq 1 30); do curl -fs http://127.0.0.1:8123/releases/latest/download/checksums.txt >/dev/null && break; sleep 1; done
           export OUTFIT_BASE_URL=http://127.0.0.1:8123 OUTFIT_INSTALL_DIR="$RUNNER_TEMP/bin"
-          # No token: this exercises the public-URL path. (Runners have none, and a
-          # stray one would send the script to the API instead.)
+          # No token: this exercises the public-URL path, the one every user takes.
           unset GH_TOKEN GITHUB_TOKEN OUTFIT_GITHUB_TOKEN
           sh install.sh | tee install.log
           # With no minisign on the image the pinned download must be what checked it.
@@ -408,8 +407,8 @@ jobs:
   # A statement, signed with this run's OIDC identity (Sigstore), that these exact files were
   # built from this commit by this workflow. It lives in its own job so that `id-token: write`
   # (the ability to mint that identity) is held by nothing but the download and the attest
-  # action, not by the job that runs Go tools and pushes the tag. Private repositories need
-  # GitHub Enterprise Cloud (this one is on it). `publish` refuses to continue without it.
+  # action, not by the job that runs Go tools and pushes the tag. Attestations are free for a
+  # public repository. `publish` refuses to continue without it.
   attest:
     name: Attest build provenance
     needs: [version, build, smoke, ci]
@@ -542,7 +541,7 @@ jobs:
       - name: Download install.sh from the real URL
         run: |
           for attempt in $(seq 1 11); do
-            if curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -o "$RUNNER_TEMP/install.sh" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh; then
+            if curl -fsSL -o "$RUNNER_TEMP/install.sh" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh; then
               exit 0
             fi
             echo "attempt $attempt of 11 failed; retrying in 60s"
