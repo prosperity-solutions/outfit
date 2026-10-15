@@ -37,8 +37,13 @@ func TestSkillsNameOnlyRealCommandsAndFlags(t *testing.T) {
 		texts["topics/"+tp.Name+".md"] = tp.Body
 	}
 	span := regexp.MustCompile("`([^`\n]+)`")
-	cmdUse := regexp.MustCompile(`(?:^|[\s(|])outfit ([a-z][a-z-]*)\b([^|;&\n]*)`)
+	cmdUse := regexp.MustCompile(`(?:^|[\s(|])outfit ([a-z][a-z-]*)\b([^\n]*)`)
 	flagUse := regexp.MustCompile(`--([a-z][a-z-]*)`)
+	seen := map[string]bool{}
+	topics := map[string]bool{"install": true, "remove": true}
+	for _, n := range skills.Names() {
+		topics[n] = true
+	}
 	for name, text := range texts {
 		var code []string
 		inFence := false
@@ -56,12 +61,26 @@ func TestSkillsNameOnlyRealCommandsAndFlags(t *testing.T) {
 				code = append(code, m[1])
 			}
 		}
+		// A written alternation (`[--here\|--global]`, `on\|off`) is one command; a real pipe, `||`,
+		// `;` or `)` ends it.
+		var segs []string
 		for _, c := range code {
+			c = strings.ReplaceAll(c, `\|`, "/")
+			segs = append(segs, regexp.MustCompile(`[|;&)]+`).Split(c, -1)...)
+		}
+		for _, c := range segs {
 			for _, m := range cmdUse.FindAllStringSubmatch(c, -1) {
 				cmd := m[1]
 				if !cmds[cmd] {
 					t.Errorf("%s: %q names `outfit %s`, which is not a command", name, c, cmd)
 					continue
+				}
+				seen[cmd] = true
+				if cmd == "skills" {
+					// The word after `skills` is a topic (or install/remove, or a placeholder).
+					if w := strings.Fields(m[2]); len(w) > 0 && !strings.HasPrefix(w[0], "-") && !strings.HasPrefix(w[0], "<") && !strings.HasPrefix(w[0], "[") && !topics[strings.Trim(w[0], "`.,;:)")] {
+						t.Errorf("%s: %q names the skills topic %q, which does not exist", name, c, w[0])
+					}
 				}
 				if cmd == "hook" || cmd == "help" {
 					continue
@@ -73,6 +92,13 @@ func TestSkillsNameOnlyRealCommandsAndFlags(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+	// And the other way: a command with no mention in any topic is documentation an agent
+	// will never be given. (`hook` is plumbing run by git, `help` prints the usage.)
+	for cmd := range cmds {
+		if cmd != "hook" && cmd != "help" && !seen[cmd] {
+			t.Errorf("no topic or pointer mentions `outfit %s`: add it to the topic that covers it (skills/topics/)", cmd)
 		}
 	}
 }

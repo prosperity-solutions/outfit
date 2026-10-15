@@ -35,5 +35,5 @@ Before you edit a file in a repository that has `.outfit/`, run `outfit status`:
 you are about to change may be a link into a profile, and the edit then goes to the
 profile, not to the team's file. `outfit skills basics` says what that means.
 
-If `outfit` is not installed: `curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh`
-(the repository is private while it is private: see `docs/install.md` for the token).
+If `outfit` is not installed, do not install it yourself: tell the person, and let them run
+the installer (once outfit is there, `outfit skills updating` has the details).

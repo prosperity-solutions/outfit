@@ -27,7 +27,8 @@ A profile swaps **tracked files only**: a file the repository does not have is s
 | worktree | `<git-dir>/outfit/worktree-profiles/<name>/` | never; goes with the worktree |
 
 Names are unique across tiers; a committed profile wins a clash. `tier:name` (for example
-`local:mine`) reaches a profile the winner hides.
+`local:mine`) reaches a profile the winner hides, in `outfit show` and `outfit new --from` (other
+commands take a plain name).
 
 ## How a swap works
 

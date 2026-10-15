@@ -105,8 +105,7 @@ and `outfit skills basics` prints the one to read first. `outfit skills install`
 small pointer skill in `~/.claude/skills/outfit/` and `~/.agents/skills/outfit/` (or, with
 `--project`, in this worktree, kept out of commits), and `outfit skills remove` takes it
 away. The pointer holds no documentation, so it never goes stale: what it points at is
-the text of the outfit you have installed. Without outfit installed, `npx skills add
-prosperity-solutions/outfit` adds the same pointer. Details: [docs/skills.md](docs/skills.md).
+the text of the outfit you have installed. Details: [docs/skills.md](docs/skills.md).
 
 ## How it decides
 

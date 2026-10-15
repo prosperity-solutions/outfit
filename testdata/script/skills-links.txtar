@@ -1,0 +1,63 @@
+# `outfit skills install|remove` and links (found in review): a repository can commit
+# `.claude` as a link, plant a link where the temp file goes, and a dotfiles setup links
+# `~/.claude/skills` on purpose. The skill never overwrites what a link points at, never
+# removes a link, and the shared exclude entry outlives the first worktree to remove it.
+fixture repo team worktrees=1
+cd repo
+
+# A planted link at the temp file name is removed as an entry, never written through.
+exec mkdir -p .claude/skills/outfit
+exec sh -c 'echo precious > .env'
+exec sh -c 'echo /.env >> .git/info/exclude'
+exec ln -s ../../../.env .claude/skills/outfit/SKILL.md.outfit-tmp
+outfit skills install --project
+grep '^precious$' .env
+grep 'managed-by: outfit' .claude/skills/outfit/SKILL.md
+! exists .claude/skills/outfit/SKILL.md.outfit-tmp
+outfit skills remove --project
+
+# Two worktrees: the exclude file is shared, so the entry stays until the last one removes.
+outfit skills install --project
+cd ../repo-wt1
+outfit skills install --project
+outfit skills remove --project
+cd ../repo
+exec git add -A
+exec git status --short
+! stdout 'skills'
+exec git reset -q
+grep 'outfit skills install --project' .git/info/exclude
+outfit skills remove --project
+! grep 'outfit skills install --project' .git/info/exclude
+
+# A committed link where `.claude` should be: git does not look through it, outfit does.
+exec git checkout -q -b hostile
+exec rm -rf .claude .agents
+exec mkdir -p x/skills/outfit
+exec ln -s x .claude
+exec git add -f .claude
+exec git commit -qm 'chore: a link'
+! outfit skills install --project
+stderr 'link'
+! exists x/skills/outfit/SKILL.md
+! outfit skills remove --project
+exec git status --short
+! stdout .
+
+# Home: a dotfiles link that stays inside the home directory is followed on install and is
+# still there after remove (only empty real directories go).
+exec mkdir -p $HOME/dot/skills/other $HOME/.claude
+exec ln -s ../dot/skills $HOME/.claude/skills
+outfit skills install
+exists $HOME/dot/skills/outfit/SKILL.md
+outfit skills remove
+exists $HOME/dot/skills/other
+exec test -L $HOME/.claude/skills
+! exists $HOME/dot/skills/outfit
+# An absolute link leaves the folder os.Root works in: refused with the reason, exit 3.
+exec rm $HOME/.claude/skills
+exec ln -s $HOME/dot/skills $HOME/.claude/skills
+! outfit skills install
+stderr 'points outside'
+! outfit skills install --json
+stdout '"code":3'

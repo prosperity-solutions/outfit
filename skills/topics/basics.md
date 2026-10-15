@@ -9,7 +9,7 @@ the team. `git status` stays truthful.
 1. **A file can be a link.** With a profile active, a swapped file (say `AGENTS.md`) is a
    symlink into `.outfit/profiles/<profile>/AGENTS.md` (committed profile) or into the git
    directory (local or worktree profile). Editing it edits the *profile's* file. The
-   team's file is untouched. `outfit status` lists every swapped path; check it first.
+   team's file is untouched. A local or worktree profile has no history: there is no undo. `outfit status` lists every swapped path; check it first.
 2. **An editor's atomic save replaces the link with a regular file.** `outfit sync` notices and
    copies the new bytes into the profile ("absorb"). If the profile's file changed too (an
    edit through the link since the last `outfit` command counts), it quarantines both under
@@ -19,7 +19,8 @@ the team. `git status` stays truthful.
    checkout, merge and rewrite; `reset --hard` fires nothing.
 4. **Never commit a swapped path or the symlink.** The pre-commit guard refuses it and
    prints the fix. Edits to a committed profile show as ` M .outfit/profiles/<name>/…`:
-   that is where your edit went; commit it there.
+   that is where your edit went. A committed profile is **shared with the team**, so ask the
+   person before you commit into one (a local or worktree profile is never in git).
 5. **Ask for JSON.** Every command takes `--json`; failures carry `fix` (the exact command)
    and `retryable`.
 

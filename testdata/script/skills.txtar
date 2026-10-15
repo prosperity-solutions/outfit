@@ -28,6 +28,12 @@ stderr 'belong to'
 ! outfit skills basics profiles
 stderr 'usage: outfit skills'
 
+# Reading needs no repository at all.
+cd $WORK
+outfit skills basics
+stdout '^# outfit: the basics'
+cd repo
+
 # Nothing above touched the repository or the home directory.
 exec git status --short
 ! stdout .
@@ -35,7 +41,7 @@ exec git status --short
 
 # Global install: both agent directories, once; a second run changes nothing.
 outfit skills install --dry-run
-stdout 'created ~/.claude/skills/outfit/SKILL.md'
+stdout 'would be created ~/.claude/skills/outfit/SKILL.md'
 stdout 'dry run'
 ! exists $HOME/.claude
 outfit skills install
@@ -72,6 +78,21 @@ grep '^mine$' $HOME/.agents/skills/outfit/SKILL.md
 ! outfit skills remove
 grep '^mine$' $HOME/.agents/skills/outfit/SKILL.md
 exec rm $HOME/.agents/skills/outfit/SKILL.md
+# ... and remove checks every target before it removes any: ours in .claude stays while a
+# foreign one is in .agents.
+outfit skills install
+exec sh -c 'echo "mine" > "$HOME/.agents/skills/outfit/SKILL.md"'
+! outfit skills remove
+exists $HOME/.claude/skills/outfit/SKILL.md
+exec rm $HOME/.agents/skills/outfit/SKILL.md
+outfit skills remove
+
+# A FIFO where SKILL.md should be is refused, not waited on.
+exec mkdir -p $HOME/.claude/skills/outfit
+exec mkfifo $HOME/.claude/skills/outfit/SKILL.md
+! outfit skills remove
+! outfit skills install
+exec rm $HOME/.claude/skills/outfit/SKILL.md
 
 # A link at the target is never written through.
 exec mkdir -p $HOME/.claude/skills/outfit $WORK/elsewhere

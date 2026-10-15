@@ -35,7 +35,7 @@ the repository tracks. `.DS_Store`, `*~`, `*.swp` are never profile files.
 ## Editing the active profile's files
 
 Edit the swapped path as usual (it is a link). Then `outfit sync` (absorbs an atomic save) and,
-for a committed profile, commit the profile's file. To undo an edit, `git checkout -- AGENTS.md`
+for a committed profile, commit the profile's file (it is the team's: ask the person first). To undo an edit, `git checkout -- AGENTS.md`
 and `git restore AGENTS.md` do not work (git hides that path and answers "did not match any
 file"); use `git restore .outfit/profiles/<profile>/AGENTS.md` for a committed profile. A local
 or worktree profile has no history to restore from.

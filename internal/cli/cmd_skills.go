@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -165,15 +166,18 @@ func skillsInstall(ctx context.Context, e Env, remove, project, dry, asJSON bool
 	}
 	var err error
 	if remove {
-		out.Files, err = agents.RemoveSkill(out.Base, dry)
+		out.Files, err = agents.RemoveSkill(out.Base, dry, project)
 	} else {
-		out.Files, err = agents.InstallSkill(out.Base, dry)
+		out.Files, err = agents.InstallSkill(out.Base, dry, project)
 	}
 	if err != nil {
 		code := ExitError
 		msg := err.Error()
 		fix := ""
-		if errors.Is(err, agents.ErrSkillNotOurs) {
+		if errors.Is(err, agents.ErrSkillLink) {
+			code = ExitNeedsHuman
+			fix = "replace the link with a real directory, or install into your home directory: outfit skills install"
+		} else if errors.Is(err, agents.ErrSkillNotOurs) {
 			code = ExitNeedsHuman
 			msg += ": a SKILL.md outfit did not write is left alone"
 			fix = "move or delete that file, then rerun"
@@ -194,10 +198,17 @@ func skillsInstall(ctx context.Context, e Env, remove, project, dry, asJSON bool
 		where = "."
 	}
 	for _, f := range out.Files {
-		fmt.Fprintf(e.Stdout, "%s %s/%s\n", f.Action, where, f.Path)
+		act := f.Action
+		if dry {
+			act = "would be " + act
+		}
+		fmt.Fprintf(e.Stdout, "%s %s/%s\n", act, where, f.Path)
 	}
-	if dry {
+	switch {
+	case dry:
 		fmt.Fprintln(e.Stdout, "(dry run: nothing was changed)")
+	case !remove:
+		fmt.Fprintln(e.Stdout, "Agents pick the skill up when their next session starts. What it points at: outfit skills")
 	}
 	return ExitOK
 }
@@ -210,6 +221,11 @@ func skillsExclude(ctx context.Context, l *loaded, remove bool) error {
 		line := "/" + d + "/"
 		comment := "# outfit skills install --project: the personal agent skill stays out of commits (" + d + ")"
 		if remove {
+			// The exclude file is shared by every worktree of the clone: the entry stays while
+			// another worktree still has its own copy, or `git add -A` there would commit it.
+			if skillElsewhere(l, d) {
+				continue
+			}
 			if _, err := apply.RemoveExcludeEntry(excl, comment, line); err != nil {
 				return err
 			}
@@ -223,4 +239,17 @@ func skillsExclude(ctx context.Context, l *loaded, remove bool) error {
 		}
 	}
 	return nil
+}
+
+// skillElsewhere reports whether a worktree other than this one still has outfit's skill in d.
+func skillElsewhere(l *loaded, d string) bool {
+	for _, w := range uninstallWorktrees(l) {
+		if w.Path == "" || filepath.Clean(w.Path) == filepath.Clean(l.Repo.WorkTree) {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(w.Path, d, agents.SkillFile)); err == nil {
+			return true
+		}
+	}
+	return false
 }

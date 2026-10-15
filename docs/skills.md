@@ -36,18 +36,23 @@ be standing anywhere. A wrong topic name lists the topics and suggests the neare
 - write only a `SKILL.md` whose frontmatter carries `managed-by: outfit`. A `SKILL.md` you
   wrote yourself is never replaced or removed (exit 3, the file named); nothing is written
   until every target has been checked;
-- never write through a link (a symlinked skills folder or `SKILL.md` is refused), and write the
-  file beside its place and rename it, so a reader never sees half a file;
+- never write through a link outside the folder (an absolute link, or one that leaves it, is
+  refused with exit 3); inside a worktree (`--project`) any link on the way is refused, because
+  a repository can commit `.claude` as a link and git does not look through links; in your home
+  directory a relative link that stays inside it (a dotfiles setup) is followed. The file is
+  written beside its place, created exclusively (a leftover temp file or a planted link there is
+  removed, never followed) and renamed into place, so a reader never sees half a file;
 - are idempotent: a second `install` says `unchanged`; an older pointer of outfit's own is
   `updated`;
 - with `--project`, keep the files out of `git add -A` through `.git/info/exclude` (the skill is
   personal, like the SessionStart entry), take that entry away on `remove`, and refuse a skill
   folder git tracks (the team's own);
-- on `remove`, delete the `outfit` and `skills` folders they made when empty, never `.claude`
-  or `.agents` themselves.
-
-Without outfit installed, `npx skills add prosperity-solutions/outfit` adds the same pointer
-from this repository.
+- on `remove`, check every target first (a foreign `SKILL.md` anywhere means nothing is removed),
+  delete the `outfit` and `skills` folders only while they are empty real directories (never a
+  link, never `.claude` or `.agents` themselves), and keep the shared `.git/info/exclude` entry
+  while another worktree still has the skill;
+- are separate from `outfit uninstall`, which does not remove skills: `outfit skills remove`
+  does (run it in each worktree you used `--project` in).
 
 ## Keeping the documentation true
 
