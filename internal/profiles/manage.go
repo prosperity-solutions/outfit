@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/prosperity-solutions/outfit/internal/fault"
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 	"github.com/prosperity-solutions/outfit/internal/plan"
 	"github.com/prosperity-solutions/outfit/internal/repo"
@@ -240,6 +241,7 @@ func create(parent, name string, srcs []source) (Copy, error) {
 		}
 		n++
 	}
+	fault.Point("profile built beside its place, not yet renamed")
 	if err := root.Rename(name, final); err != nil {
 		return fail(fmt.Errorf("cannot put the profile in place: %w", err))
 	}
@@ -322,6 +324,7 @@ func Promote(ctx context.Context, g gitx.Client, r repo.Repo, l Listing, name st
 	if err != nil {
 		return Copy{}, err
 	}
+	fault.Point("promote: copied, local copy not yet removed")
 	root, err := os.OpenRoot(TierDir(r, Local))
 	if err != nil {
 		return c, fmt.Errorf("copied to %s, but cannot open the local profiles to remove the old copy: %w", c.Dir, err)
@@ -363,6 +366,9 @@ func IsJunk(n string) bool {
 	switch n {
 	case ".DS_Store", "Thumbs.db", "desktop.ini":
 		return true
+	}
+	if strings.HasPrefix(n, ".tmp-") || strings.HasPrefix(n, ".new-") {
+		return true // what a killed atomic write or a killed profile copy leaves behind
 	}
 	for _, suf := range []string{"~", ".swp", ".swo", ".swx", ".tmp", ".orig", ".rej", ".bak"} {
 		if strings.HasSuffix(n, suf) {

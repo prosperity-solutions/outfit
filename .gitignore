@@ -5,3 +5,6 @@
 *.test
 .DS_Store
 /.local/
+
+# rapid writes the failing sequence of a property test here
+testdata/rapid/

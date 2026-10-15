@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/prosperity-solutions/outfit/internal/fault"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -211,6 +212,7 @@ func WriteFileAtomic(path string, data []byte, mode os.FileMode) error {
 		os.Remove(name)
 		return err
 	}
+	fault.Point("a file is written under a temporary name, not yet renamed")
 	if err := os.Rename(name, path); err != nil {
 		os.Remove(name)
 		return err

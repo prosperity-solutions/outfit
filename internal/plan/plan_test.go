@@ -429,3 +429,20 @@ func TestPlanNeverTouchesARecordedPathThatIsMidMerge(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanRemovesOurStrayLinksNextToASwappedPath(t *testing.T) {
+	w, f := inSync()
+	pf := f.Paths["AGENTS.md"]
+	pf.StrayLinks = []string{".outfit-link~AGENTS.md", "AGENTS.md~cruft"}
+	f.Paths["AGENTS.md"] = pf
+	got := Plan(w, f)
+	var removed []string
+	for _, a := range got {
+		if a.Kind == RemoveLink {
+			removed = append(removed, a.Path)
+		}
+	}
+	if len(removed) != 2 || removed[0] != ".outfit-link~AGENTS.md" || removed[1] != "AGENTS.md~cruft" {
+		t.Fatalf("%v %v", kinds(got), removed)
+	}
+}

@@ -37,7 +37,27 @@ func FuzzExtractBinary(f *testing.F) {
 	f.Add(tarGz([]tar.Header{{Name: "dir/outfit", Typeflag: tar.TypeReg}}, [][]byte{[]byte("x")}))
 	f.Add(tarGz([]tar.Header{{Name: ".hidden", Typeflag: tar.TypeReg}}, [][]byte{[]byte("x")}))
 	f.Add([]byte("not gzip at all"))
-	f.Fuzz(func(t *testing.T, archive []byte) {
+	f.Fuzz(func(t *testing.T, archive []byte) { checkExtract(t, archive) })
+}
+
+// FuzzExtractBinaryEntries fuzzes the entries themselves (names, types, links, sizes, order)
+// instead of gzip bytes, almost all of which fail the checksum before a header is read.
+func FuzzExtractBinaryEntries(f *testing.F) {
+	f.Add("outfit", byte('0'), "bin", "LICENSE", byte('0'), "mit", "")
+	f.Add("outfit", byte('2'), "", "x", byte('0'), "y", "/etc/passwd")
+	f.Add("outfit", byte('0'), "a", "outfit", byte('0'), "b", "")
+	f.Add("../outfit", byte('0'), "a", "", byte('0'), "", "")
+	f.Add("a/b", byte('5'), "", "outfit", byte('0'), "ok", "")
+	f.Fuzz(func(t *testing.T, n1 string, k1 byte, b1 string, n2 string, k2 byte, b2 string, link string) {
+		checkExtract(t, tarGz(
+			[]tar.Header{{Name: n1, Typeflag: k1, Linkname: link, Mode: 0o755}, {Name: n2, Typeflag: k2, Mode: 0o644}},
+			[][]byte{[]byte(b1), []byte(b2)}))
+	})
+}
+
+func checkExtract(t *testing.T, archive []byte) {
+	t.Helper()
+	{
 		bin, err := ExtractBinary(archive)
 		if err != nil {
 			return
@@ -73,5 +93,5 @@ func FuzzExtractBinary(f *testing.F) {
 		if found != 1 {
 			t.Fatalf("accepted an archive with %d `outfit` entries", found)
 		}
-	})
+	}
 }

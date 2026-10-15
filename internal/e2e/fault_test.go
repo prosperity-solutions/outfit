@@ -24,8 +24,16 @@ type faultScenario struct {
 	setup func(t *testing.T, r *testkit.Repo, bin string, tokens *[]string)
 	// op is the operation that gets killed.
 	op []string
-	// uninstall scenarios finish with a second uninstall instead of a sync.
+	// recover is what runs afterwards (twice); a plain sync, or a second uninstall/init.
 	recover []string
+	// uninstall scenarios must leave `git config --list` exactly as it was before init.
+	uninstalls bool
+	// needsHuman scenarios legitimately end in "a person must look" (exit 3).
+	needsHuman bool
+	// worktrees is how many linked worktrees the fixture has.
+	worktrees int
+	// beforeInit scenarios kill `init` itself, so setup runs before it.
+	noInit bool
 }
 
 func writeToken(t *testing.T, r *testkit.Repo, tokens *[]string, path string, atomic bool) {
@@ -94,7 +102,7 @@ func faultScenarios() []faultScenario {
 			use("yolo")(t, r, bin, tokens)
 			writeToken(t, r, tokens, "AGENTS.md", true)
 		}, op: []string{"sync"}, recover: []string{"sync"}},
-		{name: "quarantine-both", setup: func(t *testing.T, r *testkit.Repo, bin string, tokens *[]string) {
+		{name: "quarantine-both", needsHuman: true, setup: func(t *testing.T, r *testkit.Repo, bin string, tokens *[]string) {
 			use("yolo")(t, r, bin, tokens)
 			writeToken(t, r, tokens, "AGENTS.md", false) // through the link
 			if o := r.RunOutfit(bin, nil, "sync"); o.Code != 0 {
@@ -114,7 +122,15 @@ func faultScenarios() []faultScenario {
 				t.Fatalf("setup new: %+v", o)
 			}
 		}, op: []string{"use", "mine"}, recover: []string{"sync"}},
-		{name: "uninstall", setup: use("yolo"), op: []string{"uninstall"}, recover: []string{"uninstall"}},
+		{name: "uninstall", uninstalls: true, setup: use("yolo"), op: []string{"uninstall"}, recover: []string{"uninstall"}},
+		{name: "uninstall-in-a-worktree-farm", uninstalls: true, worktrees: 1, setup: use("yolo"), op: []string{"uninstall"}, recover: []string{"uninstall"}},
+		{name: "use-then-uninstall", uninstalls: true, setup: func(*testing.T, *testkit.Repo, string, *[]string) {}, op: []string{"use", "yolo"}, recover: []string{"uninstall"}},
+		{name: "init", uninstalls: true, noInit: true, setup: func(*testing.T, *testkit.Repo, string, *[]string) {}, op: []string{"init"}, recover: []string{"uninstall"}},
+		{name: "promote", setup: func(t *testing.T, r *testkit.Repo, bin string, tokens *[]string) {
+			if o := r.RunOutfit(bin, nil, "new", "mine", "--from", "yolo"); o.Code != 0 {
+				t.Fatalf("setup new: %+v", o)
+			}
+		}, op: []string{"promote", "mine"}, recover: []string{"sync"}},
 	}
 }
 
@@ -125,10 +141,12 @@ func TestFaultInjection(t *testing.T) {
 		t.Run(sc.name, func(t *testing.T) {
 			// How many points does the operation have? Run it once with the log on.
 			count := func() int {
-				r := testkit.New(t, testkit.Team)
+				r := testkit.New(t, testkit.Team, testkit.WithWorktrees(sc.worktrees))
 				var tokens []string
-				if o := r.RunOutfit(bin, nil, "init"); o.Code != 0 {
-					t.Fatalf("init: %+v", o)
+				if !sc.noInit {
+					if o := r.RunOutfit(bin, nil, "init"); o.Code != 0 {
+						t.Fatalf("init: %+v", o)
+					}
 				}
 				sc.setup(t, r, bin, &tokens)
 				log := filepath.Join(t.TempDir(), "points.log")
@@ -143,11 +161,14 @@ func TestFaultInjection(t *testing.T) {
 			for k := 1; k <= count; k++ {
 				k := k
 				t.Run("kill-at-"+strconv.Itoa(k), func(t *testing.T) {
-					r := testkit.New(t, testkit.Team)
+					t.Parallel() // each kill point has its own fixture and its own process
+					r := testkit.New(t, testkit.Team, testkit.WithWorktrees(sc.worktrees))
 					var tokens []string
 					before := r.Git("config", "--list") // before init: uninstall must bring it back
-					if o := r.RunOutfit(bin, nil, "init"); o.Code != 0 {
-						t.Fatalf("init: %+v", o)
+					if !sc.noInit {
+						if o := r.RunOutfit(bin, nil, "init"); o.Code != 0 {
+							t.Fatalf("init: %+v", o)
+						}
 					}
 					sc.setup(t, r, bin, &tokens)
 					o := r.RunOutfit(bin, []string{"OUTFIT_FAULT_AT=" + strconv.Itoa(k)}, sc.op...)
@@ -167,8 +188,8 @@ func assertConverges(t *testing.T, r *testkit.Repo, bin string, sc faultScenario
 	var last testkit.Outcome
 	for i := 0; i < 2; i++ {
 		last = r.RunOutfit(bin, nil, sc.recover...)
-		if last.Code != 0 && last.Code != 3 {
-			t.Fatalf("recovery %v run %d failed: %+v", sc.recover, i+1, last)
+		if last.Code != 0 && (!sc.needsHuman || last.Code != 3) {
+			t.Fatalf("recovery %v run %d did not simply work: %+v", sc.recover, i+1, last)
 		}
 	}
 	// Nothing lost.
@@ -177,20 +198,24 @@ func assertConverges(t *testing.T, r *testkit.Repo, bin string, sc faultScenario
 			t.Fatalf("user bytes %q are gone after a kill and a rerun", tok)
 		}
 	}
-	// No stray temporary links, no symlink in history.
+	// No stray temporary link in the worktree (a killed write's `.tmp-*` and a killed profile
+	// copy's `.new-*` are dot-files outfit ignores everywhere), no symlink in history.
 	_ = filepath.WalkDir(r.Dir, func(path string, d os.DirEntry, err error) error {
 		if err == nil && d.IsDir() && d.Name() == ".git" {
 			return filepath.SkipDir
 		}
-		if err == nil && strings.HasPrefix(d.Name(), ".outfit-link-") {
-			t.Errorf("a temporary link %s was left behind", path)
+		if err == nil && strings.HasPrefix(d.Name(), ".outfit-link") {
+			t.Errorf("a leftover of a killed run, %s, is still there", path)
 		}
 		return nil
 	})
+	if out := r.Git("status", "--porcelain", "--untracked-files=all"); strings.Contains(out, "?? ") && !sc.uninstalls {
+		t.Fatalf("status shows something untracked left behind (a stray link, a temporary file):\n%s", out)
+	}
 	if out := r.Git("ls-tree", "-r", "HEAD"); strings.Contains(out, "120000 ") {
 		t.Fatalf("a symlink is in HEAD:\n%s", out)
 	}
-	if sc.name == "uninstall" {
+	if sc.uninstalls {
 		if after := r.Git("config", "--list"); after != configBefore {
 			t.Fatalf("git config --list differs after a killed uninstall and a rerun:\n--- before\n%s\n--- after\n%s", configBefore, after)
 		}
@@ -216,7 +241,7 @@ func assertConverges(t *testing.T, r *testkit.Repo, bin string, sc faultScenario
 	if err := json.Unmarshal([]byte(st.Stdout), &sj); err != nil {
 		t.Fatalf("status --json: %v %+v", err, st)
 	}
-	if sj.Sync != nil && !sj.Sync.InSync && !sj.Sync.NeedsHuman {
+	if sj.Sync != nil && (!sj.Sync.InSync || (sj.Sync.NeedsHuman && !sc.needsHuman)) {
 		t.Fatalf("not in sync after the rerun: %s", st.Stdout)
 	}
 	for _, f := range sj.Files {
@@ -229,7 +254,9 @@ func assertConverges(t *testing.T, r *testkit.Repo, bin string, sc faultScenario
 	var aj struct {
 		Changed bool `json:"changed"`
 	}
-	_ = json.Unmarshal([]byte(again.Stdout), &aj)
+	if err := json.Unmarshal([]byte(again.Stdout), &aj); err != nil {
+		t.Fatalf("sync --json is not JSON (%v): %+v", err, again)
+	}
 	if aj.Changed {
 		t.Fatalf("a further sync still changed something: %s", again.Stdout)
 	}

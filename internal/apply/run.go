@@ -12,8 +12,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/prosperity-solutions/outfit/internal/fault"
 	"github.com/prosperity-solutions/outfit/internal/plan"
 	"github.com/prosperity-solutions/outfit/internal/state"
 )
@@ -147,9 +149,34 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 		}
 	}
 
+	// Links a killed run made under their temporary names are dead weight now.
+	if root, err := os.OpenRoot(filepath.Join(in.W.GitDir, "outfit")); err == nil {
+		_ = root.RemoveAll("tmp")
+		_ = root.Close()
+	}
+
+	// Write ahead: that outfit is about to turn sparse checkout and the expect-files
+	// setting on must be on record BEFORE it does, or a kill in between leaves settings
+	// nothing remembers (uninstall would not undo them). Recording an intent that never
+	// happened is harmless: uninstall unsets keys that are not there without complaint.
+	intent := next
+	for _, a := range acts {
+		switch a.Kind {
+		case plan.SetExpectFiles:
+			intent.ExpectFilesSet = true
+		case plan.WriteSparse:
+			intent.SparseSet = true
+		}
+	}
+	if intent.ExpectFilesSet != next.ExpectFilesSet || intent.SparseSet != next.SparseSet {
+		if _, err := state.Write(in.W.GitDir, &intent); err != nil {
+			return res, err
+		}
+	}
+
 	stepErr := func() error {
 		for _, a := range acts {
-			fault("before " + string(a.Kind))
+			fault.Point("before " + string(a.Kind))
 			switch a.Kind {
 			case plan.Skip, plan.Conflict, plan.RecordHash, plan.Stale:
 				// (plan.ActionKind.Informational / Bookkeeping: nothing to run; RecordHash only changes the state written below.
@@ -274,7 +301,7 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 	}
 	next.Author = in.Author
 	next.CommittedProfiles = in.CommittedProfiles
-	fault("before the state is written")
+	fault.Point("before the state is written")
 	changed, werr := state.Write(in.W.GitDir, &next)
 	if werr == nil && changed {
 		res.Changed = true
@@ -291,7 +318,7 @@ func (in Input) writeSparse(ctx context.Context, text string) error {
 	if err != nil {
 		return fmt.Errorf("git sparse-checkout set failed: %w", err)
 	}
-	fault("sparse patterns written")
+	fault.Point("sparse patterns written")
 	if strings.Contains(string(res.Stderr), "not up to date") || strings.Contains(string(res.Stderr), "left despite sparse patterns") {
 		return fmt.Errorf("git left files in place because they have uncommitted changes, so the switch is half done: %s\n  fix: commit those changes, or put them in the profile's copy, then: outfit sync", strings.TrimSpace(string(res.Stderr)))
 	}
@@ -353,6 +380,52 @@ func mkdirAllLike(root, rel string) error {
 	return r.MkdirAll(dir, mode)
 }
 
+// linkVia makes the link under outfit's temporary directory and renames it into place.
+func (in Input) linkVia(abs, path, target string) error {
+	dir := filepath.Join(in.W.GitDir, "outfit", "tmp")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	sum := sha256.Sum256([]byte(path))
+	tmp := filepath.Join(dir, hex.EncodeToString(sum[:8]))
+	if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if err := os.Symlink(target, tmp); err != nil {
+		return err
+	}
+	fault.Point("link made under a temporary name")
+	if err := os.Rename(tmp, abs); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// linkBeside is linkVia for a git dir on another filesystem: the temporary name sits
+// next to the target.
+func (in Input) linkBeside(abs, path, target string) error {
+	// Only a symlink of ours may be in the way: a person's own file of that name stays.
+	tmp := in.abs(tmpLinkPath(path))
+	if fi, err := os.Lstat(tmp); err == nil {
+		if fi.Mode()&os.ModeSymlink == 0 {
+			return fmt.Errorf("%s is in the way of outfit's temporary link and is not outfit's to remove", tmpLinkPath(path))
+		}
+		if err := os.Remove(tmp); err != nil {
+			return err
+		}
+	}
+	if err := os.Symlink(target, tmp); err != nil {
+		return err
+	}
+	fault.Point("link made under a temporary name")
+	if err := os.Rename(tmp, abs); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
 // tmpLinkPath is the temporary name a link at path is made under (relative, same
 // directory, so the rename into place is atomic).
 func tmpLinkPath(path string) string {
@@ -381,20 +454,17 @@ func (in Input) link(path, target string, replaces bool) error {
 			return fmt.Errorf("%s exists and is not outfit's to replace", path)
 		}
 	}
-	// A fixed name per path (syncs are serialised by the lock): a kill between the
-	// symlink and the rename leaves exactly one leftover that the next sync recognises and
-	// removes (plan: stray links), never a pile of them.
-	tmp := in.abs(tmpLinkPath(path))
-	if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	if err := os.Symlink(target, tmp); err != nil {
-		return err
-	}
-	fault("link made under a temporary name")
-	if err := os.Rename(tmp, abs); err != nil {
-		_ = os.Remove(tmp)
-		return err
+	// The link is made in outfit's own directory inside the git dir and renamed into place
+	// (a rename is atomic whatever the directory): a kill between the two leaves a file
+	// there, where it cannot be committed, shows in no status, and is swept by the next
+	// sync and removed by uninstall. When the git dir is on another filesystem the rename
+	// cannot work, and the old way is used: a temporary name beside the target, which
+	// the next sync recognises (plan: stray links).
+	if err := in.linkVia(abs, path, target); err != nil {
+		if !errors.Is(err, syscall.EXDEV) {
+			return err
+		}
+		return in.linkBeside(abs, path, target)
 	}
 	return nil
 }
@@ -425,7 +495,7 @@ func (in Input) absorb(path, target string) error {
 	if err := state.WriteFileAtomic(in.variantPath(path), b, mode); err != nil {
 		return fmt.Errorf("cannot save %s into the profile: %w", path, err)
 	}
-	fault("absorbed into the profile, not yet relinked")
+	fault.Point("absorbed into the profile, not yet relinked")
 	return in.link(path, target, true)
 }
 
@@ -487,7 +557,7 @@ func (in Input) quarantine(res *Result, path string, file, withVariant bool) (cr
 			return false, err
 		}
 	}
-	fault("quarantine copies saved")
+	fault.Point("quarantine copies saved")
 	return true, nil
 }
 

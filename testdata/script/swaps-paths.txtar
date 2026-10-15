@@ -7,12 +7,24 @@ cd repo
 exec mkdir -p 'solo/deep' 'my dir' '.outfit/profiles/odd/solo/deep' '.outfit/profiles/odd/my dir'
 exec sh -c 'echo base > solo/deep/only.md; echo base > "my dir/café.md"; echo base > ./-dash.md'
 exec sh -c 'echo odd > .outfit/profiles/odd/solo/deep/only.md; echo odd > ".outfit/profiles/odd/my dir/café.md"; echo odd > ./.outfit/profiles/odd/-dash.md'
+# NFD Unicode (a base letter and a combining accent, as macOS file dialogs write it): git
+# keeps NFC and NFD apart on Linux; macOS normalises, so the case is Linux's.
+[!darwin] exec mkdir -p nfd .outfit/profiles/odd/nfd
+[!darwin] exec sh -c 'f=$(printf "cafe\xcc\x81.md"); echo base > "nfd/$f"; echo odd > ".outfit/profiles/odd/nfd/$f"'
+# A profile file whose case differs from the tracked file is NOT that file (git is
+# case-sensitive about names even where the filesystem is not): it is skipped with a note.
+exec sh -c 'echo wrongcase > .outfit/profiles/odd/Agents.md'
 exec git add -A
 exec git add -f .outfit/profiles/odd
 exec git commit -qm 'feat: odd paths'
 outfit init
 
 outfit use odd
+stderr 'Agents.md is not tracked by git'
+exec cat AGENTS.md
+! stdout wrongcase
+[!darwin] exec sh -c 'cat "nfd/$(printf "cafe\xcc\x81.md")"'
+[!darwin] stdout odd
 exec cat solo/deep/only.md
 stdout odd
 exec cat 'my dir/café.md'

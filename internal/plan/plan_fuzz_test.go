@@ -96,6 +96,11 @@ func FuzzPlan(f *testing.F) {
 				if pf.FS == Dir || pf.FS == Other {
 					t.Fatalf("LinkPath over %s, which is a directory or something else", act.Path)
 				}
+				// A regular file is only ever replaced by a link when it is the committed
+				// copy, untouched (anything else is user bytes: absorb or quarantine).
+				if pf.FS == File && (!pf.Tracked || !pf.MatchesIndex || pf.Unmerged) {
+					t.Fatalf("LinkPath over %s, a regular file that is not the untouched committed copy (%+v)", act.Path, pf)
+				}
 			}
 		}
 	})

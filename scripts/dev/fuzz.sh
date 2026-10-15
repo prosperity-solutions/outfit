@@ -12,6 +12,7 @@ targets=(
   "plan FuzzSparse"
   "plan FuzzPlan"
   "update FuzzExtractBinary"
+  "update FuzzExtractBinaryEntries"
 )
 for t in "${targets[@]}"; do
   read -r pkg name <<<"$t"

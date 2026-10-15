@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/prosperity-solutions/outfit/internal/config"
+	"github.com/prosperity-solutions/outfit/internal/fault"
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 	"github.com/prosperity-solutions/outfit/internal/repo"
 	"github.com/prosperity-solutions/outfit/internal/state"
@@ -320,6 +321,7 @@ func Install(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitConfi
 	}
 
 	// 5. core.hooksPath and state.json in every worktree.
+	fault.Point("init: shims are in, core.hooksPath not yet set")
 	for _, w := range wts {
 		out.Worktrees = append(out.Worktrees, w.Name())
 		if w.Missing() {
@@ -474,6 +476,7 @@ func Uninstall(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitCon
 	}
 
 	// 1. hooksPath first, everywhere.
+	fault.Point("uninstall: nothing undone yet")
 	for _, w := range wts {
 		if v, ok := hooksPathIn(ctx, cg, w.ConfigFile()); ok && ownsHooksPath(expand(v, w.Path, home), ours) {
 			if err := unset(ctx, cg, w.ConfigFile(), "core.hooksPath"); err != nil {
@@ -502,6 +505,14 @@ func Uninstall(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitCon
 			continue
 		}
 		note("shim " + n)
+	}
+	// Temporary files of a write that was killed (state.WriteFileAtomic) are ours too.
+	if ents, err := os.ReadDir(ours); err == nil {
+		for _, en := range ents {
+			if !en.IsDir() && strings.HasPrefix(en.Name(), ".tmp-") {
+				_ = os.Remove(filepath.Join(ours, en.Name()))
+			}
+		}
 	}
 	if err := os.Remove(ours); err != nil && !os.IsNotExist(err) {
 		fail("directory "+ours, fmt.Errorf("not empty (something else put files there): %w", err))
@@ -535,6 +546,7 @@ func Uninstall(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitCon
 	}
 
 	// 5. State files and the install record.
+	fault.Point("uninstall: shims and settings are gone, state files remain")
 	for _, w := range wts {
 		// The sync lock is an flock file that is never removed while outfit runs.
 		_ = os.Remove(filepath.Join(filepath.Dir(state.Path(w.GitDir)), "sync.lock"))

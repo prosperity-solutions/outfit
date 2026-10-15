@@ -41,6 +41,19 @@ type model struct {
 	nProf  int
 	locals []string
 	steps  []string
+	// pending: a user edit exists that sync has not absorbed or the tree has not shown.
+	pending bool
+}
+
+// pendingAbsorb reports a regular file where a recorded link should be (an editor's save sync
+// has not absorbed yet): the tree looks clean, but the next sync will change a profile file.
+func (m *model) pendingAbsorb() bool {
+	for _, p := range m.swapped() {
+		if fi, err := os.Lstat(m.r.Path(p)); err == nil && fi.Mode()&os.ModeSymlink == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *model) logf(format string, a ...any) {
@@ -154,11 +167,13 @@ func steps() []step {
 		{"edit-through-the-link", false, func(m *model) {
 			p, ok := m.pickSwapped()
 			if !ok {
-				m.rt.Skip()
+				m.logf("skipped: nothing applies")
+				return
 			}
 			f, err := os.OpenFile(m.r.Path(p), os.O_APPEND|os.O_WRONLY, 0)
 			if err != nil {
-				m.rt.Skip() // not there (a worktree profile removed, say)
+				m.logf("skipped: the file is not there")
+				return
 			}
 			_, _ = f.WriteString(m.newToken() + "\n")
 			_ = f.Close()
@@ -167,18 +182,22 @@ func steps() []step {
 		{"editor-atomic-save", false, func(m *model) {
 			p, ok := m.pickSwapped()
 			if !ok {
-				m.rt.Skip()
+				m.logf("skipped: nothing applies")
+				return
 			}
 			old, err := os.ReadFile(m.r.Path(p))
 			if err != nil {
-				m.rt.Skip()
+				m.logf("skipped: nothing applies")
+				return
 			}
 			tmp := m.r.Path(p) + ".editor"
 			if err := os.WriteFile(tmp, append(old, []byte(m.newToken()+"\n")...), 0o644); err != nil {
-				m.rt.Skip()
+				m.logf("skipped: nothing applies")
+				return
 			}
 			if err := os.Rename(tmp, m.r.Path(p)); err != nil {
-				m.rt.Skip()
+				m.logf("skipped: nothing applies")
+				return
 			}
 			m.logf("atomic save of %s", p)
 		}},
@@ -200,7 +219,8 @@ func steps() []step {
 		}},
 		{"worktree-add", true, func(m *model) {
 			if len(m.wts) >= 2 {
-				m.rt.Skip()
+				m.logf("skipped: nothing applies")
+				return
 			}
 			m.nWT++
 			p := filepath.Join(filepath.Dir(m.r.Dir), "pwt"+strconv.Itoa(m.nWT))
@@ -210,7 +230,8 @@ func steps() []step {
 		}},
 		{"worktree-remove", true, func(m *model) {
 			if len(m.wts) == 0 {
-				m.rt.Skip()
+				m.logf("skipped: nothing applies")
+				return
 			}
 			p := m.wts[len(m.wts)-1]
 			if _, err := m.git("worktree", "remove", "--force", p); err == nil {
@@ -223,7 +244,10 @@ func steps() []step {
 			if _, err := m.git("commit", "--allow-empty", "-qm", "chore: empty"); err != nil {
 				return
 			}
-			_, _ = m.git("-c", "core.editor=true", "-c", "sequence.editor=true", "rebase", "-i", "HEAD~1")
+			// --force-rebase: without it git sees an unchanged todo list and does nothing.
+			if _, err := m.git("-c", "core.editor=true", "-c", "sequence.editor=true", "rebase", "-i", "--force-rebase", "HEAD~1"); err != nil {
+				_, _ = m.git("rebase", "--abort")
+			}
 		}},
 		{"commit-everything", false, func(m *model) {
 			_, _ = m.git("add", "-A")
@@ -241,19 +265,28 @@ func (m *model) upstreamChange(file string, pull bool) {
 		}
 	}
 	if _, err := testkit.RunGit(m.other, m.r.Env, "pull", "-q", "--ff-only", "origin", "main"); err != nil {
-		m.rt.Skip()
+		m.logf("skipped: nothing applies")
+		return
 	}
 	b, _ := os.ReadFile(filepath.Join(m.other, file))
 	if err := os.WriteFile(filepath.Join(m.other, file), append(b, []byte("upstream "+strconv.Itoa(len(m.steps))+"\n")...), 0o644); err != nil {
-		m.rt.Skip()
+		m.logf("skipped: nothing applies")
+		return
 	}
 	for _, args := range [][]string{{"commit", "-qam", "docs: upstream"}, {"push", "-q", "origin", "HEAD:main"}} {
 		if _, err := testkit.RunGit(m.other, m.r.Env, args...); err != nil {
-			m.rt.Skip()
+			m.logf("skipped: nothing applies")
+			return
 		}
 	}
 	if pull {
-		_, _ = m.git("pull", "-q", "--ff-only", "origin", "main")
+		// A local commit (the rebase step, commit-everything) makes a fast-forward
+		// impossible: then rebase onto the upstream, like `git pull --rebase`.
+		if _, err := m.git("pull", "-q", "--ff-only", "origin", "main"); err != nil {
+			if _, rerr := m.git("pull", "-q", "--rebase", "origin", "main"); rerr != nil {
+				_, _ = m.git("rebase", "--abort")
+			}
+		}
 	}
 }
 
@@ -346,6 +379,15 @@ func (m *model) mtimes() map[string]string {
 	for _, rel := range []string{".git/outfit/state.json", ".git/info/sparse-checkout", ".git/info/exclude", ".git/config", ".git/config.worktree", ".git/index"} {
 		add(filepath.Join(m.r.Dir, filepath.FromSlash(rel)))
 	}
+	// Every file of the profiles (committed and personal) and of outfit's own directory.
+	for _, root := range []string{filepath.Join(m.r.Dir, ".outfit"), filepath.Join(m.r.Dir, ".git", "outfit")} {
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && !strings.HasSuffix(path, "sync.lock") {
+				add(path)
+			}
+			return nil
+		})
+	}
 	return out
 }
 
@@ -357,7 +399,9 @@ func (m *model) assertSyncIdempotent() {
 	var j struct {
 		Changed bool `json:"changed"`
 	}
-	_ = json.Unmarshal([]byte(o.Stdout), &j)
+	if err := json.Unmarshal([]byte(o.Stdout), &j); err != nil {
+		m.rt.Fatalf("sync --json is not JSON (%v): %+v", err, o)
+	}
 	if j.Changed {
 		m.rt.Fatalf("a second sync still changed something: %s\nsteps:\n%s", o.Stdout, strings.Join(m.steps, "\n"))
 	}
@@ -390,17 +434,35 @@ func TestProperties(t *testing.T) {
 		for i := 0; i < n; i++ {
 			s := rapid.SampledFrom(all).Draw(rt, "step")
 			wasClean := m.statusClean()
-			m.logf("== step %d: %s (clean before: %v)", i+1, s.name, wasClean)
+			pendingBefore := m.pending
+			m.logf("== step %d: %s (clean before: %v, edit pending: %v)", i+1, s.name, wasClean, pendingBefore)
 			s.run(m)
 			m.check(s.name)
-			// (Only while nobody has edited anything: an editor's save that sync absorbs, or an
-			// edit through a link, makes the profile's file differ from git, which is the point.)
-			if s.clean && wasClean && len(m.tokens) == 0 && !m.statusClean() {
+			// (Not while an edit is pending: an editor's save that sync absorbs, or an edit
+			// through a link, makes the profile's file differ from git, which is the point. It
+			// is pending from the edit until the tree is clean again.)
+			if s.name == "edit-through-the-link" || s.name == "editor-atomic-save" {
+				m.pending = true
+			} else if m.statusClean() && !m.pendingAbsorb() {
+				m.pending = false
+			}
+			if s.clean && wasClean && !pendingBefore && !m.statusClean() {
 				out, _ := m.r.GitErr("status", "--short")
 				rt.Fatalf("a clean status became dirty after %s:\n%s\nsteps:\n%s", s.name, out, strings.Join(m.steps, "\n"))
 			}
 		}
 		m.assertSyncIdempotent()
 		m.check("final sync")
+		// Each linked worktree too: a second sync there changes nothing either.
+		for _, wt := range m.wts {
+			m.r.RunOutfitIn(wt, m.bin, nil, "sync")
+			o := m.r.RunOutfitIn(wt, m.bin, nil, "sync", "--json")
+			var j struct {
+				Changed bool `json:"changed"`
+			}
+			if err := json.Unmarshal([]byte(o.Stdout), &j); err != nil || j.Changed {
+				rt.Fatalf("a second sync in %s: err=%v out=%s", wt, err, o.Stdout)
+			}
+		}
 	})
 }

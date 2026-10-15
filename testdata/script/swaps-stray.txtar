@@ -1,0 +1,38 @@
+# Leftover links of a killed run (docs/testing.md, fault injection): a link is made under
+# a temporary name and renamed into place; a kill in between leaves the temporary one. It
+# normally lives in outfit's own directory in the git dir (swept by the next sync, removed
+# by uninstall); when the git dir is on another filesystem it sits beside the target as
+# `.outfit-link~<name>`, and the next sync (or uninstall) removes it, because it is OUR link
+# (the text outfit writes) and git does not track it. Anything else of that name is left alone.
+fixture repo team
+cd repo
+outfit init
+outfit use yolo
+
+# beside the target, our text, untracked: removed by a sync that has nothing else to do
+symlink .outfit-link~AGENTS.md -> .outfit/profiles/yolo/AGENTS.md
+exec git status --short --untracked-files=all
+stdout '\.outfit-link~AGENTS\.md'
+outfit sync
+! islink .outfit-link~AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec git status --short --untracked-files=all
+! stdout .
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+
+# a regular file of that name is a person's, and so is a link with other text
+exec sh -c 'echo mine > .outfit-link~CLAUDE.md'
+symlink .outfit-link~AGENTS.md -> somewhere/else
+outfit sync
+exists .outfit-link~CLAUDE.md
+islink .outfit-link~AGENTS.md somewhere/else
+exec rm .outfit-link~AGENTS.md .outfit-link~CLAUDE.md
+
+# the same leftover when the record never got written (killed before the state write),
+# and uninstall: the strays go, so do the links, and nothing is left in the tree
+symlink .outfit-link~AGENTS.md -> .outfit/profiles/yolo/AGENTS.md
+symlink AGENTS.md~cruft -> .outfit/profiles/yolo/AGENTS.md
+outfit uninstall
+! islink .outfit-link~AGENTS.md .outfit/profiles/yolo/AGENTS.md
+! islink AGENTS.md~cruft .outfit/profiles/yolo/AGENTS.md
+exec git status --short --untracked-files=all
+! stdout .

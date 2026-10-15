@@ -107,7 +107,10 @@ jobs:
           out=$(gofmt -l .)
           if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
       - name: go vet
-        run: go vet ./...
+        run: |
+          go vet ./...
+          # the fault-injection build (scenario 7) is a different set of files
+          go vet -tags faultinject ./...
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
         with:
           version: latest
@@ -280,7 +283,10 @@ jobs:
       - run: scripts/ci/signing-smoke.sh
 
   # Every fuzz target for 20 s (docs/testing.md). The seed corpora already run in `unit`;
-  # this looks for new inputs. A failure leaves the input under testdata/fuzz/.
+  # this looks for NEW inputs, which differ from run to run: a crash it finds in old code
+  # must not block an unrelated pull request, so the job is NOT in all-green's needs (a red
+  # job is still a red workflow, and the merge policy reads every job). The failing input is
+  # uploaded as an artifact: commit it under testdata/fuzz/<Target>/ and it is a test.
   fuzz:
     name: Fuzz (20 s per target)
     runs-on: ubuntu-24.04
@@ -292,6 +298,13 @@ jobs:
         with:
           go-version-file: go.mod
       - run: scripts/dev/fuzz.sh 20
+      - name: Keep the failing input
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: fuzz-failing-input
+          path: internal/**/testdata/fuzz/**
+          if-no-files-found: warn
 
   # The SOFT performance gate (docs/HANDOVER.md §7.6): `outfit sync` within 10 ms of
   # `git rev-parse --git-dir`, by hyperfine, Linux only. Not in all-green's needs and
@@ -318,7 +331,7 @@ jobs:
   all-green:
     name: all-green
     runs-on: ubuntu-24.04
-    needs: [commits, ship, lint, unit, plan, integration, install, demo, signing, fuzz]
+    needs: [commits, ship, lint, unit, plan, integration, install, demo, signing]
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always()
     steps:
       - name: Every needed job must have succeeded
