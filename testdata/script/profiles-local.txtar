@@ -148,6 +148,12 @@ stderr 'name clashes with the committed profile "dup"'
 stderr 'outfit new <other-name> --from local:dup'
 outfit status
 stderr 'name clashes'
+outfit ls --json
+stdout '"shadowed":\[\{"name":"dup","tier":"local"'
+outfit show local:dup
+stdout 'profile  dup \(local\)'
+outfit show local:dup AGENTS.md
+stdout '^mine$'
 outfit new dup-mine --from local:dup
 exec cat .git/outfit/profiles/dup-mine/AGENTS.md
 stdout '^mine$'
@@ -155,10 +161,93 @@ outfit use dup
 stdout 'using dup'
 outfit use base
 
+# --- what promote and new refuse, and what they leave alone ---
+# a link in a local profile is never copied, so promote refuses instead of deleting it
+outfit new linky
+exec sh -c 'echo x > .git/outfit/profiles/linky/AGENTS.md && ln -s /etc/hosts .git/outfit/profiles/linky/hosts.md'
+! outfit promote linky
+stderr 'hosts.md'
+stderr 'cannot be copied'
+exists .git/outfit/profiles/linky/AGENTS.md
+exists .git/outfit/profiles/linky/hosts.md
+! exists .outfit/profiles/linky
+# editor junk is not a profile file (and `git add -f` would commit it)
+exec rm .git/outfit/profiles/linky/hosts.md
+exec sh -c ': > .git/outfit/profiles/linky/.DS_Store; echo x > .git/outfit/profiles/linky/notes.md~'
+outfit promote linky
+exists .outfit/profiles/linky/AGENTS.md
+! exists .outfit/profiles/linky/.DS_Store
+! exists .outfit/profiles/linky/notes.md~
+# an inactive promoted profile is warned about too: git does not have it, `git clean -x` would delete it
+outfit status
+stderr 'git clean -x'
+stderr 'linky'
+exec git add --sparse -f .outfit/profiles/linky
+exec git commit -qm 'feat: add profile linky'
+# a directory that exists on disk but is not in git is not "already committed"
+exec sh -c 'mkdir -p .outfit/profiles/handmade && echo x > .outfit/profiles/handmade/AGENTS.md'
+! outfit promote handmade
+stderr 'git does not have it'
+exec rm -r .outfit/profiles/handmade
+# a name used by a worktree profile of ANOTHER worktree is taken
+exec git worktree add -q ../repo-wt3
+cd ../repo-wt3
+outfit new wt-owned --here
+cd ../repo
+! outfit new wt-owned
+stderr 'already exists in the worktree'
+! outfit new wt-owned --json
+stdout '"fix":"outfit new '
+# invalid directory names are listed with a warning, never silently ignored
+exec mkdir .git/outfit/profiles/Mine
+outfit ls
+stderr 'not a valid profile name'
+
+# --- promote tells the other worktrees that use the profile ---
+outfit new shared
+exec sh -c 'echo shared > .git/outfit/profiles/shared/AGENTS.md'
+exec git worktree add -q ../repo-wt2
+outfit use shared
+outfit promote shared
+stderr 'other worktrees use "shared"'
+stderr 'repo-wt2'
+outfit use base
+exec git add --sparse -f .outfit/profiles/shared
+exec git commit -qm 'feat: add profile shared'
+
+
+# --- uninstall stops (and purges nothing) while a link could not be removed ---
+outfit new guarded
+exec sh -c 'mkdir -p .git/outfit/profiles/guarded/apps/web && echo g > .git/outfit/profiles/guarded/apps/web/AGENTS.md'
+outfit use guarded
+islink apps/web/AGENTS.md $WORK/repo/.git/outfit/profiles/guarded/apps/web/AGENTS.md
+chmod 555 apps/web
+! outfit uninstall --purge
+stderr 'could not undo'
+stderr 'nothing else was undone'
+exists .git/outfit/profiles/guarded/apps/web/AGENTS.md
+exists .git/outfit/install.json
+exists .git/outfit/state.json
+chmod 755 apps/web
+outfit uninstall
+exec cat apps/web/AGENTS.md
+! stdout '^g$'
+outfit init
+
+# --- a symlinked tier directory is never followed by --purge ---
+exec sh -c 'mkdir -p $WORK/victim/precious && echo keep > $WORK/victim/precious/f.txt'
+exec rm -r .git/outfit/profiles
+symlink .git/outfit/profiles -> $WORK/victim
+outfit uninstall --purge
+exists $WORK/victim/precious/f.txt
+exec rm .git/outfit/profiles
+outfit init
+
 # --- uninstall keeps personal profiles unless --purge ---
+outfit new keepme
 outfit uninstall
 stdout 'kept [0-9]+ personal profile'
-exists .git/outfit/profiles/dup-mine/AGENTS.md
+exists .git/outfit/profiles/keepme/profile.config
 outfit init
 outfit uninstall --purge
 ! exists .git/outfit/profiles

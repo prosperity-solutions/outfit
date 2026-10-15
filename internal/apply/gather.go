@@ -316,20 +316,9 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	return want, facts, g, nil
 }
 
-// IsJunk reports a file the operating system or an editor leaves in a directory: never
-// a profile file, and never worth a note on every sync.
-func IsJunk(n string) bool {
-	switch n {
-	case ".DS_Store", "Thumbs.db", "desktop.ini":
-		return true
-	}
-	for _, suf := range []string{"~", ".swp", ".swo", ".swx", ".tmp", ".orig", ".rej", ".bak"} {
-		if strings.HasSuffix(n, suf) {
-			return true
-		}
-	}
-	return strings.HasPrefix(n, ".#") || (len(n) > 2 && strings.HasPrefix(n, "#") && strings.HasSuffix(n, "#"))
-}
+// IsJunk reports a file the operating system or an editor leaves in a directory (see
+// profiles.IsJunk): never a profile file.
+func IsJunk(n string) bool { return profiles.IsJunk(n) }
 
 // sameCommit reports whether the latest commit that touched base also touched variant.
 func (in Input) sameCommit(ctx context.Context, base, variant string) bool {

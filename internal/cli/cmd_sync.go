@@ -382,29 +382,39 @@ func readProfileFile(dir, p string) ([]byte, error) {
 	return root.ReadFile(p)
 }
 
-// untrackedProfileWarning names the active committed profile's files git does not
-// know yet. Only the working tree holds them: `git clean -x` deletes them, and
-// `outfit` cannot bring them back. "" when there are none.
+// untrackedProfileWarning names the committed-profile files git does not know yet
+// (a profile made by hand, or just promoted): only the working tree holds them, so
+// `git clean -x` deletes them for good. Every profile directory is looked at, active or
+// not. "" when there are none.
 func untrackedProfileWarning(ctx context.Context, l *loaded) string {
-	if l.Profile == nil || l.Profile.Tier != profiles.Committed {
-		return ""
-	}
-	dir := profiles.CommittedRoot + "/" + l.Profile.Name
-	res, err := l.Git.Read(ctx, "--literal-pathspecs", "ls-files", "--others", "-z", "--", dir)
+	res, err := l.Git.Read(ctx, "--literal-pathspecs", "ls-files", "--others", "-z", "--", profiles.CommittedRoot)
 	if err != nil {
 		return ""
 	}
-	var files []string
+	byProfile := map[string][]string{}
+	var names []string
 	for _, f := range strings.Split(string(res.Stdout), "\x00") {
-		if f != "" && !apply.IsJunk(filepath.Base(f)) {
-			files = append(files, f)
+		rest, ok := strings.CutPrefix(f, profiles.CommittedRoot+"/")
+		if !ok || profiles.IsJunk(filepath.Base(f)) {
+			continue
 		}
+		name, _, _ := strings.Cut(rest, "/")
+		if byProfile[name] == nil {
+			names = append(names, name)
+		}
+		byProfile[name] = append(byProfile[name], f)
 	}
-	if len(files) == 0 {
+	if len(names) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("profile %q has files git does not have yet (%s): `git clean -x` would delete them for good. Commit them: outfit author on && git add -f %s && git commit -m 'feat: add profile %s'",
-		l.Profile.Name, strings.Join(first(files, 3), ", "), dir, l.Profile.Name)
+	sort.Strings(names)
+	var parts []string
+	for _, n := range names {
+		parts = append(parts, fmt.Sprintf("%s (%s)", n, strings.Join(first(byProfile[n], 2), ", ")))
+	}
+	n := names[0]
+	return fmt.Sprintf("profile files git does not have yet: %s. `git clean -x` would delete them for good. Commit them: git add --sparse -f %s/%s && git commit -m 'feat: add profile %s'",
+		strings.Join(parts, "; "), profiles.CommittedRoot, n, n)
 }
 
 // syncExitJSON prints a blocked result in the caller's format and returns exit 3.
@@ -464,11 +474,8 @@ func cmdShow(ctx context.Context, e Env, args []string) int {
 		return fail(err)
 	}
 	var prof *profiles.Profile
-	for _, p := range profiles.List(ctx, l.Git, l.Repo).Profiles {
-		if p.Name == pos[0] {
-			p := p
-			prof = &p
-		}
+	if p, rerr := profiles.Resolve(profiles.List(ctx, l.Git, l.Repo), pos[0]); rerr == nil {
+		prof = &p
 	}
 	if prof == nil {
 		return fail(Usagef("no profile called %q", pos[0]).WithFix("outfit ls"))

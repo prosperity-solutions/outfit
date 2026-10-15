@@ -141,7 +141,10 @@ func List(ctx context.Context, g gitx.Client, r repo.Repo) Listing {
 		add(Profile{Name: n, Tier: Committed, Dir: filepath.Join(TierDir(r, Committed), n)})
 	}
 	for _, t := range []Tier{Local, Worktree} {
-		names, _ := dirNames(TierDir(r, t))
+		names, bad := dirNames(TierDir(r, t))
+		for _, b := range bad {
+			l.Warnings = append(l.Warnings, config.Warning{Source: filepath.Join(TierDir(r, t), esc(b)), Message: "not a valid profile name (lowercase letters, digits, dots, dashes, underscores): ignored; `outfit uninstall --purge` removes it"})
+		}
 		for _, n := range sortedKeys(names) {
 			add(Profile{Name: n, Tier: t, Dir: filepath.Join(TierDir(r, t), n)})
 		}

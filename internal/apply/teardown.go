@@ -70,6 +70,14 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 		}
 	}
 
+	// A link that could not be removed (or a regular file where one was) stops here:
+	// sparse checkout stays on, because switching it off while a link still stands at a
+	// tracked path shows ` T` in status and lets `commit -a` commit the symlink. The
+	// rerun, which still has the record, continues from this point.
+	if len(failed) > 0 {
+		return did, failed
+	}
+
 	sparseText, _ := readInside(w.GitDir, "info/sparse-checkout")
 	managed := strings.HasPrefix(string(sparseText), plan.Marker)
 	if managed || st.SparseSet {

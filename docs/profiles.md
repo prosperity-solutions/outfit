@@ -45,13 +45,25 @@ outfit use mine                 # ...then it behaves like any other profile
 outfit promote mine             # move it into .outfit/profiles/mine/, then commit it
 ```
 
-`promote` copies first and removes the local copy only after the copy worked. Git does not
-have the new profile until you commit it, and `git clean -x` would delete it, so `status`
-warns and `promote` prints the command: `git add --sparse -f .outfit/profiles/<name> && git
+`promote` copies first and removes the local copy only after the whole copy worked: a link
+or special file in the local profile (never copied, since profiles hold plain files) makes
+it refuse, naming the file, and leave everything as it was. Editor junk (`.DS_Store`, `*~`,
+`*.swp`, …) is never copied. Other worktrees that use the profile (clone-wide, or pinned)
+have no copy of the new directory until it is committed and they have the commit, so they
+behave as base until then: `promote` lists them. Git does not have the new profile until you
+commit it, and `git clean -x` would delete it, so `status` and `use` warn (for every
+profile directory git does not have, active or not) and `promote` prints the command: `git add --sparse -f .outfit/profiles/<name> && git
 commit` (`--sparse` because git's patterns hide profile directories). If a profile of the
 same name is committed later by a teammate, **the committed one wins**: `ls` and `status`
 warn, and the fix is `outfit new <other-name> --from local:<name>` (a `tier:name` reaches a
-profile the winner hides), then delete the old directory.
+profile the winner hides; `outfit show local:<name>` shows it, and `outfit ls --json` lists
+it under `shadowed`), then delete the old directory. A worktree profile of **another**
+worktree counts too: `new` refuses its name, because a local profile of the same name would
+replace it there on that worktree's next sync. Directories with names outfit does not accept
+(made by hand) are listed with a warning, never silently ignored.
+
+`new` and `promote` never overwrite: the destination is created with a plain `mkdir`, and a
+copy is limited to 2000 files, 32 MiB per file and 64 MiB in all.
 
 ## The commands
 
@@ -66,7 +78,7 @@ profile the winner hides), then delete the old directory.
 | `outfit author on\|off` | puts every committed profile on disk to edit side by side, or hides them again |
 | `outfit status` | the active profile, where each value comes from, and `state in sync` / `out of sync` |
 | `outfit diff <path>` / `outfit ack <path>` | the base of a swapped file changed under it: see what changed, accept it (below) |
-| `outfit uninstall [--purge]` | removes the links, restores the base files, then undoes everything else; your local and worktree profiles are kept unless `--purge` |
+| `outfit uninstall [--purge]` | removes the links, restores the base files, then undoes everything else; your local and worktree profiles are kept unless `--purge`. If a link cannot be removed it stops there (exit 1, nothing else undone, no profile deleted) and the rerun continues |
 
 `use` needs `outfit init` first: without the dispatcher nothing would keep a swapped file
 out of a commit. `outfit use base` returns to the committed files.
@@ -90,8 +102,8 @@ then puts a **relative symlink** at the path pointing into
   Side effect (a git rule, [git-behavior.md](git-behavior.md) row 34): `git add
   .outfit/…` by path refuses; use `git add -u .outfit` (modified files), `git add -f` (a
   new file in a profile that is on disk), or `git commit -a`. A **new profile directory**
-  is not on disk as far as git's sparse patterns go: run `outfit author on` first, then
-  `git add -f .outfit/profiles/<name>/…`, commit, and `outfit author off`. Files you
+  is not on disk as far as git's sparse patterns go: run `git add --sparse -f
+  .outfit/profiles/<name>`, then commit. Files you
   staged but have not committed are never taken off disk: `outfit` refuses to hide them
   and says to commit first.
 

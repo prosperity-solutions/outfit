@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 
+	"github.com/prosperity-solutions/outfit/internal/gitx"
+	"github.com/prosperity-solutions/outfit/internal/hooks"
 	"github.com/prosperity-solutions/outfit/internal/plan"
 	"github.com/prosperity-solutions/outfit/internal/profiles"
 )
@@ -45,6 +48,11 @@ func cmdNew(ctx context.Context, e Env, args []string) int {
 	if *here {
 		tier = profiles.Worktree
 	}
+	// A worktree profile of ANOTHER worktree is invisible to this listing: a local
+	// profile of the same name would silently replace it there on its next sync.
+	if prev := worktreeProfileOwner(l, name); prev != "" && profiles.ValidName(name) == nil {
+		return fail(Errorf("a worktree profile called %q already exists in the worktree %s (names are unique across committed, local and worktree profiles)", name, prev).WithFix("outfit new <another-name>" + fromHint(*from)))
+	}
 	c, err := profiles.Create(ctx, l.Git, l.Repo, listing, name, tier, src)
 	if err != nil {
 		if verr := profiles.ValidName(name); verr != nil {
@@ -76,11 +84,28 @@ func cmdNew(ctx context.Context, e Env, args []string) int {
 		return ExitOK
 	}
 	fmt.Fprintf(e.Stdout, "created %s profile %s from %s\n  %s\n", tier, name, origin, c.Dir)
+	if len(c.Skipped) > 0 {
+		fmt.Fprintf(e.Stderr, "note: %d link(s) or special file(s) were not copied (%s): profiles hold plain files only\n", len(c.Skipped), strings.Join(c.Skipped, ", "))
+	}
 	if src == nil {
 		fmt.Fprintf(e.Stdout, "  put files in it at the same relative paths as the tracked files they replace (e.g. %s), and toggles in profile.config\n", filepath.Join(c.Dir, "AGENTS.md"))
 	}
 	fmt.Fprintf(e.Stdout, "  then: %s\n", use)
 	return ExitOK
+}
+
+// worktreeProfileOwner is the path of the worktree whose worktree profiles include
+// name ("" when none does).
+func worktreeProfileOwner(l *loaded, name string) string {
+	for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
+		if profiles.RealDir(filepath.Join(w.GitDir, "outfit", "worktree-profiles", name)) {
+			if w.Path != "" {
+				return w.Path
+			}
+			return w.GitDir
+		}
+	}
+	return ""
 }
 
 func fromHint(from string) string {
@@ -113,12 +138,16 @@ func cmdPromote(ctx context.Context, e Env, args []string) int {
 	switch {
 	case rerr != nil:
 		return fail(Usagef("%v", rerr).WithFix("outfit ls"))
+	case p.Tier == profiles.Committed && len(profiles.HeadFiles(ctx, l.Git, name)) == 0:
+		return fail(Usagef("%s/%s exists in this worktree but git does not have it: it is not a local profile, so there is nothing to promote", profiles.CommittedRoot, name).
+			WithFix("git add --sparse -f " + plan.Quote(profiles.CommittedRoot+"/"+name) + " && git commit -m " + plan.Quote("feat: add profile "+name)))
 	case p.Tier == profiles.Committed:
 		return fail(Usagef("%q is already a committed profile", name).WithFix("outfit ls"))
 	case p.Tier == profiles.Worktree:
 		return fail(Usagef("%q is a worktree profile: only local profiles are promoted", name).WithFix("outfit new <name> --from worktree:" + name + "   (a local copy), then: outfit promote <name>"))
 	}
 	wasActive := l.Result.Profile.Name == name
+	others := worktreesUsing(ctx, l, name) // looked at BEFORE the local copy goes
 	c, err := profiles.Promote(ctx, l.Git, l.Repo, listing, name)
 	if err != nil {
 		return fail(Errorf("%v", err).WithFix("outfit ls"))
@@ -145,13 +174,14 @@ func cmdPromote(ctx context.Context, e Env, args []string) int {
 	}
 	if *asJSON {
 		out, _ := json.Marshal(struct {
-			Name  string    `json:"name"`
-			Dir   string    `json:"dir"`
-			Files int       `json:"files"`
-			Next  string    `json:"next"`
-			Sync  *syncJSON `json:"sync,omitempty"`
-			Error string    `json:"sync_error,omitempty"`
-		}{name, c.Dir, c.Files, next, res, errString(syncErr)})
+			Name   string    `json:"name"`
+			Dir    string    `json:"dir"`
+			Files  int       `json:"files"`
+			Next   string    `json:"next"`
+			Others []string  `json:"other_worktrees_using_it"`
+			Sync   *syncJSON `json:"sync,omitempty"`
+			Error  string    `json:"sync_error,omitempty"`
+		}{name, c.Dir, c.Files, next, nonNilStrings(others), res, errString(syncErr)})
 		fmt.Fprintln(e.Stdout, string(out))
 		if syncErr != nil {
 			return ExitNeedsHuman
@@ -160,11 +190,30 @@ func cmdPromote(ctx context.Context, e Env, args []string) int {
 	}
 	fmt.Fprintf(e.Stdout, "promoted %s to %s (%d file(s)); the local copy is gone\n", name, rel, c.Files)
 	fmt.Fprintf(e.Stdout, "  git does not have it yet: commit it so teammates get it (until then `git clean -x` deletes it):\n  %s\n", next)
+	if len(others) > 0 {
+		fmt.Fprintf(e.Stderr, "warning: other worktrees use %q (%s): the committed copy exists only here until it is committed and they have that commit, so there they behave as base until then (outfit use base --here, in each, is the explicit way)\n", name, strings.Join(others, ", "))
+	}
 	if syncErr != nil {
 		fmt.Fprintf(e.Stderr, "outfit: the files could not be re-linked: %v\n  fix: outfit sync\n", syncErr)
 		return ExitNeedsHuman
 	}
 	return ExitOK
+}
+
+// worktreesUsing lists the OTHER worktrees whose effective profile is name (their own
+// pin, else the clone's default): promote removes the only copy they can see.
+func worktreesUsing(ctx context.Context, l *loaded, name string) []string {
+	var out []string
+	for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
+		if w.Path == "" || w.GitDir == l.Repo.GitDir {
+			continue
+		}
+		g := gitx.Client{Dir: w.Path}
+		if res, err := g.Read(ctx, "config", "--get", "outfit.profile"); err == nil && strings.TrimSpace(string(res.Stdout)) == name {
+			out = append(out, w.Path)
+		}
+	}
+	return out
 }
 
 func errString(err error) string {

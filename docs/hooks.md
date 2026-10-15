@@ -46,8 +46,7 @@ another tool already set `core.hooksPath` at worktree scope.
 a dangling path can never silently disable your hooks, then removes the `outfit.*`
 settings made since init (those that were there before are kept), the SessionStart entry and its ignore line, the state files and
 `extensions.worktreeConfig` if init was the one to enable it. `git config --list` comes
-back exactly (a test compares it). Your local and worktree profiles are kept (`--purge` deletes them). It does as much as it can and exits 1 listing
-anything it could not undo.
+back exactly (a test compares it). Your local and worktree profiles are kept (`--purge` deletes them). If a link or base file cannot be put right it stops there (exit 1, listing it) before anything else is undone: sparse checkout stays on and the record stays, so the rerun continues. Otherwise it does as much as it can and exits 1 listing anything it could not undo.
 
 ## Chaining
 

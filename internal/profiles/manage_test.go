@@ -168,3 +168,57 @@ func TestResolveReachesAShadowedProfileByTier(t *testing.T) {
 		t.Fatal("a tier that does not have it was accepted")
 	}
 }
+
+func TestPromoteRefusesWhenSomethingCannotBeCopiedAndKeepsTheLocalCopy(t *testing.T) {
+	r := fakeRepo(t)
+	src := filepath.Join(r.CommonDir, "outfit", "profiles", "q")
+	write(t, filepath.Join(src, "AGENTS.md"), "x\n", 0o644)
+	if err := os.Symlink("/etc/hosts", filepath.Join(src, "hosts.md")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Promote(context.Background(), gitx.Client{Dir: r.WorkTree}, r, list(r), "q")
+	if err == nil || !strings.Contains(err.Error(), "hosts.md") {
+		t.Fatalf("promote deleted a local copy it could not copy whole: %v", err)
+	}
+	if _, serr := os.Stat(filepath.Join(src, "AGENTS.md")); serr != nil {
+		t.Fatal("the local copy was touched")
+	}
+	if _, serr := os.Stat(filepath.Join(r.WorkTree, ".outfit", "profiles", "q")); serr == nil {
+		t.Fatal("a half profile was left in the worktree")
+	}
+}
+
+func TestPromoteAndCopySkipEditorJunkAndCopyKeepsPermissions(t *testing.T) {
+	r := fakeRepo(t)
+	src := filepath.Join(r.CommonDir, "outfit", "profiles", "j")
+	write(t, filepath.Join(src, "AGENTS.md"), "x\n", 0o644)
+	write(t, filepath.Join(src, ".DS_Store"), "", 0o644)
+	write(t, filepath.Join(src, "notes.md~"), "", 0o644)
+	c, err := Promote(context.Background(), gitx.Client{Dir: r.WorkTree}, r, list(r), "j")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, serr := os.Stat(filepath.Join(c.Dir, ".DS_Store")); serr == nil {
+		t.Fatal("junk was copied")
+	}
+	if fi, serr := os.Stat(filepath.Join(c.Dir, "AGENTS.md")); serr != nil || fi.Mode().Perm()&0o044 == 0 {
+		t.Fatalf("a world-readable file became private: %v %v", fi, serr)
+	}
+}
+
+func TestCopyHasATotalSizeCap(t *testing.T) {
+	r := fakeRepo(t)
+	src := filepath.Join(r.CommonDir, "outfit", "profiles", "big")
+	chunk := strings.Repeat("x", 25<<20)
+	for _, n := range []string{"a", "b", "c"} {
+		write(t, filepath.Join(src, n+".md"), chunk, 0o644)
+	}
+	l := list(r)
+	b, _ := Resolve(l, "big")
+	if _, err := Create(context.Background(), gitx.Client{}, r, l, "copy", Local, &b); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("a 75 MiB profile was copied: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(r.CommonDir, "outfit", "profiles", "copy")); err == nil {
+		t.Fatal("half a profile was left behind")
+	}
+}

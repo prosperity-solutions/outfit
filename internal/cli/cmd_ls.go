@@ -67,14 +67,28 @@ func cmdLs(ctx context.Context, e Env, args []string) int {
 		}
 		entries = append(entries, ent)
 	}
+	shadowed := []lsEntry{}
+	for _, p := range listing.Shadowed {
+		ent := lsEntry{Name: p.Name, Tier: string(p.Tier), Keys: []string{}, Files: nonNilStrings(profiles.Files(p))}
+		if cfg, _ := profiles.ReadConfig(p); cfg != nil {
+			for k, v := range cfg.Keys {
+				ent.Keys = append(ent.Keys, k+"="+v)
+			}
+			sort.Strings(ent.Keys)
+		}
+		shadowed = append(shadowed, ent)
+	}
 	warnings := append(append(listing.Warnings, l.Result.Warnings...), inactiveWarnings...)
 
 	if *asJSON {
 		out, _ := json.Marshal(struct {
-			Active   string           `json:"active"`
-			Profiles []lsEntry        `json:"profiles"`
+			Active   string    `json:"active"`
+			Profiles []lsEntry `json:"profiles"`
+			// Shadowed are personal profiles a committed one of the same name hides
+			// (`outfit show <tier>:<name>`, `outfit new <other> --from <tier>:<name>`).
+			Shadowed []lsEntry        `json:"shadowed"`
 			Warnings []config.Warning `json:"warnings"`
-		}{l.Result.Profile.Name, entries, nonNil(warnings)})
+		}{l.Result.Profile.Name, entries, shadowed, nonNil(warnings)})
 		fmt.Fprintln(e.Stdout, string(out))
 		return ExitOK
 	}

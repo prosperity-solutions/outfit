@@ -203,6 +203,11 @@ const (
 func personalProfiles(l *loaded) []string {
 	var out []string
 	add := func(tierDir string) {
+		// A tier directory (or the outfit directory above it) that is a link is left alone:
+		// reading or deleting through it would reach somewhere that is not outfit's.
+		if !profiles.RealDir(tierDir) || !profiles.RealDir(filepath.Dir(tierDir)) {
+			return
+		}
 		ents, err := os.ReadDir(tierDir)
 		if err != nil {
 			return
@@ -211,6 +216,21 @@ func personalProfiles(l *loaded) []string {
 			if en.IsDir() && profiles.ValidName(en.Name()) == nil {
 				out = append(out, filepath.Join(tierDir, en.Name()))
 			}
+		}
+	}
+	add(filepath.Join(l.Repo.CommonDir, "outfit", "profiles"))
+	for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
+		add(filepath.Join(w.GitDir, "outfit", "worktree-profiles"))
+	}
+	return out
+}
+
+// personalTierDirs lists the real tier directories (local, and each worktree's).
+func personalTierDirs(l *loaded) []string {
+	var out []string
+	add := func(d string) {
+		if profiles.RealDir(d) && profiles.RealDir(filepath.Dir(d)) {
+			out = append(out, d)
 		}
 	}
 	add(filepath.Join(l.Repo.CommonDir, "outfit", "profiles"))
@@ -298,6 +318,24 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 		undone = append(undone, did...)
 		undoFailed = append(undoFailed, failed...)
 	}
+	// A link that could not go (or a base file that could not come back) stops here:
+	// switching sparse checkout off over it would leave a ` T` status that `commit -a`
+	// turns into a symlink in history, and removing state.json would forget which links
+	// to retry. Everything else (hooks, config, profiles) stays as it is; the rerun
+	// continues where this one stopped.
+	if len(undoFailed) > 0 {
+		partial := &hooks.UninstallResult{Changed: len(undone) > 0, Removed: nonNilStrings(undone), Adopted: []string{}, Failed: undoFailed}
+		if *asJSON {
+			out, _ := json.Marshal(partial)
+			fmt.Fprintln(e.Stdout, string(out))
+			return ExitError
+		}
+		for _, f := range undoFailed {
+			fmt.Fprintf(e.Stderr, "outfit: could not undo %s\n", f)
+		}
+		fmt.Fprintln(e.Stderr, "fix: resolve the above, then rerun `outfit uninstall` (nothing else was undone; hooks, settings and your profiles are as they were)")
+		return ExitError
+	}
 	if removed, err := apply.RemoveExclude(filepath.Join(l.Repo.CommonDir, "info", "exclude")); err != nil {
 		undoFailed = append(undoFailed, "info/exclude: "+err.Error())
 	} else if removed {
@@ -330,7 +368,13 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 				undoFailed = append(undoFailed, dir+": "+rerr.Error())
 			} else {
 				undone = append(undone, "personal profile "+dir)
-				_ = os.Remove(filepath.Dir(dir)) // the tier directory too, when that was its last profile
+			}
+		}
+		// The tier directories too, with anything somebody put there by hand (a name
+		// outfit does not list): they hold nothing else.
+		for _, td := range personalTierDirs(l) {
+			if rerr := removeProfileDir(td); rerr != nil {
+				undoFailed = append(undoFailed, td+": "+rerr.Error())
 			}
 		}
 		kept = nil
@@ -371,9 +415,11 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 		fmt.Fprintln(e.Stdout, "nothing to uninstall")
 		return ExitOK
 	}
-	var shims, state, cfgs int
+	var shims, state, cfgs, personal int
 	for _, r := range res.Removed {
 		switch {
+		case strings.HasPrefix(r, "personal profile "):
+			personal++
 		case strings.HasPrefix(r, "shim "):
 			shims++
 		case strings.HasPrefix(r, "state "), r == "install record":
@@ -383,6 +429,9 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 		}
 	}
 	fmt.Fprintf(e.Stdout, "uninstalled: %d shims, %d config entries, %d state files removed\n", shims, cfgs, state)
+	if personal > 0 {
+		fmt.Fprintf(e.Stdout, "  also removed %d personal profile(s) (--purge)\n", personal)
+	}
 	for _, r := range res.Removed {
 		if strings.HasPrefix(r, agentsRemovedPrefix) || r == excludeRemoved {
 			fmt.Fprintf(e.Stdout, "  also removed: %s\n", r)
