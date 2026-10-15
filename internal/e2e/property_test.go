@@ -240,6 +240,15 @@ func steps() []step {
 		{"pull-docs", true, func(m *model) { m.upstreamChange("docs/guide.md") }},
 		{"pull-base", false, func(m *model) { m.upstreamChange("AGENTS.md") }},
 		{"merge", false, func(m *model) {
+			// A save outfit has not absorbed yet is overwritten by the markers of a merge that
+			// conflicts on that file (git has no hook before a merge touches the tree, and the
+			// path is skip-worktree): docs/git-behavior.md row 48, pinned by
+			// swaps-unabsorbed-merge.txtar. The documented rule is `outfit sync` after saving, so
+			// this step follows it; every other order of the same steps is still drawn.
+			if m.pendingAbsorb() {
+				m.logf("outfit sync first: a conflicting merge would overwrite an unabsorbed save (git-behavior row 48)")
+				m.outfit("sync")
+			}
 			_, err := m.git("merge", "-q", "--no-edit", "conflict")
 			if err != nil {
 				m.check("mid-merge")

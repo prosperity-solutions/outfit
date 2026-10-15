@@ -147,6 +147,12 @@ What it does with each swapped path:
 | a swapped path git forgot to hide (`git reset -- <path>`) | tells git again |
 | a link the profile no longer wants | removes it, and git brings the committed file back |
 
+One window sync cannot close: an atomic save that sync has **not absorbed yet** is only a
+regular file git does not look at, and a merge that conflicts on that same base file writes
+its markers over it (git-behavior row 48). Run `outfit sync` after saving, before a merge,
+pull or rebase that touches the file; a hook-run sync cannot help, because git has no hook
+before a merge changes the tree.
+
 ### The base moved under a swap: `outfit diff`, `outfit ack`
 
 A swapped path shows the profile's copy, so a clean `git pull` that changes the **base**

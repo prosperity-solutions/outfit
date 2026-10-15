@@ -1,0 +1,32 @@
+# What git does to an editor's save that outfit has not absorbed yet (found by the property
+# test): AGENTS.md is hidden from git (skip-worktree), so when a merge conflicts on it git
+# writes its markers over whatever regular file stands there, without asking. Nothing runs
+# between the save and the merge (git has no hook before a merge touches the tree), so the
+# bytes are only safe once `outfit sync` has absorbed them. docs/git-behavior.md row 48.
+fixture repo team conflict
+cd repo
+outfit init
+outfit use yolo
+
+# The unsafe order: save, then merge. The save is lost to the markers.
+atomicsave AGENTS.md 'my saved line\n'
+! exec git merge conflict
+exec cat AGENTS.md
+stdout '<<<<<<<'
+! stdout 'my saved line'
+exec git merge --abort
+exec git status --short
+! stdout .
+
+# The safe order: `outfit sync` after the save absorbs it into the profile first (status
+# only reports it, exit 4), so the merge can only ever conflict on the base file.
+outfit sync
+exec git status --short
+atomicsave AGENTS.md 'my second saved line\n'
+! outfit status
+outfit sync
+exec cat .outfit/profiles/yolo/AGENTS.md
+stdout 'my second saved line'
+! exec git merge conflict
+exec cat .outfit/profiles/yolo/AGENTS.md
+stdout 'my second saved line'
