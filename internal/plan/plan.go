@@ -51,6 +51,9 @@ type PathFacts struct {
 	// VariantBlob is the blob id the index holds for the variant ("" when the profile
 	// is not committed or the file is not tracked yet).
 	VariantBlob string
+	// SameCommit says the latest commit that touched the base file touched the
+	// variant too (computed only when both moved since the last sync).
+	SameCommit bool
 	// BaseBlob is the blob id the index holds for the base file now ("" when git does
 	// not know the path). A pull that changes the base moves it under a swap.
 	BaseBlob string
@@ -64,12 +67,41 @@ type Record struct {
 	// upstream" is measured against. VariantBlob is the variant's at the same moment.
 	BaseBlob    string
 	VariantBlob string
+	// SeenBase is the base blob the last sync saw.
+	SeenBase string
+	// KnownBases are base blobs already acknowledged.
+	KnownBases []string
 }
 
-// variantMoved says git changed the profile's file since the record was made.
-func variantMoved(rec Record, pf PathFacts) bool {
-	return rec.VariantBlob != "" && pf.VariantBlob != "" && rec.VariantBlob != pf.VariantBlob
+// BaseKnown says the swap already stands on, or a person already acknowledged, this
+// base blob.
+func (r Record) BaseKnown(blob string) bool {
+	if blob == r.BaseBlob {
+		return true
+	}
+	for _, k := range r.KnownBases {
+		if k == blob {
+			return true
+		}
+	}
+	return false
 }
+
+// Adapted says ONE commit changed the base and the profile's own file together: the
+// profile's maintainer adapting it to the new base. The swap then stands on the new
+// base. Anything looser re-baselines silently what nobody has looked at: a pull that
+// brings an unrelated profile fix next to a base change, or a profile commit made
+// alone after the base was already reported stale.
+func Adapted(rec Record, pf PathFacts) bool {
+	variantMoved := rec.VariantBlob != "" && pf.VariantBlob != "" && rec.VariantBlob != pf.VariantBlob
+	return variantMoved && rec.SeenBase != "" && pf.BaseBlob != "" && rec.SeenBase != pf.BaseBlob && pf.SameCommit
+}
+
+// Informational kinds only say something; they never change anything.
+func (k ActionKind) Informational() bool { return k == Skip || k == Conflict || k == Stale }
+
+// Bookkeeping kinds only change what state.json records, never the worktree.
+func (k ActionKind) Bookkeeping() bool { return k == RecordHash }
 
 // Facts is the actual state of the worktree.
 type Facts struct {
@@ -117,7 +149,7 @@ const (
 	RepairSkip     ActionKind = "repair-skip"      // git update-index --skip-worktree: the bit was lost (a `git reset -- <path>`)
 	AddExclude     ActionKind = "add-exclude"      // .git/info/exclude
 	Conflict       ActionKind = "conflict"         // unmerged path: leave it alone, exit 3
-	Stale          ActionKind = "stale"            // the base file changed upstream since the swap: keep it, say so
+	Stale          ActionKind = "stale"            // the base file differs from when the swap was made: keep the swap, say so
 	Skip           ActionKind = "skip"             // cannot swap this path; says why
 	Refuse         ActionKind = "refuse"           // nothing is applied at all
 )
@@ -134,6 +166,9 @@ type Action struct {
 	// Replaces says the path holds an UNTOUCHED copy of the committed file (checked
 	// against the index), which LinkPath may remove to put the link there.
 	Replaces bool
+	// Adapted (RecordHash): one commit moved the base and the variant together, so the
+	// swap's recorded base moves too.
+	Adapted bool
 }
 
 // NeedsHuman reports whether any action means a person must look (exit 3).
@@ -309,15 +344,15 @@ func Plan(w Want, f Facts) []Action {
 			switch {
 			case pf.LinkTarget != s.Target:
 				out = append(out, Action{Kind: LinkPath, Path: p, Target: s.Target})
-			case !had || rec.VariantHash != pf.VariantHash || rec.Target != s.Target || variantMoved(rec, pf) || (rec.VariantBlob == "" && pf.VariantBlob != ""):
-				out = append(out, Action{Kind: RecordHash, Path: p, Target: s.Target})
+			case !had || rec.VariantHash != pf.VariantHash || rec.Target != s.Target || (pf.VariantBlob != "" && rec.VariantBlob != pf.VariantBlob) || (pf.BaseBlob != "" && rec.SeenBase != pf.BaseBlob):
+				out = append(out, Action{Kind: RecordHash, Path: p, Target: s.Target, Adapted: Adapted(rec, pf)})
 			}
 			// The swap stays; a person decides whether the new base needs a look.
 			// Not when the same change moved the profile's file too: that is the profile's
 			// maintainer adapting it to the new base (the record follows, see apply).
-			if had && rec.BaseBlob != "" && pf.BaseBlob != "" && rec.BaseBlob != pf.BaseBlob && !variantMoved(rec, pf) {
+			if had && rec.BaseBlob != "" && pf.BaseBlob != "" && !rec.BaseKnown(pf.BaseBlob) && !Adapted(rec, pf) {
 				out = append(out, Action{Kind: Stale, Path: p,
-					Reason: p + ": the base file changed upstream since outfit swapped it; the profile's copy is kept as it is",
+					Reason: p + ": the base file is different from when outfit swapped it (a pull, a merge or a checkout); the profile's copy is kept as it is",
 					Fix:    "outfit diff " + shq(p) + "   (then, when the profile is fine as it is: outfit ack " + shq(p) + ")"})
 			}
 		case Missing:

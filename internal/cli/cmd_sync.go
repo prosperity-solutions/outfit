@@ -126,7 +126,7 @@ type syncJSON struct {
 	Notes      []string `json:"notes"`
 	Refused    []string `json:"refused"`
 	Fixes      []string `json:"fixes"`
-	// Stale lists swapped paths whose base file changed upstream (`outfit diff`, `outfit ack`).
+	// Stale lists swapped paths whose base file differs from when it was swapped (`outfit diff`, `outfit ack`).
 	Stale      []string `json:"stale"`
 	Quarantine string   `json:"quarantine,omitempty"`
 }

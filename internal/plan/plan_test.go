@@ -290,15 +290,27 @@ func TestPlanIsDeterministic(t *testing.T) {
 
 func TestPlanStaleBaseKeepsTheSwapAndSaysSo(t *testing.T) {
 	w, f := inSync()
-	f.Recorded["AGENTS.md"] = Record{Target: tgt, VariantHash: "h1", BaseBlob: "old"}
+	f.Recorded["AGENTS.md"] = Record{Target: tgt, VariantHash: "h1", BaseBlob: "old", SeenBase: "old"}
 	pf := f.Paths["AGENTS.md"]
 	pf.BaseBlob = "new"
 	f.Paths["AGENTS.md"] = pf
 	got := Plan(w, f)
-	if len(got) != 1 || got[0].Kind != Stale || !strings.Contains(got[0].Fix, "outfit diff AGENTS.md") || !strings.Contains(got[0].Fix, "outfit ack AGENTS.md") {
+	var stale *Action
+	var records int
+	for i, a := range got {
+		switch a.Kind {
+		case Stale:
+			stale = &got[i]
+		case RecordHash:
+			records++ // the base blob the sync saw is remembered
+		default:
+			t.Fatalf("unexpected %v", kinds(got))
+		}
+	}
+	if stale == nil || records != 1 || !strings.Contains(stale.Fix, "outfit diff AGENTS.md") || !strings.Contains(stale.Fix, "outfit ack AGENTS.md") {
 		t.Fatalf("%v %+v", kinds(got), got)
 	}
-	// Same blob, or nothing recorded yet (an older state file): nothing to say.
+	// Same blob: nothing to say. An older state file with nothing recorded: say nothing.
 	pf.BaseBlob = "old"
 	f.Paths["AGENTS.md"] = pf
 	if got := Plan(w, f); len(got) != 0 {
@@ -307,8 +319,10 @@ func TestPlanStaleBaseKeepsTheSwapAndSaysSo(t *testing.T) {
 	f.Recorded["AGENTS.md"] = Record{Target: tgt, VariantHash: "h1"}
 	pf.BaseBlob = "new"
 	f.Paths["AGENTS.md"] = pf
-	if got := Plan(w, f); len(got) != 0 {
-		t.Fatalf("%v", kinds(got))
+	for _, a := range Plan(w, f) {
+		if a.Kind == Stale {
+			t.Fatalf("no recorded base: nothing to compare with")
+		}
 	}
 }
 
@@ -344,5 +358,59 @@ func TestPlanLeavesAConflictedPathAlone(t *testing.T) {
 	got := Plan(w, f)
 	if len(got) != 1 || got[0].Kind != Conflict {
 		t.Fatalf("%v", kinds(got))
+	}
+}
+
+func TestAdaptedNeedsOneCommitThatMovedBaseAndVariantTogether(t *testing.T) {
+	rec := Record{BaseBlob: "b1", SeenBase: "b1", VariantBlob: "v1"}
+	pf := PathFacts{BaseBlob: "b2", VariantBlob: "v2", SameCommit: true}
+	if !Adapted(rec, pf) {
+		t.Fatal("one commit moved both: adapted")
+	}
+	pf.SameCommit = false
+	if Adapted(rec, pf) {
+		t.Fatal("two commits (an unrelated profile fix next to a base change) must stay stale")
+	}
+	pf.SameCommit = true
+	rec.SeenBase = "b2" // the base change was already reported; a profile commit alone does not clear it
+	if Adapted(rec, pf) {
+		t.Fatal("a profile commit after the base was reported must not clear it")
+	}
+	rec.SeenBase, pf.VariantBlob = "b1", "v1"
+	if Adapted(rec, pf) {
+		t.Fatal("the variant did not move")
+	}
+}
+
+func TestStaleBaseKnownBasesSurviveABranchSwitch(t *testing.T) {
+	w, f := inSync()
+	f.Recorded["AGENTS.md"] = Record{Target: tgt, VariantHash: "h1", BaseBlob: "feature", SeenBase: "feature", KnownBases: []string{"main"}}
+	pf := f.Paths["AGENTS.md"]
+	pf.BaseBlob = "main"
+	f.Paths["AGENTS.md"] = pf
+	for _, a := range Plan(w, f) {
+		if a.Kind == Stale {
+			t.Fatal("main was acknowledged before: not stale again")
+		}
+	}
+	pf.BaseBlob = "third"
+	f.Paths["AGENTS.md"] = pf
+	var stale bool
+	for _, a := range Plan(w, f) {
+		stale = stale || a.Kind == Stale
+	}
+	if !stale {
+		t.Fatal("a base nobody acknowledged is stale")
+	}
+}
+
+func TestInformationalAndBookkeepingKinds(t *testing.T) {
+	for _, k := range []ActionKind{Skip, Conflict, Stale} {
+		if !k.Informational() {
+			t.Fatalf("%s", k)
+		}
+	}
+	if !RecordHash.Bookkeeping() || RecordHash.Informational() || LinkPath.Informational() || LinkPath.Bookkeeping() {
+		t.Fatal("kinds misclassified")
 	}
 }

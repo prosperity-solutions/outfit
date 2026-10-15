@@ -119,9 +119,7 @@ func (in Input) planOnce(ctx context.Context, st *state.State) (*Result, []plan.
 // actionable reports whether anything has to be written or run.
 func actionable(acts []plan.Action) bool {
 	for _, a := range acts {
-		switch a.Kind {
-		case plan.Skip, plan.Conflict, plan.Stale:
-		default:
+		if !a.Kind.Informational() {
 			return true
 		}
 	}
@@ -141,12 +139,18 @@ func (in Input) now() time.Time {
 func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action, res *Result) (*Result, error) {
 	next := *st
 	quarantined := map[string]bool{}
+	adapted := map[string]bool{}
+	for _, a := range acts {
+		if a.Kind == plan.RecordHash && a.Adapted {
+			adapted[a.Path] = true
+		}
+	}
 
 	stepErr := func() error {
 		for _, a := range acts {
 			switch a.Kind {
 			case plan.Skip, plan.Conflict, plan.RecordHash, plan.Stale:
-				// Nothing to run; RecordHash only changes the state written below.
+				// (plan.ActionKind.Informational / Bookkeeping: nothing to run; RecordHash only changes the state written below.
 			case plan.SetExpectFiles:
 				if _, err := in.Git.Write(ctx, "config", "--worktree", "sparse.expectFilesOutsideOfPatterns", "true"); err != nil {
 					return fmt.Errorf("cannot set sparse.expectFilesOutsideOfPatterns: %w", err)
@@ -249,13 +253,16 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 			// first link) sets it, a later sync never moves it, or "stale" would clear
 			// itself the next time anything else changed.
 			base := g.blobs[sw.Path]
+			var known []string
 			for _, old := range st.Swaps {
-				moved := old.VariantBlob != "" && pf.VariantBlob != "" && old.VariantBlob != pf.VariantBlob
-				if old.Path == sw.Path && old.Target == sw.Target && old.BaseBlob != "" && !moved {
-					base = old.BaseBlob
+				if old.Path == sw.Path && old.Target == sw.Target && old.BaseBlob != "" {
+					known = old.KnownBases
+					if !adapted[sw.Path] { // the plan decided (plan.Adapted): one commit moved base and variant
+						base = old.BaseBlob
+					}
 				}
 			}
-			next.Swaps = append(next.Swaps, state.Swap{Path: sw.Path, Target: sw.Target, VariantHash: pf.VariantHash, VariantBlob: pf.VariantBlob, BaseBlob: base})
+			next.Swaps = append(next.Swaps, state.Swap{Path: sw.Path, Target: sw.Target, VariantHash: pf.VariantHash, VariantBlob: pf.VariantBlob, BaseBlob: base, SeenBase: g.blobs[sw.Path], KnownBases: known})
 		}
 	}
 	sort.Slice(next.Swaps, func(i, j int) bool { return next.Swaps[i].Path < next.Swaps[j].Path })
@@ -564,16 +571,14 @@ func (r *Result) Pending() bool {
 		return true
 	}
 	for _, a := range r.Actions {
-		switch a.Kind {
-		case plan.Skip, plan.Conflict, plan.RecordHash, plan.Stale:
-		default:
+		if !a.Kind.Informational() && !a.Kind.Bookkeeping() {
 			return true
 		}
 	}
 	return false
 }
 
-// Stale lists the swaps whose base file changed upstream since outfit swapped it.
+// Stale lists the swaps whose base file differs from when outfit swapped it.
 func (r *Result) Stale() []plan.Action {
 	var out []plan.Action
 	for _, a := range r.Actions {

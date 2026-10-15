@@ -71,7 +71,7 @@ outfit use yolo                  # swap in the yolo profile's files (and toggles
 outfit use base                  # back to exactly the committed files
 outfit show lean                 # a profile's toggles and files, without switching
 outfit status                    # the active profile, where every value comes from, in sync or not
-outfit diff AGENTS.md            # the base file changed upstream under a swap: what changed
+outfit diff AGENTS.md            # the base file differs from when it was swapped (a pull, a checkout): what changed
 outfit ack AGENTS.md             # ...and that is fine: the profile's copy stays
 outfit init --agents             # a Claude Code SessionStart entry that runs outfit sync
 outfit sync                      # put the files right again (hooks run it after checkout and merge)

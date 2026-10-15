@@ -86,7 +86,7 @@ What it does with each swapped path:
 | an editor's **atomic save** replaced the link by a regular file, and the profile's file is unchanged since | **absorbs** it: copies the new bytes into the profile's file, byte for byte, and relinks |
 | the same, but the profile's file changed too (this includes an edit you made through the link since the last `outfit` command: nothing runs when a file is edited, so sync cannot tell it from a change made by git; run `outfit sync` after editing and before an editor saves, or take the printed fix) | saves **both** under `.git/outfit/quarantine/<time>-<key>/{file,variant}/`, leaves everything where it is, exits **3** and prints what to compare |
 | a path in the middle of a merge conflict (git replaced the link with a regular file full of markers) | leaves it alone: never absorbs the markers, keeps the patterns as they are, exits 3 and prints the fix. Resolve the **base** file, `git add --sparse <path> && git commit`, then `outfit sync` links it again |
-| the base file changed upstream since it was swapped (a pull, a merge) | keeps the swap and the profile's copy as they are, prints **one note** on stderr (the reason and the fix), exits 0. `outfit status` shows `state stale` and exits 4; see below |
+| the base file is different from when it was swapped (a pull, a merge, a checkout) | keeps the swap and the profile's copy as they are, prints **one note** on stderr (the reason and the fix), exits 0. `outfit status` shows `state stale` and exits 4; see below |
 | the profile's own file is gone (removed upstream, or an older branch) | removes the link, the base file is back, one line says so; checking the newer branch out again swaps it again |
 | a swapped path git forgot to hide (`git reset -- <path>`) | tells git again |
 | a link the profile no longer wants | removes it, and git brings the committed file back |
@@ -98,17 +98,26 @@ file does not change what you see. outfit remembers the base's blob from when it
 link and compares it on every sync. When they differ it keeps the swap, says so on every
 sync, and `outfit status` exits **4** with `state stale`. (`sync --json` still says
 `in_sync: true`: there is nothing left for sync to do; the paths are in `stale`.) A pull
-that moves the base **and** the profile's own file in the same change is the profile's
-maintainer adapting it to the new base: nothing is stale, the record follows.
+where **one commit** changes the base and the profile's own file together is the profile's
+maintainer adapting it to the new base: nothing is stale, the record follows. Anything
+looser would silently drop a base change nobody looked at (an unrelated profile fix pulled
+in next to it, or your own profile commit made after the note appeared), so those stay
+stale until you `outfit ack`. A branch switch changes the base too: acknowledged bases are
+remembered (the last eight per file), so switching back and forth between branches you
+have looked at does not nag.
 
 ```sh
-outfit diff AGENTS.md    # what changed in the base upstream (a git diff; --json has it too)
+outfit diff AGENTS.md    # what changed in the base (a git diff; --json has it too)
+git show :AGENTS.md      # the whole new base file (the link shows the profile's copy)
 outfit ack AGENTS.md     # the profile's copy is fine as it is: record the new base
 ```
 
 Neither touches the profile's copy. If the new base deserves a change in the profile, edit
-the profile's file (that is the file the link shows), then `outfit ack`. Paths are relative
-to where you are. Acknowledging a base that did not change prints "nothing to acknowledge".
+the profile's file (that is the file the link shows) and `outfit ack` it: **committing**
+that edit alone does not clear the note. Paths are relative to where you are.
+Acknowledging a base that did not change prints "nothing to acknowledge". If the version
+outfit swapped over is gone from the repository (a deleted branch, a `gc`), `diff` says so
+and `ack` still works.
 
 ### New worktrees
 
@@ -130,13 +139,20 @@ step. `outfit init --agents` adds a Claude Code `SessionStart` entry that runs
 every worktree that has a `.claude` directory, and in worktrees added later (the main
 worktree's entry is copied when the new one has a `.claude` directory): the **personal**
 settings file, kept out of `git add -A` by an entry in `.git/info/exclude` (unless git
-already ignores it), so teammates who do not use outfit are not affected. A settings file
+already ignores it; running `init --agents` again repairs it), so teammates who do not use outfit are not affected. A settings file
 that git **tracks**, or that is a link, is never edited (exit 3 and a message). The entry is
 recognised by a trailing `# outfit-managed` comment on the command; every other setting
 and hook is kept (the file is rewritten with its keys sorted and re-indented), a hook of
 your own inside the same group stays, a file outfit cannot read as JSON is not touched,
-and `outfit uninstall` takes the entry and the exclude line away without failing over a
-file it never wrote (a settings file that held nothing else goes with it).
+`outfit status` shows an `agents` line while the entry is installed (and `agents_session_start`
+in `--json`). When a session starts and sync cannot finish cleanly (a conflict, a
+quarantine, outfit missing) the command prints one line, which Claude Code adds to the
+session; when it works it prints nothing. A new worktree only gets the entry when it has
+a `.claude` directory (git creates one only when something under it is tracked). A
+repository whose main worktree path outfit cannot know (a submodule, `--separate-git-dir`)
+is handled for the worktree you run it in. To remove the entry alone, delete the hook whose
+command ends in `# outfit-managed` (or run `outfit uninstall`, which takes the entry and the exclude line away without failing over a
+file it never wrote (a settings file that held nothing else goes with it)).
 
 outfit never overwrites bytes a person wrote. It **refuses** (exit 3, nothing changed, the
 exact fix printed) to: take over a sparse checkout it did not set up (`git
@@ -159,7 +175,7 @@ sync. Never set it yourself.
 ## Exit codes
 
 `0` fine; `1` an error; `2` usage or an unknown profile; `3` a person must look (a
-conflict, a quarantine, a refusal); `4` `outfit status` says the files are out of sync, or stale (a base file changed upstream).
+conflict, a quarantine, a refusal); `4` `outfit status` says the files are out of sync, or stale (a base file differs from when it was swapped).
 `--json` output has `in_sync`, `changed`, `needs_human`, `notes`, `refused`, `fixes` and
 `stale` (the paths whose base moved).
 

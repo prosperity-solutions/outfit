@@ -41,7 +41,9 @@ func Command(exe string) string {
 	if exe != "" {
 		run = shellQuote(exe) + " sync || outfit sync"
 	}
-	return "{ " + run + "; } >/dev/null 2>&1 || true " + Marker
+	// Quiet when it works; when it does not (a conflict, a quarantine, outfit missing),
+	// one line goes to the session, which Claude Code adds to its context.
+	return "{ " + run + "; } >/dev/null 2>&1 || echo 'outfit: sync did not finish cleanly; run outfit status' " + Marker
 }
 
 func shellQuote(s string) string {
@@ -62,6 +64,9 @@ type object = map[string]json.RawMessage
 // somebody else's settings into this worktree, writing or removing would reach
 // outside it. Missing is fine (Install makes it); anything but a plain file is not.
 func settingsPath(worktree string) (string, error) {
+	if !filepath.IsAbs(worktree) {
+		return "", errNoClaude // never resolve .claude against the current directory
+	}
 	if !HasClaude(worktree) {
 		return "", errNoClaude
 	}

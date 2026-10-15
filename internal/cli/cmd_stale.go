@@ -90,14 +90,17 @@ func cmdDiff(ctx context.Context, e Env, args []string) int {
 	if !isObjectID(b.Current) || (b.Recorded != "" && !isObjectID(b.Recorded)) {
 		return fail(Errorf("the recorded base of %s is not a git object id: state.json is damaged", path).WithFix("outfit init"))
 	}
-	stale := b.Recorded != "" && b.Recorded != b.Current
+	stale := b.Recorded != "" && !b.Known
 	var text string
 	if stale {
 		res, err := l.Git.Read(ctx, "diff", "--no-ext-diff", "--no-color", b.Recorded, b.Current)
 		if err != nil {
-			return fail(Errorf("cannot compare the two versions of %s: %v", path, err).WithFix("outfit status"))
+			// The recorded version may be gone (a deleted branch, a gc): then there is
+			// nothing to compare, but the current base can still be read and acknowledged.
+			return fail(Errorf("cannot compare the two versions of %s (the one outfit swapped over is probably no longer in this repository): %v", path, err).
+				WithFix("git show :" + path + "   (the base as it is now; when the profile is fine with it: outfit ack " + path + ")"))
 		}
-		text = string(res.Stdout)
+		text = strings.ReplaceAll(strings.ReplaceAll(string(res.Stdout), "a/"+b.Recorded, "a/"+path+" (swapped over)"), "b/"+b.Current, "b/"+path+" (now)")
 	}
 	if asJSON {
 		out, _ := json.Marshal(struct {
@@ -111,12 +114,12 @@ func cmdDiff(ctx context.Context, e Env, args []string) int {
 		return ExitOK
 	}
 	if !stale {
-		fmt.Fprintf(e.Stdout, "%s: the base file is as it was when outfit swapped it; nothing to look at\n", path)
+		fmt.Fprintf(e.Stdout, "%s: the base file is as it was when outfit swapped it (or you acknowledged it); nothing to look at\n", path)
 		return ExitOK
 	}
-	fmt.Fprintf(e.Stdout, "# %s: the base file changed upstream (was %.8s, is %.8s); the profile's copy is kept as it is\n", path, b.Recorded, b.Current)
+	fmt.Fprintf(e.Stdout, "# %s: the base file is different from when outfit swapped it (was %.8s, is %.8s); the profile's copy is kept as it is\n", path, b.Recorded, b.Current)
 	fmt.Fprint(e.Stdout, text)
-	fmt.Fprintf(e.Stdout, "# when the profile is fine as it is: outfit ack %s\n", path)
+	fmt.Fprintf(e.Stdout, "# the whole new base: git show :%s\n# when the profile is fine as it is: outfit ack %s\n", path, path)
 	return ExitOK
 }
 

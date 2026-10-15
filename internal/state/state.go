@@ -56,6 +56,13 @@ type Swap struct {
 	// made through the link); a pull that moves it together with the base is the profile
 	// maintainer adapting the profile, so the base is re-baselined, not reported stale.
 	VariantBlob string `json:"variant_blob,omitempty"`
+	// SeenBase is the base file's blob as of the last sync that looked (BaseBlob is the
+	// one the swap STANDS on and only an ack or a re-link moves it): "the base moved in
+	// this very step" is SeenBase != the blob now.
+	SeenBase string `json:"seen_base,omitempty"`
+	// KnownBases are base blobs a person already acknowledged (the newest few): a
+	// checkout back to a branch whose base was acked is not "stale" again.
+	KnownBases []string `json:"known_bases,omitempty"`
 	// BaseBlob is the blob of the committed (base) file at link time: when HEAD's
 	// blob for the path differs, the base moved under the swap (a stale base). It is
 	// recorded now and read by stale-base detection (a later change).

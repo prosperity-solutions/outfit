@@ -119,7 +119,7 @@ func TestAFileOutfitCannotReadIsLeftAlone(t *testing.T) {
 
 func TestCommandIsSilentAndSelfIdentifying(t *testing.T) {
 	c := Command("/x/outfit")
-	if !strings.HasSuffix(c, Marker) || !strings.Contains(c, ">/dev/null 2>&1") || !strings.Contains(c, "|| true") {
+	if !strings.HasSuffix(c, Marker) || !strings.Contains(c, ">/dev/null 2>&1") || !strings.Contains(c, "|| echo 'outfit: sync did not finish cleanly") {
 		t.Fatal(c)
 	}
 	if !strings.Contains(Command("/it's/outfit"), `'/it'\''s/outfit'`) {
@@ -206,5 +206,26 @@ func TestAHookOfThePersonNextToOutfitsIsNeverLost(t *testing.T) {
 	got = settings(t, dir)
 	if got == "" || !strings.Contains(got, "echo mine") || strings.Contains(got, Marker) || !strings.Contains(got, `"matcher": "startup"`) {
 		t.Fatalf("remove took the person's hook with it:\n%s", got)
+	}
+}
+
+func TestARelativeWorktreeIsNeverResolvedAgainstTheCurrentDirectory(t *testing.T) {
+	cwd := t.TempDir()
+	if err := os.Mkdir(filepath.Join(cwd, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old, _ := os.Getwd()
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(old) }()
+	if changed, err := Install("", "/x/outfit"); err != nil || changed {
+		t.Fatalf("Install(\"\"): changed=%v err=%v", changed, err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, filepath.FromSlash(SettingsFile))); err == nil {
+		t.Fatal("a settings file appeared in the current directory")
+	}
+	if HasClaude("") && Installed("") {
+		t.Fatal("Installed on an empty path")
 	}
 }

@@ -24,6 +24,11 @@ grep '"SessionStart"' .claude/settings.local.json
 grep '# outfit-managed' .claude/settings.local.json
 grep ' sync' .claude/settings.local.json
 ! exists ../repo-wt1/.claude
+# status says so (and --json too); without the entry it says nothing.
+outfit status
+stdout 'agents   Claude Code SessionStart entry installed'
+outfit status --json
+stdout '"agents_session_start":true'
 # Twice changes nothing.
 exec cp .claude/settings.local.json $WORK/settings.once
 outfit init --agents
@@ -71,6 +76,22 @@ exec git status --short
 ! stdout 'claude'
 exec cat .git/info/exclude
 stdout 'settings.local.json'
+outfit uninstall
+! grep 'settings.local.json' .git/info/exclude
+
+# Running init --agents again repairs a missing ignore line (an interrupted run, a
+# branch that lacks it); uninstall keeps the line while an entry is still there.
+rm .claude/settings.local.json
+outfit init --agents
+exec sh -c 'grep -v "settings.local.json\|init --agents" .git/info/exclude > $WORK/exclude.new; cp $WORK/exclude.new .git/info/exclude'
+! grep 'settings.local.json' .git/info/exclude
+outfit init --agents
+grep 'settings.local.json' .git/info/exclude
+exec sh -c 'echo "// a comment" >> .claude/settings.local.json'
+! outfit uninstall
+stderr 'could not undo'
+grep 'settings.local.json' .git/info/exclude
+exec sh -c 'grep -v "^//" .claude/settings.local.json > $WORK/fixed.json; cp $WORK/fixed.json .claude/settings.local.json'
 outfit uninstall
 ! grep 'settings.local.json' .git/info/exclude
 

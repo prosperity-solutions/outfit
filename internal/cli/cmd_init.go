@@ -63,27 +63,34 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 	var agentsOut *agentsJSON
 	if *agentsFlag {
 		agentsOut = &agentsJSON{Added: []string{}, NoClaude: []string{}, Errors: []string{}}
-		for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
+		for _, w := range agentWorktrees(l) {
 			agentsOut.worktrees++
 			switch {
 			case !agents.HasClaude(w.Path):
 				agentsOut.NoClaude = append(agentsOut.NoClaude, w.Path)
+			case settingsTracked(ctx, l, w.Path):
+				// A repository that commits the file makes it everyone's: editing it would
+				// put this machine's binary path and a sync into every teammate's session.
+				agentsOut.Errors = append(agentsOut.Errors, w.Path+"/"+agents.SettingsFile+" is tracked by git, so outfit does not edit it (it is meant to be personal)")
 			case *dry:
 				if would, aerr := agents.WouldInstall(w.Path, e.Exe); aerr != nil {
 					agentsOut.Errors = append(agentsOut.Errors, aerr.Error())
 				} else if would {
 					agentsOut.Added = append(agentsOut.Added, w.Path)
 				}
-			case settingsTracked(ctx, l, w.Path):
-				// A repository that commits the file makes it everyone's: editing it would
-				// put this machine's binary path and a sync into every teammate's session.
-				agentsOut.Errors = append(agentsOut.Errors, w.Path+"/"+agents.SettingsFile+" is tracked by git, so outfit does not edit it (it is meant to be personal)")
 			default:
-				if changed, aerr := agents.Install(w.Path, e.Exe); aerr != nil {
+				changed, aerr := agents.Install(w.Path, e.Exe)
+				if aerr != nil {
 					agentsOut.Errors = append(agentsOut.Errors, aerr.Error())
-				} else if changed {
+					break
+				}
+				if changed {
 					agentsOut.Added = append(agentsOut.Added, w.Path)
-					ignoreSettings(ctx, l, w.Path)
+				}
+				// Every run, not only when the entry was just written: an interrupted run
+				// (or a branch without the ignore line) is repaired by running init again.
+				if ierr := ignoreSettings(ctx, l, w.Path); ierr != nil {
+					agentsOut.Errors = append(agentsOut.Errors, "cannot keep the settings file out of git add -A: "+ierr.Error())
 				}
 			}
 		}
@@ -147,13 +154,31 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 
 // ignoreSettings keeps the personal settings file out of `git add -A`, unless git
 // already ignores it (a global ignore, Claude Code's own entry).
-func ignoreSettings(ctx context.Context, l *loaded, worktree string) {
+func ignoreSettings(ctx context.Context, l *loaded, worktree string) error {
 	g := l.Git
 	g.Dir = worktree
 	if _, err := g.Read(ctx, "check-ignore", "-q", "--", agents.SettingsFile); err == nil {
-		return
+		return nil
 	}
-	_ = apply.AddExcludeEntry(filepath.Join(l.Repo.CommonDir, "info", "exclude"), agents.IgnoreComment, agents.IgnoreLine)
+	return apply.AddExcludeEntry(filepath.Join(l.Repo.CommonDir, "info", "exclude"), agents.IgnoreComment, agents.IgnoreLine)
+}
+
+// agentWorktrees lists the worktrees whose paths outfit knows. A repository whose
+// common dir is not named ".git" (a submodule, --separate-git-dir) has no known path
+// for its main worktree: it is the current one when we are in it, and otherwise left
+// out. Never an empty path: that would resolve .claude against the current directory.
+func agentWorktrees(l *loaded) []hooks.Worktree {
+	var out []hooks.Worktree
+	for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
+		if w.Path == "" {
+			if !w.Main || l.Repo.GitDir != l.Repo.CommonDir {
+				continue
+			}
+			w.Path = l.Repo.WorkTree
+		}
+		out = append(out, w)
+	}
+	return out
 }
 
 // settingsTracked reports whether git tracks the worktree's personal settings file.
@@ -186,6 +211,12 @@ func printAgents(e Env, a *agentsJSON, dry bool) {
 	}
 	for _, er := range a.Errors {
 		fmt.Fprintf(e.Stderr, "outfit: could not add the SessionStart entry: %s\n", er)
+		switch {
+		case strings.Contains(er, "is tracked by git"):
+			fmt.Fprintln(e.Stderr, "  fix: git rm --cached "+agents.SettingsFile+"   (keep it personal), then: outfit init --agents")
+		default:
+			fmt.Fprintln(e.Stderr, "  fix: repair or remove "+agents.SettingsFile+" by hand (or add the hook yourself: outfit sync on SessionStart), then: outfit init --agents")
+		}
 	}
 }
 
@@ -229,14 +260,20 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 	} else if removed {
 		undone = append(undone, ".git/info/exclude entry")
 	}
-	for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
+	agentsFailed := false
+	for _, w := range agentWorktrees(l) {
 		if changed, aerr := agents.Remove(w.Path); aerr != nil {
 			undoFailed = append(undoFailed, aerr.Error())
+			agentsFailed = true
 		} else if changed {
 			undone = append(undone, "Claude Code SessionStart entry in "+w.Path)
 		}
 	}
-	if removed, rerr := apply.RemoveExcludeEntry(filepath.Join(l.Repo.CommonDir, "info", "exclude"), agents.IgnoreComment, agents.IgnoreLine); rerr != nil {
+	// The exclude line stays while an entry is still there to be ignored: a rerun after
+	// the file is fixed finishes the job.
+	if agentsFailed {
+		// (nothing)
+	} else if removed, rerr := apply.RemoveExcludeEntry(filepath.Join(l.Repo.CommonDir, "info", "exclude"), agents.IgnoreComment, agents.IgnoreLine); rerr != nil {
 		undoFailed = append(undoFailed, "info/exclude: "+rerr.Error())
 	} else if removed {
 		undone = append(undone, ".git/info/exclude entry for the Claude Code settings")
@@ -281,6 +318,11 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 		}
 	}
 	fmt.Fprintf(e.Stdout, "uninstalled: %d shims, %d config entries, %d state files removed\n", shims, cfgs, state)
+	for _, r := range res.Removed {
+		if strings.HasPrefix(r, "Claude Code ") || strings.HasPrefix(r, ".git/info/exclude entry for the Claude") {
+			fmt.Fprintf(e.Stdout, "  also removed: %s\n", r)
+		}
+	}
 	if len(res.Adopted) > 0 {
 		fmt.Fprintf(e.Stdout, "  moved hooks another tool had installed back to the team's hooks directory: %s\n", strings.Join(res.Adopted, ", "))
 	}

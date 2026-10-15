@@ -144,7 +144,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			g.messages = append(g.messages, "ignored a recorded swap: "+err.Error())
 			continue
 		}
-		facts.Recorded[s.Path] = plan.Record{Target: s.Target, VariantHash: s.VariantHash, VariantBlob: s.VariantBlob, BaseBlob: s.BaseBlob}
+		facts.Recorded[s.Path] = plan.Record{Target: s.Target, VariantHash: s.VariantHash, VariantBlob: s.VariantBlob, BaseBlob: s.BaseBlob, SeenBase: s.SeenBase, KnownBases: s.KnownBases}
 	}
 
 	// Which of those paths does git know, and in what state?
@@ -236,6 +236,20 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	}
 	// (A recorded path the profile no longer lists has no variant; hashFile gives "".)
 
+	// Both the base and the profile's file moved since the last sync: was it ONE commit
+	// that touched both (the maintainer adapting the profile)? Only then the swap may
+	// stand on the new base without a person looking. Rare, so a git call each is fine.
+	for _, p := range candidates {
+		rec, ok := facts.Recorded[p]
+		pf := facts.Paths[p]
+		probe := pf
+		probe.SameCommit = true
+		if ok && variantRel[p] != "" && plan.Adapted(rec, probe) {
+			pf.SameCommit = in.sameCommit(ctx, p, variantRel[p])
+			facts.Paths[p] = pf
+		}
+	}
+
 	// "Untouched" is decided by git, which applies .gitattributes, autocrlf and
 	// clean/smudge filters and notices a mode change: raw bytes cannot.
 	if len(toCheck) > 0 {
@@ -315,6 +329,20 @@ func IsJunk(n string) bool {
 		}
 	}
 	return strings.HasPrefix(n, ".#") || (len(n) > 2 && strings.HasPrefix(n, "#") && strings.HasSuffix(n, "#"))
+}
+
+// sameCommit reports whether the latest commit that touched base also touched variant.
+func (in Input) sameCommit(ctx context.Context, base, variant string) bool {
+	res, err := in.Git.Read(ctx, "--literal-pathspecs", "log", "-1", "--format=%H", "--", base)
+	if err != nil {
+		return false
+	}
+	c := strings.TrimSpace(string(res.Stdout))
+	if c == "" {
+		return false
+	}
+	res, err = in.Git.Read(ctx, "--literal-pathspecs", "diff-tree", "--no-commit-id", "--name-only", "-r", "--no-renames", c, "--", variant)
+	return err == nil && strings.TrimSpace(string(res.Stdout)) != ""
 }
 
 // sparseNow is the current info/sparse-checkout text ("" when absent).

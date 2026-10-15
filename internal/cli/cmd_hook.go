@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/prosperity-solutions/outfit/internal/agents"
+	"github.com/prosperity-solutions/outfit/internal/apply"
 	"github.com/prosperity-solutions/outfit/internal/config"
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 	"github.com/prosperity-solutions/outfit/internal/hooks"
@@ -152,7 +153,13 @@ func agentsInNewWorktree(ctx context.Context, e Env, r repo.Repo) {
 	if res, err := g.Read(ctx, "--literal-pathspecs", "ls-files", "-z", "--", agents.SettingsFile); err != nil || len(res.Stdout) > 0 {
 		return
 	}
-	_, _ = agents.Install(r.WorkTree, e.Exe)
+	if changed, err := agents.Install(r.WorkTree, e.Exe); err != nil || !changed {
+		return
+	}
+	// Keep it out of `git add -A` here too (this branch may lack the ignore line).
+	if _, err := g.Read(ctx, "check-ignore", "-q", "--", agents.SettingsFile); err != nil {
+		_ = apply.AddExcludeEntry(filepath.Join(r.CommonDir, "info", "exclude"), agents.IgnoreComment, agents.IgnoreLine)
+	}
 }
 
 // allZeros reports a git object id made only of zeros (the "null" old sha).

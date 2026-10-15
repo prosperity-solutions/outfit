@@ -23,13 +23,13 @@ cd ../repo
 
 # The pull is clean; its post-merge sync says it on one line and exits 0.
 exec git pull -q --ff-only origin main
-stderr 'AGENTS.md: the base file changed upstream'
+stderr 'AGENTS.md: the base file is different from when outfit swapped it'
 ! stderr 'Traceback'
 islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
 exec cat .outfit/profiles/yolo/AGENTS.md
 cmp stdout $WORK/variant-before.txt
 outfit sync
-stderr 'the base file changed upstream'
+stderr 'the base file is different from when outfit swapped it'
 outfit sync --json
 stdout '"stale":\["AGENTS.md"\]'
 stdout '"in_sync":true'   # nothing left for sync to do: stale is its own field
@@ -41,7 +41,8 @@ stdout 'state    stale'
 ! outfit status --json
 stdout '"stale":\["AGENTS.md"\]'
 
-# diff shows what changed upstream; --json carries it.
+# diff shows what changed; --json carries it.
+
 outfit diff AGENTS.md
 stdout '\+new base rule'
 stdout 'outfit ack AGENTS.md'
@@ -92,7 +93,7 @@ exec git commit -aqm 'docs: adapt the profile to the new base'
 exec git push -q origin HEAD:main
 cd ../repo
 exec git pull -q --ff-only origin main
-! stderr 'changed upstream'
+! stderr 'is different from when outfit swapped it'
 outfit status
 stdout 'state    in sync'
 exec cat .outfit/profiles/yolo/AGENTS.md
@@ -103,8 +104,59 @@ exec git commit -aqm 'docs: base only'
 exec git push -q origin HEAD:main
 cd ../repo
 exec git pull -q --ff-only origin main
-stderr 'AGENTS.md: the base file changed upstream'
+stderr 'AGENTS.md: the base file is different from when outfit swapped it'
 outfit ack AGENTS.md
+
+# Two SEPARATE upstream commits (a base change, then an unrelated profile fix) pulled
+# together are not "the maintainer adapting the profile": the base change is reported.
+cd ../other
+exec git pull -q origin main
+exec sh -c 'echo "base v5" >> AGENTS.md'
+exec git commit -aqm 'docs: base only'
+exec sh -c 'echo "yolo typo fix" >> .outfit/profiles/yolo/AGENTS.md'
+exec git commit -aqm 'docs: unrelated profile fix'
+exec git push -q origin HEAD:main
+cd ../repo
+exec git pull -q --ff-only origin main
+stderr 'AGENTS.md: the base file is different from when outfit swapped it'
+! outfit status
+stdout 'state    stale'
+# Committing an edit of the profile's own file does not clear it: nobody has looked at
+# the new base yet.
+exec sh -c 'echo "my own profile line" >> .outfit/profiles/yolo/AGENTS.md'
+exec git add -u .outfit
+exec git commit -qm 'docs: my profile line'
+outfit sync
+stderr 'is different from when outfit swapped it'
+! outfit status
+outfit diff AGENTS.md
+stdout 'a/AGENTS.md \(swapped over\)'
+stdout 'git show :AGENTS.md'
+outfit ack AGENTS.md
+outfit status
+stdout 'state    in sync'
+
+# A checkout of another branch changes the base too; once acknowledged, going back
+# and forth between branches you have looked at does not nag.
+cd ../other
+exec git checkout -q -b feature
+exec sh -c 'echo "feature base" >> AGENTS.md'
+exec git commit -aqm 'docs: feature base'
+exec git push -q origin feature
+cd ../repo
+exec git fetch -q origin feature
+exec git checkout -q feature
+stderr 'is different from when outfit swapped it'
+outfit ack AGENTS.md
+exec git checkout -q main
+! stderr 'is different from when outfit swapped it'
+outfit status
+stdout 'state    in sync'
+exec git checkout -q feature
+! stderr 'is different from when outfit swapped it'
+outfit status
+stdout 'state    in sync'
+exec git checkout -q main
 
 # A damaged state.json cannot make `outfit diff` pass anything but an object id to git.
 exec sh -c 'sed -i.bak "s/\"base_blob\": \"[0-9a-f]*\"/\"base_blob\": \"--output=pwned\"/" .git/outfit/state.json'
