@@ -1,0 +1,23 @@
+# post-rewrite also fires for `git commit --amend` INSIDE an open rebase (stopped at an
+# `edit`). That is not the end of the rebase: absorbing the editor's save then would put
+# the bytes into the tracked profile file, and `git rebase --abort` (a hard reset) would
+# take them with it. They stay in the bare file until the rebase is over (found in review).
+fixture repo team
+cd repo
+outfit init
+outfit use yolo
+exec git commit -q --allow-empty -m 'chore: one'
+exec git commit -q --allow-empty -m 'chore: two'
+exec sh -c 'GIT_SEQUENCE_EDITOR="sed -i.bak 1s/^pick/edit/" git rebase -q -i HEAD~2'
+atomicsave AGENTS.md 'saved inside the rebase\n'
+exec git commit -q --amend --no-edit --allow-empty
+# held back: still a bare file with the bytes in it, the profile not yet changed
+! islink AGENTS.md
+grep 'saved inside the rebase' AGENTS.md
+exec git rebase --abort
+grep 'saved inside the rebase' AGENTS.md
+# once git is done, sync absorbs it
+outfit sync
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec cat .outfit/profiles/yolo/AGENTS.md
+stdout 'saved inside the rebase'
