@@ -124,7 +124,9 @@ break-glass switch. In one go:
 A machine without `minisign` still gets the signature checked: `install.sh` downloads
 jedisct1/minisign's own static build and runs it only when its SHA-256 equals the one
 written in the script (`BOOT_LINUX_*` and `BOOT_MACOS_*`, at the top). Those builds
-are immutable release files, so the pins do not go stale. To move to a newer minisign:
+are release files upstream could replace; if it ever does, installs without minisign
+stop (the hash no longer matches) until the pin is updated, and CI's real-download test
+is what shows it first. To move to a newer minisign:
 download the release files, verify them with the upstream key (printed in
 [minisign's README](https://github.com/jedisct1/minisign#readme)), run
 `shasum -a 256` on them, and put the new URLs and hashes in the script. macOS stays on

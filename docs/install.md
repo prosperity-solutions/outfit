@@ -55,10 +55,12 @@ With no token the script uses the public `releases/latest/download/…` URLs.
    [jedisct1/minisign](https://github.com/jedisct1/minisign/releases) (Linux amd64 and
    arm64, macOS arm64 and Intel), and runs it **only if its SHA-256 equals the one
    written in the script**. That download is sent no token and is not installed
-   anywhere: it lives in the temporary folder and goes with it. If it cannot be
-   fetched or does not match (offline, a proxy, a folder you cannot run programs
-   from), the script stops and says what to do: install minisign, or run again with
-   `OUTFIT_SKIP_SIGNATURE=1` to accept a SHA-256 check only (it prints a warning).
+   anywhere: it lives in the temporary folder and goes with it. It is run once to prove it
+   works here. If it cannot be fetched or run (offline, a proxy, a folder you cannot
+   run programs from), the script stops, says which of those it was, and says what to
+   do: install minisign, or run again with `OUTFIT_SKIP_SIGNATURE=1` to accept a
+   SHA-256 check only (it prints a warning). If the download is there but does not
+   match the pinned hash, the script does not suggest skipping anything.
    With a token, the script also requires the archive to be the build the release is
    named for, so an old, validly signed build cannot be re-uploaded under a newer
    release; the public URL path cannot check that, because GitHub's "latest" redirect
@@ -83,7 +85,7 @@ With no token the script uses the public `releases/latest/download/…` URLs.
 | `OUTFIT_GITHUB_TOKEN` | A GitHub token with read access to the repository. |
 | `OUTFIT_BASE_URL` | Public download base. For tests. |
 | `OUTFIT_API_URL` | API base. For tests. |
-| `OUTFIT_SKIP_SIGNATURE` | `1` installs with the SHA-256 check only, when no signature check can run. Prints a warning. |
+| `OUTFIT_SKIP_SIGNATURE` | `1` installs with the SHA-256 check only, when no signature checker can be had (no `minisign` on PATH and the pinned download failed). It never skips a check that can run. Prints a warning. |
 | `OUTFIT_MINISIGN_PUBKEY` | Replaces the built-in signing key(s). For tests. |
 | `OUTFIT_BOOTSTRAP_URL` | Replaces the download of the signature checker. For tests. |
 | `OUTFIT_BOOTSTRAP_SHA256` | Its SHA-256, which must go with `OUTFIT_BOOTSTRAP_URL`. For tests. |

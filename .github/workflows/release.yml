@@ -302,9 +302,14 @@ jobs:
           # No token: this exercises the public-URL path. (Runners have none, and a
           # stray one would send the script to the API instead.)
           unset GH_TOKEN GITHUB_TOKEN OUTFIT_GITHUB_TOKEN
-          command -v minisign >/dev/null 2>&1 && echo "note: this runner image has a minisign, so the pinned download was not used" || true
           sh install.sh | tee install.log
-          grep -q "signature OK" install.log
+          # With no minisign on the image the pinned download must be what checked it.
+          if command -v minisign >/dev/null 2>&1; then
+            echo "note: this runner image has a minisign, so the pinned download was not used"
+            grep -q "signature OK (minisign on this machine)" install.log
+          else
+            grep -q "signature OK (pinned minisign download)" install.log
+          fi
           got=$("$OUTFIT_INSTALL_DIR/outfit" version | awk '{print $2}')
           [ "$got" = "$VERSION" ] || { echo "::error::outfit version says '$got', expected $VERSION"; exit 1; }
           echo "OUTFIT_BIN=$OUTFIT_INSTALL_DIR/outfit" >> "$GITHUB_ENV"

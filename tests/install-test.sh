@@ -122,7 +122,7 @@ run_install() {
     fi
   done
   case " ${envs[*]-} " in *" PATH="*) ;; *) envs+=("PATH=$bin") ;; esac
-  [ $skip = 0 ] || envs+=("OUTFIT_SKIP_SIGNATURE=1")
+  [ $skip = 0 ] || envs+=("OUTFIT_SKIP_SIGNATURE=1" "OUTFIT_BOOTSTRAP_URL=file:///nonexistent" "OUTFIT_BOOTSTRAP_SHA256=$(printf 0%.0s $(seq 1 64))")
   env -i HOME="$H" TMPDIR="$WORK" "${envs[@]}" sh "$ROOT/install.sh" ${args[@]+"${args[@]}"} >"$WORK/out" 2>&1
   RC=$?
 }
@@ -172,7 +172,7 @@ check "  the other dir was never created" bash -c '[ ! -e "$1" ]' _ "$WORK/elsew
 
 # `curl | sh`: the script arrives on stdin, so nothing in it may read stdin.
 D=$WORK/pipe
-env -i HOME="$H" PATH="$WORK/bin" TMPDIR="$WORK" OUTFIT_SKIP_SIGNATURE=1 OUTFIT_BASE_URL="file://$REL/pub" OUTFIT_INSTALL_DIR="$D" \
+env -i HOME="$H" PATH="$WORK/bin" TMPDIR="$WORK" OUTFIT_SKIP_SIGNATURE=1 OUTFIT_BOOTSTRAP_URL=file:///nonexistent OUTFIT_BOOTSTRAP_SHA256=0000000000000000000000000000000000000000000000000000000000000000 OUTFIT_BASE_URL="file://$REL/pub" OUTFIT_INSTALL_DIR="$D" \
   sh -c "cat '$ROOT/install.sh' | sh" >"$WORK/out" 2>&1
 RC=$?
 check "installing through a pipe (curl | sh) works" rc_is 0
@@ -218,7 +218,7 @@ case "$1" in -s) echo FreeBSD ;; -m) echo riscv64 ;; *) echo FreeBSD ;; esac
 EOF
 chmod +x "$WORK/fakebin-uname/uname"
 D=$WORK/d5
-env -i HOME="$H" PATH="$WORK/fakebin-uname" OUTFIT_SKIP_SIGNATURE=1 OUTFIT_BASE_URL="file://$REL/pub" OUTFIT_INSTALL_DIR="$D" sh "$ROOT/install.sh" >"$WORK/out" 2>&1
+env -i HOME="$H" PATH="$WORK/fakebin-uname" OUTFIT_SKIP_SIGNATURE=1 OUTFIT_BOOTSTRAP_URL=file:///nonexistent OUTFIT_BOOTSTRAP_SHA256=0000000000000000000000000000000000000000000000000000000000000000 OUTFIT_BASE_URL="file://$REL/pub" OUTFIT_INSTALL_DIR="$D" sh "$ROOT/install.sh" >"$WORK/out" 2>&1
 RC=$?
 check "an unsupported platform fails clearly" rc_is 1
 check "  naming the platform" out_has "no outfit build for FreeBSD/riscv64"
@@ -296,7 +296,7 @@ cp -P "$WORK/bin"/* "$WORK/ghbin/"
 printf '#!/bin/sh\n[ "$1 $2" = "auth token" ] && echo %s\n' "$TOKEN" >"$WORK/ghbin/gh"
 chmod +x "$WORK/ghbin/gh"
 D=$WORK/api-gh
-env -i HOME="$H" PATH="$WORK/ghbin" OUTFIT_SKIP_SIGNATURE=1 OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" sh "$ROOT/install.sh" >"$WORK/out" 2>&1
+env -i HOME="$H" PATH="$WORK/ghbin" OUTFIT_SKIP_SIGNATURE=1 OUTFIT_BOOTSTRAP_URL=file:///nonexistent OUTFIT_BOOTSTRAP_SHA256=0000000000000000000000000000000000000000000000000000000000000000 OUTFIT_API_URL="file://$REL/api" OUTFIT_BASE_URL="file://$REL/nothing" OUTFIT_INSTALL_DIR="$D" sh "$ROOT/install.sh" >"$WORK/out" 2>&1
 RC=$?
 check "gh auth token is used when no variable is set" rc_is 0
 check "  and not printed" bash -c '! grep -q "$1" "$2"' _ "$TOKEN" "$WORK/out"
@@ -361,16 +361,67 @@ if [ "$HAVE_MINISIGN" = 1 ]; then
   D=$WORK/bs3
   run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_SIGNATURE=1 "$(boot_env)" "OUTFIT_BOOTSTRAP_SHA256=$(printf 'a%.0s' $(seq 1 64))" OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/key")"
   check "  a download that does not match the pinned hash is never run" rc_is 1
-  check "    and the refusal says what to do" out_has "OUTFIT_SKIP_SIGNATURE=1"
+  check "    and the refusal says so, without suggesting to skip the check" out_has "does not match the SHA-256 pinned"
+  check "    (no skip hint)" bash -c '! grep -q OUTFIT_SKIP_SIGNATURE "$1"' _ "$WORK/out"
   check "    and nothing was installed" nothing_in "$D"
+  D=$WORK/bs3b
+  run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_SIGNATURE=1 "$(boot_env)" "OUTFIT_BOOTSTRAP_SHA256=$(printf 'a%.0s' $(seq 1 64))" OUTFIT_SKIP_SIGNATURE=1
+  check "    OUTFIT_SKIP_SIGNATURE=1 is the person's own call, and warns" out_has "NOT checked"
   D=$WORK/bs4
   run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_SIGNATURE=1 "OUTFIT_BOOTSTRAP_URL=file://$WORK/does-not-exist" OUTFIT_BOOTSTRAP_SHA256="$BOOT_SHA" OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/key")"
   check "  a download that fails refuses to install" rc_is 1
+  check "    saying what failed and the way out" out_has "could not download"
   check "    and nothing was installed" nothing_in "$D"
   D=$WORK/bs5
   run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_SIGNATURE=1 "OUTFIT_BOOTSTRAP_URL=file://$WORK/does-not-exist" OUTFIT_SKIP_SIGNATURE=1
   check "  OUTFIT_SKIP_SIGNATURE=1 installs on the SHA-256 alone" rc_is 0
   check "    with a warning" out_has "NOT checked"
+  D=$WORK/bs5b
+  run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_SIGNATURE=1 "$(boot_env)" OUTFIT_BOOTSTRAP_SHA256="$BOOT_SHA" OUTFIT_SKIP_SIGNATURE=1 OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/other")"
+  check "  OUTFIT_SKIP_SIGNATURE=1 never skips a check that can run (bad signature still refused)" rc_is 1
+  check "    and nothing was installed" nothing_in "$D"
+  D=$WORK/bs5c
+  run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_MINISIGN=1 WITH_SIGNATURE=1 OUTFIT_SKIP_SIGNATURE=1 OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/other")"
+  check "  nor with minisign on PATH" rc_is 1
+  # A download that matches its hash but cannot run is not a tampered release.
+  UN=$WORK/unrunnable
+  rm -rf "$UN"
+  mkdir -p "$UN/minisign-linux/x86_64" "$UN/minisign-linux/aarch64"
+  for f in minisign minisign-linux/x86_64/minisign minisign-linux/aarch64/minisign; do printf '#!/bin/sh\nexit 126\n' >"$UN/$f"; done
+  if [ "$(uname -s)" = Darwin ]; then (cd "$UN" && zip -q ../unrunnable.pkg minisign); else (cd "$UN" && tar -czf ../unrunnable.pkg minisign-linux); fi
+  D=$WORK/bs5d
+  run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_SIGNATURE=1 "OUTFIT_BOOTSTRAP_URL=file://$WORK/unrunnable.pkg" OUTFIT_BOOTSTRAP_SHA256="$(sha256_of "$WORK/unrunnable.pkg")" OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/key")"
+  check "  a download that cannot run is not reported as a bad signature" rc_is 1
+  check "    it says it cannot run here" out_has "cannot run here"
+  check "    and names the way out" out_has "OUTFIT_SKIP_SIGNATURE=1"
+  check "    and does not claim a key mismatch" bash -c '! grep -q "does not match the outfit release key" "$1"' _ "$WORK/out"
+  # The Linux member is chosen by architecture: the x86_64 one is a stub that cannot
+  # run, the aarch64 one is the real thing, and vice versa.
+  LP=$WORK/linuxpkg
+  for arch in x86_64 aarch64; do
+    rm -rf "$LP" "$WORK/linux-$arch.pkg"
+    mkdir -p "$LP/minisign-linux/x86_64" "$LP/minisign-linux/aarch64"
+    cp "$MINISIGN" "$LP/minisign-linux/x86_64/minisign"
+    cp "$MINISIGN" "$LP/minisign-linux/aarch64/minisign"
+    other=aarch64
+    [ "$arch" = aarch64 ] && other=x86_64
+    rm -f "$LP/minisign-linux/$other/minisign"
+    printf '#!/bin/sh\nexit 126\n' >"$LP/minisign-linux/$other/minisign"
+    (cd "$LP" && tar -czf "$WORK/linux-$arch.pkg" minisign-linux)
+    FU=$WORK/fakeuname-$arch
+    farm "$FU" minisign
+    rm -f "$FU/uname"
+    printf '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo %s ;; *) echo Linux ;; esac\n' "$arch" >"$FU/uname"
+    chmod +x "$FU/uname"
+    rm -f "$FU/minisign"
+    D=$WORK/bs-$arch
+    env -i HOME="$H" PATH="$FU" TMPDIR="$WORK" OUTFIT_BASE_URL="file://$REL/pub" OUTFIT_INSTALL_DIR="$D" \
+      OUTFIT_BOOTSTRAP_URL="file://$WORK/linux-$arch.pkg" OUTFIT_BOOTSTRAP_SHA256="$(sha256_of "$WORK/linux-$arch.pkg")" \
+      OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/key")" sh "$ROOT/install.sh" >"$WORK/out" 2>&1
+    RC=$?
+    check "  Linux $arch uses the $arch member of the package" rc_is 0
+    check "    and says the pinned download checked it" out_has "signature OK (pinned minisign download)"
+  done
   D=$WORK/bs6
   run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_MINISIGN=1 WITH_SIGNATURE=1 "OUTFIT_BOOTSTRAP_URL=file://$WORK/does-not-exist" OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/key")"
   check "  a minisign on PATH is used without any download" rc_is 0
