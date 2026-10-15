@@ -31,6 +31,12 @@ stdout 'NEEDS A PERSON'
 ! outfit sync --json
 stdout '"needs_human":true'
 
+# diff and ack say why they cannot compare a path in the middle of a merge.
+! outfit diff AGENTS.md
+stderr 'middle of a merge conflict'
+! outfit ack AGENTS.md
+stderr 'middle of a merge conflict'
+
 # The commit of the unresolved merge is refused by git itself; resolve like the
 # printed fix says (the BASE file is what conflicted).
 exec sh -c 'printf "# Agents\nresolved base\n" > AGENTS.md'

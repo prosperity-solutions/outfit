@@ -236,7 +236,9 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 	for _, sw := range want.Swaps {
 		pf := facts.Paths[sw.Path]
 		switch {
-		case quarantined[sw.Path]:
+		case quarantined[sw.Path] || pf.Unmerged:
+			// (a path in the middle of a merge keeps its record too: the base it stood on is
+			// what the merge's result is compared with afterwards)
 			for _, old := range st.Swaps {
 				if old.Path == sw.Path {
 					next.Swaps = append(next.Swaps, old)
@@ -248,11 +250,12 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 			// itself the next time anything else changed.
 			base := g.blobs[sw.Path]
 			for _, old := range st.Swaps {
-				if old.Path == sw.Path && old.Target == sw.Target && old.BaseBlob != "" {
+				moved := old.VariantBlob != "" && pf.VariantBlob != "" && old.VariantBlob != pf.VariantBlob
+				if old.Path == sw.Path && old.Target == sw.Target && old.BaseBlob != "" && !moved {
 					base = old.BaseBlob
 				}
 			}
-			next.Swaps = append(next.Swaps, state.Swap{Path: sw.Path, Target: sw.Target, VariantHash: pf.VariantHash, BaseBlob: base})
+			next.Swaps = append(next.Swaps, state.Swap{Path: sw.Path, Target: sw.Target, VariantHash: pf.VariantHash, VariantBlob: pf.VariantBlob, BaseBlob: base})
 		}
 	}
 	sort.Slice(next.Swaps, func(i, j int) bool { return next.Swaps[i].Path < next.Swaps[j].Path })
@@ -463,7 +466,10 @@ func (in Input) quarantine(res *Result, path string, file, withVariant bool) (cr
 
 // addExclude appends outfit's entry to .git/info/exclude, keeping every line a
 // person wrote.
-func addExclude(path string) error {
+func addExclude(path string) error { return AddExcludeEntry(path, excludeComment, excludeLine) }
+
+// AddExcludeEntry appends a comment line and a pattern line to an exclude file.
+func AddExcludeEntry(path, comment, line string) error {
 	old, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -472,13 +478,17 @@ func addExclude(path string) error {
 	if text != "" && !strings.HasSuffix(text, "\n") {
 		text += "\n"
 	}
-	text += excludeComment + "\n" + excludeLine + "\n"
+	text += comment + "\n" + line + "\n"
 	return state.WriteFileAtomic(path, []byte(text), 0o644)
 }
 
-// RemoveExclude takes outfit's entry back out of .git/info/exclude, only the lines
-// it added.
 func RemoveExclude(path string) (bool, error) {
+	return RemoveExcludeEntry(path, excludeComment, excludeLine)
+}
+
+// RemoveExcludeEntry removes the entry AddExcludeEntry wrote: the comment line and
+// the line right after it, nothing a person wrote.
+func RemoveExcludeEntry(path, comment, line string) (bool, error) {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
@@ -492,9 +502,9 @@ func RemoveExclude(path string) (bool, error) {
 	removed := false
 	lines := strings.Split(string(b), "\n")
 	for i := 0; i < len(lines); i++ {
-		if lines[i] == excludeComment {
+		if lines[i] == comment {
 			removed = true
-			if i+1 < len(lines) && lines[i+1] == excludeLine {
+			if i+1 < len(lines) && lines[i+1] == line {
 				i++
 			}
 			continue

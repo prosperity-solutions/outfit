@@ -51,6 +51,11 @@ type Swap struct {
 	// VariantHash is the SHA-256 of the variant file when sync last looked at it:
 	// "unchanged since linking" is what lets an editor's atomic save be absorbed.
 	VariantHash string `json:"variant_hash,omitempty"`
+	// VariantBlob is git's blob id for the variant when the profile is committed. It
+	// moves only when GIT changes the profile (a pull, a checkout, or a commit of an edit
+	// made through the link); a pull that moves it together with the base is the profile
+	// maintainer adapting the profile, so the base is re-baselined, not reported stale.
+	VariantBlob string `json:"variant_blob,omitempty"`
 	// BaseBlob is the blob of the committed (base) file at link time: when HEAD's
 	// blob for the path differs, the base moved under the swap (a stale base). It is
 	// recorded now and read by stale-base detection (a later change).

@@ -105,8 +105,9 @@ func TestAFileOutfitCannotReadIsLeftAlone(t *testing.T) {
 	if _, err := Install(dir, ""); err == nil {
 		t.Fatal("expected an error")
 	}
-	if _, err := Remove(dir); err == nil {
-		t.Fatal("expected an error")
+	// Uninstall must not fail over a file outfit never wrote.
+	if changed, err := Remove(dir); err != nil || changed {
+		t.Fatalf("Remove on a file without outfit's marker: changed=%v err=%v", changed, err)
 	}
 	if settings(t, dir) != bad {
 		t.Fatal("the file was changed")
@@ -123,5 +124,87 @@ func TestCommandIsSilentAndSelfIdentifying(t *testing.T) {
 	}
 	if !strings.Contains(Command("/it's/outfit"), `'/it'\''s/outfit'`) {
 		t.Fatal("exe path is not shell-quoted")
+	}
+}
+
+func TestSymlinkedSettingsOrClaudeDirAreNeverFollowed(t *testing.T) {
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "settings.json")
+	const content = `{"env":{"TOKEN":"sk-secret"},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x ` + Marker + `"}]}]}}`
+	if err := os.WriteFile(secret, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// settings.local.json is a link to somebody else's settings.
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, filepath.FromSlash(SettingsFile))
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(dir, ""); err == nil {
+		t.Fatal("Install followed a symlinked settings file")
+	}
+	if changed, err := Remove(dir); err != nil || changed {
+		t.Fatalf("Remove on a symlinked settings file: changed=%v err=%v (nothing of outfit's to remove, and no failure)", changed, err)
+	}
+	if Installed(dir) {
+		t.Fatal("Installed followed a symlinked settings file")
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the link was replaced")
+	}
+	if b, _ := os.ReadFile(secret); string(b) != content {
+		t.Fatal("the target was written")
+	}
+
+	// .claude itself is a link to another project's directory.
+	dir2 := t.TempDir()
+	other := t.TempDir()
+	if err := os.WriteFile(filepath.Join(other, "settings.local.json"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, filepath.Join(dir2, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := Install(dir2, ""); err != nil || changed {
+		t.Fatalf("Install through a linked .claude: changed=%v err=%v", changed, err)
+	}
+	if changed, err := Remove(dir2); err != nil || changed {
+		t.Fatalf("Remove through a linked .claude: changed=%v err=%v", changed, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(other, "settings.local.json")); err != nil || string(b) != content {
+		t.Fatal("the other project's settings were touched")
+	}
+}
+
+func TestAHookOfThePersonNextToOutfitsIsNeverLost(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mixed := `{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"echo mine"},{"type":"command","command":"old ` + Marker + `"}]}]}}`
+	path := filepath.Join(dir, filepath.FromSlash(SettingsFile))
+	if err := os.WriteFile(path, []byte(mixed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := Install(dir, "/new/outfit"); err != nil || !changed {
+		t.Fatalf("install: changed=%v err=%v", changed, err)
+	}
+	got := settings(t, dir)
+	if !strings.Contains(got, "echo mine") || !strings.Contains(got, "/new/outfit") || strings.Contains(got, "old "+Marker) || !strings.Contains(got, `"matcher": "startup"`) {
+		t.Fatalf("update lost something or kept the old entry:\n%s", got)
+	}
+	if n := strings.Count(got, Marker); n != 1 {
+		t.Fatalf("%d entries", n)
+	}
+	if changed, err := Remove(dir); err != nil || !changed {
+		t.Fatalf("remove: changed=%v err=%v", changed, err)
+	}
+	got = settings(t, dir)
+	if got == "" || !strings.Contains(got, "echo mine") || strings.Contains(got, Marker) || !strings.Contains(got, `"matcher": "startup"`) {
+		t.Fatalf("remove took the person's hook with it:\n%s", got)
 	}
 }

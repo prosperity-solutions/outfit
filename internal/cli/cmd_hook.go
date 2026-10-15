@@ -2,15 +2,19 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/prosperity-solutions/outfit/internal/agents"
 	"github.com/prosperity-solutions/outfit/internal/config"
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 	"github.com/prosperity-solutions/outfit/internal/hooks"
 	"github.com/prosperity-solutions/outfit/internal/repo"
+	"github.com/prosperity-solutions/outfit/internal/state"
 )
 
 // cmdHook is what every shim runs: `outfit hook <name> <git's args…>`. It is
@@ -62,8 +66,12 @@ func cmdHook(ctx context.Context, e Env, args []string) int {
 	// carries `outfit.*` personal settings (a pinned profile) that were never chosen for
 	// this worktree. Strip them first, so it follows the clone's default until
 	// `outfit use --here` says otherwise. The copied hooksPath and sparse settings stay.
-	if name == "post-checkout" && len(rest) >= 3 && allZeros(rest[0]) && rest[2] == "1" && r.GitDir != r.CommonDir {
+	// Only in a worktree outfit has never synced (no state.json): a deliberate pin made
+	// here with `use --here` has one, so a later all-zero checkout (an orphan branch
+	// switch) cannot take it away.
+	if name == "post-checkout" && len(rest) >= 3 && allZeros(rest[0]) && rest[2] == "1" && r.GitDir != r.CommonDir && neverSynced(r.GitDir) {
 		stripCopiedWorktreeKeys(ctx, e, r)
+		agentsInNewWorktree(ctx, e, r)
 	}
 
 	l, lerr := load(ctx, e)
@@ -121,6 +129,30 @@ func cmdHook(ctx context.Context, e Env, args []string) int {
 		}
 	}
 	return 0
+}
+
+// neverSynced reports a worktree git dir without outfit's state.json.
+func neverSynced(gitDir string) bool {
+	_, err := os.Lstat(state.Path(gitDir))
+	return errors.Is(err, fs.ErrNotExist)
+}
+
+// agentsInNewWorktree gives a worktree added later the SessionStart entry the main
+// worktree has (coding agents isolate their work in new worktrees), when it has a
+// .claude directory and git does not track the personal settings file.
+func agentsInNewWorktree(ctx context.Context, e Env, r repo.Repo) {
+	wts := hooks.Worktrees(r.CommonDir)
+	if len(wts) == 0 || wts[0].Path == "" || !agents.Installed(wts[0].Path) || !agents.HasClaude(r.WorkTree) {
+		return
+	}
+	g := gitx.Client{Dir: r.WorkTree}
+	if e.Getenv("GIT_DIR") != "" {
+		g.Env = []string{"GIT_DIR=" + r.GitDir}
+	}
+	if res, err := g.Read(ctx, "--literal-pathspecs", "ls-files", "-z", "--", agents.SettingsFile); err != nil || len(res.Stdout) > 0 {
+		return
+	}
+	_, _ = agents.Install(r.WorkTree, e.Exe)
 }
 
 // allZeros reports a git object id made only of zeros (the "null" old sha).

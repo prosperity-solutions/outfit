@@ -133,7 +133,7 @@ type syncJSON struct {
 
 func toJSON(res *apply.Result) syncJSON {
 	j := syncJSON{Changed: res.Changed, NeedsHuman: res.NeedsHuman || len(res.Refused) > 0, Notes: nonNilStrings(res.Notes),
-		Refused: []string{}, Fixes: []string{}, Stale: []string{}, Quarantine: res.Quarantine, InSync: !res.Pending() && !res.NeedsHuman && len(res.Stale()) == 0}
+		Refused: []string{}, Fixes: []string{}, Stale: []string{}, Quarantine: res.Quarantine, InSync: !res.Pending() && !res.NeedsHuman}
 	for _, a := range res.Stale() {
 		j.Stale = append(j.Stale, a.Path)
 	}

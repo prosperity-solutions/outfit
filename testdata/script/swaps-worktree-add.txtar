@@ -36,3 +36,16 @@ outfit use base --here
 cd ../repo
 exec git config --worktree --get outfit.profile
 stdout '^lean$'
+
+# The strip is for a NEW linked worktree only. A zero-sha post-checkout in the main
+# worktree (a clone's first checkout looks like this) keeps the pin it has...
+exec sh -c 'outfit hook post-checkout 0000000000000000000000000000000000000000 $(git rev-parse HEAD) 1'
+exec git config --worktree --get outfit.profile
+stdout '^lean$'
+# ...and so does a linked worktree that outfit has already synced: its pin was
+# chosen there (an orphan-branch switch fires the same hook).
+cd ../repo-new
+outfit use lean --here
+exec sh -c 'outfit hook post-checkout 0000000000000000000000000000000000000000 $(git rev-parse HEAD) 1'
+exec git config --worktree --get outfit.profile
+stdout '^lean$'

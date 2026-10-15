@@ -144,7 +144,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			g.messages = append(g.messages, "ignored a recorded swap: "+err.Error())
 			continue
 		}
-		facts.Recorded[s.Path] = plan.Record{Target: s.Target, VariantHash: s.VariantHash, BaseBlob: s.BaseBlob}
+		facts.Recorded[s.Path] = plan.Record{Target: s.Target, VariantHash: s.VariantHash, VariantBlob: s.VariantBlob, BaseBlob: s.BaseBlob}
 	}
 
 	// Which of those paths does git know, and in what state?
@@ -155,9 +155,33 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		}
 	}
 	sort.Strings(all)
+	// A `<path>~cruft` symlink might be our own link, moved aside by older git during a
+	// merge. Ask the index about it too (the same call): one that git tracks is the
+	// repository's own file and is never ours to remove.
+	ask := append([]string(nil), all...)
+	// A committed profile's variants are asked about too: git's blob for one tells a
+	// pull that changed the profile from an edit made through the link.
+	variantRel := map[string]string{}
+	if in.Profile != nil && in.Profile.Tier == profiles.Committed {
+		for _, p := range candidates {
+			if rel, err := filepath.Rel(in.W.WorkTree, in.variantPath(p)); err == nil && !strings.HasPrefix(rel, "..") {
+				variantRel[p] = filepath.ToSlash(rel)
+				ask = append(ask, variantRel[p])
+			}
+		}
+	}
+	cruft := map[string]string{}
+	for _, p := range all {
+		if realParents(in.W.WorkTree, p) {
+			if t, err := os.Readlink(in.abs(p) + "~cruft"); err == nil && t != "" {
+				cruft[p] = t
+				ask = append(ask, p+"~cruft")
+			}
+		}
+	}
 	idx := map[string]indexEntry{}
 	if len(all) > 0 {
-		args := append([]string{"--literal-pathspecs", "ls-files", "-s", "-t", "-z", "--"}, all...)
+		args := append([]string{"--literal-pathspecs", "ls-files", "-s", "-t", "-z", "--"}, ask...)
 		res, err := in.Git.Read(ctx, args...)
 		if err != nil {
 			return want, facts, g, fmt.Errorf("cannot read the index: %w", err)
@@ -196,13 +220,14 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		default:
 			pf.FS = plan.Other
 		}
-		if realParents(in.W.WorkTree, p) {
-			if t, err := os.Readlink(in.abs(p) + "~cruft"); err == nil && t != "" {
-				pf.CruftLink = t == facts.Recorded[p].Target || (in.Profile != nil && t == in.Target(p))
-			}
+		if t, ok := cruft[p]; ok && !idx[p+"~cruft"].tracked && !idx[p+"~cruft"].unmerged {
+			pf.CruftLink = t == facts.Recorded[p].Target || (in.Profile != nil && t == in.Target(p))
 		}
 		if in.Profile != nil {
 			pf.VariantHash = hashFile(in.variantPath(p))
+			if v, ok := variantRel[p]; ok {
+				pf.VariantBlob = idx[v].blob
+			}
 			if vi, err := os.Stat(in.variantPath(p)); err == nil {
 				pf.VariantExec = vi.Mode()&0o111 != 0
 			}

@@ -48,6 +48,9 @@ type PathFacts struct {
 	// stands in the way of a conflict's markers file (the link) to that name, and it
 	// would show up as an untracked symlink that `git add -A` could commit.
 	CruftLink bool
+	// VariantBlob is the blob id the index holds for the variant ("" when the profile
+	// is not committed or the file is not tracked yet).
+	VariantBlob string
 	// BaseBlob is the blob id the index holds for the base file now ("" when git does
 	// not know the path). A pull that changes the base moves it under a swap.
 	BaseBlob string
@@ -58,8 +61,14 @@ type Record struct {
 	Target      string
 	VariantHash string
 	// BaseBlob is the base file's blob when the link was made: what "the base changed
-	// upstream" is measured against.
-	BaseBlob string
+	// upstream" is measured against. VariantBlob is the variant's at the same moment.
+	BaseBlob    string
+	VariantBlob string
+}
+
+// variantMoved says git changed the profile's file since the record was made.
+func variantMoved(rec Record, pf PathFacts) bool {
+	return rec.VariantBlob != "" && pf.VariantBlob != "" && rec.VariantBlob != pf.VariantBlob
 }
 
 // Facts is the actual state of the worktree.
@@ -154,8 +163,10 @@ func Refused(as []Action) []Action {
 // a refusal means nothing is applied.
 func Plan(w Want, f Facts) []Action {
 	want := map[string]Swap{}
+	listed := map[string]bool{} // what the profile lists, before any skip
 	for _, s := range w.Swaps {
 		want[s.Path] = s
+		listed[s.Path] = true
 	}
 	paths := make([]string, 0, len(want))
 	for p := range want {
@@ -225,9 +236,10 @@ func Plan(w Want, f Facts) []Action {
 		out = append(out, Action{Kind: SetExpectFiles})
 	}
 
-	// Our own link, moved aside by git during a merge that is over: remove it.
+	// Our own link, moved aside by git for a merge's markers file: remove it at once (it
+	// is untracked, and `git add -A` mid-resolution would commit a symlink).
 	for _, p := range sortedKeys(f.Paths) {
-		if f.Paths[p].CruftLink && !inConflict[p] {
+		if f.Paths[p].CruftLink {
 			out = append(out, Action{Kind: RemoveLink, Path: p + "~cruft"})
 		}
 	}
@@ -245,7 +257,7 @@ func Plan(w Want, f Facts) []Action {
 		switch pf := f.Paths[p]; pf.FS {
 		case Link:
 			a := Action{Kind: RemoveLink, Path: p}
-			if f.SameProfile {
+			if f.SameProfile && !listed[p] {
 				a.Reason = p + " is no longer in the profile (removed upstream?): the link is gone and the base file is back"
 			}
 			out = append(out, a)
@@ -297,11 +309,13 @@ func Plan(w Want, f Facts) []Action {
 			switch {
 			case pf.LinkTarget != s.Target:
 				out = append(out, Action{Kind: LinkPath, Path: p, Target: s.Target})
-			case !had || rec.VariantHash != pf.VariantHash || rec.Target != s.Target:
+			case !had || rec.VariantHash != pf.VariantHash || rec.Target != s.Target || variantMoved(rec, pf) || (rec.VariantBlob == "" && pf.VariantBlob != ""):
 				out = append(out, Action{Kind: RecordHash, Path: p, Target: s.Target})
 			}
 			// The swap stays; a person decides whether the new base needs a look.
-			if had && rec.BaseBlob != "" && pf.BaseBlob != "" && rec.BaseBlob != pf.BaseBlob {
+			// Not when the same change moved the profile's file too: that is the profile's
+			// maintainer adapting it to the new base (the record follows, see apply).
+			if had && rec.BaseBlob != "" && pf.BaseBlob != "" && rec.BaseBlob != pf.BaseBlob && !variantMoved(rec, pf) {
 				out = append(out, Action{Kind: Stale, Path: p,
 					Reason: p + ": the base file changed upstream since outfit swapped it; the profile's copy is kept as it is",
 					Fix:    "outfit diff " + shq(p) + "   (then, when the profile is fine as it is: outfit ack " + shq(p) + ")"})

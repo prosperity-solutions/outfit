@@ -53,6 +53,19 @@ func staleCommand(ctx context.Context, e Env, name string, args []string) (l *lo
 	return l, syncInput(ctx, e, l, false), p, *j, 0, false
 }
 
+// isObjectID reports a full-length hex object name (SHA-1 or SHA-256).
+func isObjectID(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func notSwapped(path string) error {
 	return Errorf("%s is not swapped by outfit, so there is no base to compare", path).WithFix("outfit status")
 }
@@ -71,6 +84,11 @@ func cmdDiff(ctx context.Context, e Env, args []string) int {
 	}
 	if err != nil {
 		return fail(Errorf("%v", err).WithFix("outfit status"))
+	}
+	// What goes to git as an object name must be one: state.json is a file someone
+	// else may have written.
+	if !isObjectID(b.Current) || (b.Recorded != "" && !isObjectID(b.Recorded)) {
+		return fail(Errorf("the recorded base of %s is not a git object id: state.json is damaged", path).WithFix("outfit init"))
 	}
 	stale := b.Recorded != "" && b.Recorded != b.Current
 	var text string

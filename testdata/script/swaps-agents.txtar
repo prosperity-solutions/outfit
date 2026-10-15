@@ -41,6 +41,15 @@ exec sh -c 'cmd=$(sed -n "s/.*\"command\": \"\(.*\)\",*$/\1/p" .claude/settings.
 ! stderr .
 islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
 
+# A hook of the person's own inside outfit's item survives both.
+cp $WORK/shared.json .claude/settings.local.json
+outfit init --agents
+grep 'echo mine' .claude/settings.local.json
+grep '# outfit-managed' .claude/settings.local.json
+outfit uninstall
+grep 'echo mine' .claude/settings.local.json
+! grep 'outfit-managed' .claude/settings.local.json
+
 # Other settings and hooks survive an update and an uninstall.
 cp $WORK/mine.json .claude/settings.local.json
 outfit init --agents
@@ -52,6 +61,19 @@ grep 'echo mine' .claude/settings.local.json
 grep 'Bash\(go test' .claude/settings.local.json
 ! grep 'outfit-managed' .claude/settings.local.json
 
+# The entry stays out of `git add -A` (info/exclude, removed again by uninstall).
+rm .claude/settings.local.json
+outfit init --agents
+exec git status --short
+! stdout 'claude'
+exec git add -A
+exec git status --short
+! stdout 'claude'
+exec cat .git/info/exclude
+stdout 'settings.local.json'
+outfit uninstall
+! grep 'settings.local.json' .git/info/exclude
+
 # A settings file outfit made is removed with its entry.
 rm .claude/settings.local.json
 outfit init --agents
@@ -61,12 +83,55 @@ outfit uninstall
 exists .claude
 
 # A settings file outfit cannot read is left exactly as it is, with a message.
+# (the exit is 3: the dispatcher is in, but the entry you asked for was not written)
 cp $WORK/bad.json .claude/settings.local.json
-outfit init --agents
+! outfit init --agents
 stderr 'could not add the SessionStart entry'
 cmp .claude/settings.local.json $WORK/bad.json
+! outfit init --agents --json
+stdout '"errors":\["'
+# ...and uninstall is not stopped by a file outfit never wrote.
+outfit uninstall
+cmp .claude/settings.local.json $WORK/bad.json
+# A repository that COMMITS the file makes it everyone's: outfit does not edit it.
+rm .claude/settings.local.json
+exec sh -c 'echo "{}" > .claude/settings.local.json'
+exec git add -f .claude/settings.local.json
+exec git commit -qm 'chore: shared claude settings'
+! outfit init --agents
+stderr 'is tracked by git'
+exec cat .claude/settings.local.json
+stdout '^\{\}$'
+exec git status --short
+! stdout .
+
+# A settings file that is a link is not followed, and uninstall does not follow it.
+exec git rm -q -f .claude/settings.local.json
+exec sh -c 'echo "{\"env\":{\"TOKEN\":\"secret\"}}" > $WORK/elsewhere.json'
+exec mkdir -p .claude
+symlink .claude/settings.local.json -> $WORK/elsewhere.json
+! outfit init --agents
+stderr 'not a plain file'
+exec cat $WORK/elsewhere.json
+stdout 'secret'
+islink .claude/settings.local.json $WORK/elsewhere.json
+outfit uninstall
+exec cat $WORK/elsewhere.json
+stdout 'secret'
+# A worktree added LATER (coding agents isolate their work in new worktrees) gets the
+# entry too, when the main worktree has it and the new one has a .claude directory.
+rm .claude/settings.local.json
+exec sh -c 'echo x > .claude/keep.md && git add -f .claude/keep.md && git commit -qm "chore: claude dir"'
+outfit init
+outfit init --agents
+grep 'outfit-managed' .claude/settings.local.json
+exec git worktree add -q ../repo-later
+exists ../repo-later/.claude/settings.local.json
+grep 'outfit-managed' ../repo-later/.claude/settings.local.json
 -- mine.json --
 {"permissions":{"allow":["Bash(go test:*)"]},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo mine"}]}]}}
+-- shared.json --
+{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo mine"},{"type":"command","command":"old # outfit-managed"}]}]}}
 -- bad.json --
 { // not json
 }

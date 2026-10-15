@@ -32,7 +32,7 @@ outfit sync
 stderr 'the base file changed upstream'
 outfit sync --json
 stdout '"stale":\["AGENTS.md"\]'
-stdout '"in_sync":false'
+stdout '"in_sync":true'   # nothing left for sync to do: stale is its own field
 stdout '"needs_human":false'
 
 # status flags it (exit 4) without touching anything.
@@ -81,3 +81,35 @@ stdout 'new base rule'
 outfit use yolo
 outfit status
 stdout 'state    in sync'
+
+# One upstream commit that changes the base AND the profile's own file is the
+# maintainer adapting the profile to the new base: nothing is stale, and an edit to
+# the base alone afterwards still is.
+cd ../other
+exec git pull -q origin main
+exec sh -c 'echo "base v3" >> AGENTS.md; echo "yolo v3" >> .outfit/profiles/yolo/AGENTS.md'
+exec git commit -aqm 'docs: adapt the profile to the new base'
+exec git push -q origin HEAD:main
+cd ../repo
+exec git pull -q --ff-only origin main
+! stderr 'changed upstream'
+outfit status
+stdout 'state    in sync'
+exec cat .outfit/profiles/yolo/AGENTS.md
+stdout 'yolo v3'
+cd ../other
+exec sh -c 'echo "base v4" >> AGENTS.md'
+exec git commit -aqm 'docs: base only'
+exec git push -q origin HEAD:main
+cd ../repo
+exec git pull -q --ff-only origin main
+stderr 'AGENTS.md: the base file changed upstream'
+outfit ack AGENTS.md
+
+# A damaged state.json cannot make `outfit diff` pass anything but an object id to git.
+exec sh -c 'sed -i.bak "s/\"base_blob\": \"[0-9a-f]*\"/\"base_blob\": \"--output=pwned\"/" .git/outfit/state.json'
+! outfit diff AGENTS.md
+stderr 'not a git object id'
+! exists pwned
+exec sh -c 'rm -f .git/outfit/state.json.bak .git/outfit/state.json'
+outfit sync

@@ -64,18 +64,26 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 	if *agentsFlag {
 		agentsOut = &agentsJSON{Added: []string{}, NoClaude: []string{}, Errors: []string{}}
 		for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
+			agentsOut.worktrees++
 			switch {
 			case !agents.HasClaude(w.Path):
 				agentsOut.NoClaude = append(agentsOut.NoClaude, w.Path)
 			case *dry:
-				if !agents.Installed(w.Path) {
+				if would, aerr := agents.WouldInstall(w.Path, e.Exe); aerr != nil {
+					agentsOut.Errors = append(agentsOut.Errors, aerr.Error())
+				} else if would {
 					agentsOut.Added = append(agentsOut.Added, w.Path)
 				}
+			case settingsTracked(ctx, l, w.Path):
+				// A repository that commits the file makes it everyone's: editing it would
+				// put this machine's binary path and a sync into every teammate's session.
+				agentsOut.Errors = append(agentsOut.Errors, w.Path+"/"+agents.SettingsFile+" is tracked by git, so outfit does not edit it (it is meant to be personal)")
 			default:
 				if changed, aerr := agents.Install(w.Path, e.Exe); aerr != nil {
 					agentsOut.Errors = append(agentsOut.Errors, aerr.Error())
 				} else if changed {
 					agentsOut.Added = append(agentsOut.Added, w.Path)
+					ignoreSettings(ctx, l, w.Path)
 				}
 			}
 		}
@@ -100,7 +108,7 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 		}
 		b, _ := json.Marshal(out)
 		fmt.Fprintln(e.Stdout, string(b))
-		return initExit(syncRes, syncErr)
+		return initExit(syncRes, syncErr, agentsOut)
 	}
 	if syncErr != nil {
 		fmt.Fprintf(e.Stderr, "outfit: profile files were not set up: %v\n  fix: outfit sync\n", syncErr)
@@ -134,7 +142,26 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 			fmt.Fprintf(e.Stdout, "  worktrees whose directory is gone (configured anyway; `git worktree prune` removes them): %s\n", strings.Join(res.MissingWorktrees, ", "))
 		}
 	}
-	return initExit(syncRes, syncErr)
+	return initExit(syncRes, syncErr, agentsOut)
+}
+
+// ignoreSettings keeps the personal settings file out of `git add -A`, unless git
+// already ignores it (a global ignore, Claude Code's own entry).
+func ignoreSettings(ctx context.Context, l *loaded, worktree string) {
+	g := l.Git
+	g.Dir = worktree
+	if _, err := g.Read(ctx, "check-ignore", "-q", "--", agents.SettingsFile); err == nil {
+		return
+	}
+	_ = apply.AddExcludeEntry(filepath.Join(l.Repo.CommonDir, "info", "exclude"), agents.IgnoreComment, agents.IgnoreLine)
+}
+
+// settingsTracked reports whether git tracks the worktree's personal settings file.
+func settingsTracked(ctx context.Context, l *loaded, worktree string) bool {
+	g := l.Git
+	g.Dir = worktree
+	res, err := g.Read(ctx, "--literal-pathspecs", "ls-files", "-z", "--", agents.SettingsFile)
+	return err == nil && len(res.Stdout) > 0
 }
 
 // agentsJSON is what `init --agents` did in each worktree.
@@ -142,6 +169,8 @@ type agentsJSON struct {
 	Added    []string `json:"added"`
 	NoClaude []string `json:"no_claude_dir"`
 	Errors   []string `json:"errors"`
+
+	worktrees int // how many worktrees were looked at
 }
 
 func printAgents(e Env, a *agentsJSON, dry bool) {
@@ -152,7 +181,7 @@ func printAgents(e Env, a *agentsJSON, dry bool) {
 	if len(a.Added) > 0 {
 		fmt.Fprintf(e.Stdout, "Claude Code SessionStart entry %s in %d worktree(s) (%s)\n", verb, len(a.Added), agents.SettingsFile)
 	}
-	if len(a.NoClaude) > 0 && len(a.Added) == 0 && len(a.Errors) == 0 {
+	if len(a.NoClaude) > 0 && len(a.Added) == 0 && len(a.Errors) == 0 && len(a.NoClaude) == a.worktrees {
 		fmt.Fprintln(e.Stdout, "no .claude directory here, so no SessionStart entry (create it, then run: outfit init --agents)")
 	}
 	for _, er := range a.Errors {
@@ -164,8 +193,8 @@ func printAgents(e Env, a *agentsJSON, dry bool) {
 // 3 when the dispatcher is installed but a person has to look at the profile files
 // (a sparse checkout that is not ours, a refusal, an error): init's own job is done
 // either way, and rerunning it is harmless.
-func initExit(syncRes *apply.Result, syncErr error) int {
-	if syncErr != nil || (syncRes != nil && syncExit(syncRes) != ExitOK) {
+func initExit(syncRes *apply.Result, syncErr error, a *agentsJSON) int {
+	if syncErr != nil || (syncRes != nil && syncExit(syncRes) != ExitOK) || (a != nil && len(a.Errors) > 0) {
 		return ExitNeedsHuman
 	}
 	return ExitOK
@@ -206,6 +235,11 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 		} else if changed {
 			undone = append(undone, "Claude Code SessionStart entry in "+w.Path)
 		}
+	}
+	if removed, rerr := apply.RemoveExcludeEntry(filepath.Join(l.Repo.CommonDir, "info", "exclude"), agents.IgnoreComment, agents.IgnoreLine); rerr != nil {
+		undoFailed = append(undoFailed, "info/exclude: "+rerr.Error())
+	} else if removed {
+		undone = append(undone, ".git/info/exclude entry for the Claude Code settings")
 	}
 	res, err := hooks.Uninstall(ctx, l.Git, l.Repo, l.Cfg, e.Getenv("HOME"))
 	if err != nil {

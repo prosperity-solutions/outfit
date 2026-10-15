@@ -76,6 +76,9 @@ func (in Input) currentBlob(ctx context.Context, path string) (string, error) {
 		return "", fmt.Errorf("cannot read the index: %w", err)
 	}
 	e := parseLsFiles(res.Stdout)[path]
+	if e.unmerged {
+		return "", fmt.Errorf("%s is in the middle of a merge conflict; resolve it first: git add --sparse %s && git commit, then outfit sync", path, path)
+	}
 	if !e.tracked {
 		return "", fmt.Errorf("%s is not tracked by git", path)
 	}
