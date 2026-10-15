@@ -60,17 +60,14 @@ push to `main` it runs offline: the job gates the release, and a network hiccup 
 against an action that is already pinned must not block it. Run it
 locally with `zizmor .github/workflows` (`brew install zizmor`).
 
-## What only the owner can switch on
+## Settings of a public repository
 
-outfit's automation is not allowed to change repository settings. The repository is **public**, which
-makes the settings below matter more: anyone can open a pull request, and a workflow run is the one
-place a secret could leak. **One command does the settings that need no secret**, as a repository admin:
+outfit's automation is not allowed to change repository settings (an agent's attempt is refused, by design).
+The repository is **public**, which makes these matter: anyone can open a pull request, and a workflow run is the
+one place a secret could leak. They are set once by a repository admin with
+`scripts/dev/harden-public-repo.sh` (safe to run again), and were set on 2026-10-15:
 
-```sh
-scripts/dev/harden-public-repo.sh
-```
-
-| Setting (what the script sets) | Effect |
+| Setting | Effect |
 |---|---|
 | The workflow token starts read-only (`default_workflow_permissions: read`) | each workflow asks for the permissions it needs; none inherits write by default (they all declare theirs, `zizmor` checks it) |
 | SHA pinning required for actions | a workflow that uses an action by tag or branch cannot run; every action here is pinned by SHA, and the dependency-age gate keeps it so |
@@ -79,16 +76,15 @@ scripts/dev/harden-public-repo.sh
 | Dependabot security updates | pull requests for vulnerable dependencies |
 | Private vulnerability reporting | `SECURITY.md` points reporters to it |
 
-These are **already as strict as they can be** (checked): fork pull requests need approval before a workflow
-runs for an outside contributor (`all_external_contributors`), and a fork's pull request never receives a
-secret or a write token. No workflow uses `pull_request_target` (`zizmor` flags one that does).
+**The seven signing secrets live in the `release` environment, not in the repository** (Settings >
+Environments > `release`), so a pull request from a branch of this repository, which can edit a workflow, cannot
+read them; only a run on `main` can. The two variables (`MACOS_TEAM_ID`, `MINISIGN_PUBLIC_KEY`) stay repository
+variables, which the workflows read. outfit never reads, writes or moves a secret: to rotate one, the owner sets
+it in the environment, and `docs/release.md` has the key rotation.
 
-Two more are yours and cannot be scripted by the agent:
-
-| What | Why |
-|---|---|
-| **Move the seven signing secrets into the `release` environment** (Settings > Environments > `release` > Secrets), then delete the repository-level copies | they are repository secrets today, which a pull request from a *branch of this repository* (a collaborator, not a fork) can read by editing a workflow. In the environment, with the branch rule above, only a run on `main` can. outfit never reads, writes or moves a secret |
-| "Require review from code owners" on the `main` ruleset (the ruleset itself exists, see below) | `.github/CODEOWNERS` names who must look at workflows, `install.sh`, the update keys and the release scripts; with the setting on, a change to them waits for that person |
+Already as strict as they can be: fork pull requests need approval before a workflow runs for an outside
+contributor (`all_external_contributors`), and a fork's pull request never receives a secret or a write token. No
+workflow uses `pull_request_target` (`zizmor` flags one that does).
 
 ## The ruleset on `main`
 
@@ -96,11 +92,11 @@ One repository ruleset (named `main`, id 25160433, created at the end of the fir
 default branch:
 
 - the branch cannot be deleted, and its history cannot be rewritten (no force-push);
-- a change comes by **pull request**, with no approval count required (CODEOWNERS review is the owner's
-  choice, see above);
+- a change comes by **pull request**, with no approval count required (the code owner rule below is what asks for a review);
 - the status checks **`all-green`**, **`Ship Workflow`** and **`Conventional Commits`** must pass.
   `all-green` already needs the other two, so they are named twice on purpose: a run in which one of them
   was skipped must not satisfy the rule;
+- a **code owner must review** a change to the paths in `.github/CODEOWNERS` (the workflows, the installer and updater, the release and CI scripts, the tests that gate, the instructions the agents follow, this security story): a pull request from outside cannot change them unreviewed. The owner's own changes still need the bypass below, since nobody can approve their own pull request;
 - repository admins can bypass it (`gh pr merge --admin`): the ship workflow allows that only after reading
   the `ship` job's own conclusion (`docs/ship.md`, Step 6.3).
 

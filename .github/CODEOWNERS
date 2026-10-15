@@ -1,10 +1,26 @@
-# Who must look at changes to what decides what outfit installs and trusts. Enforced only when
-# the branch ruleset on main requires code owner review (docs/security.md).
+# Who must look at changes to what decides what outfit installs and trusts, what runs in CI, and
+# what the coding agents that work on this repository are told to do. Enforced: the branch ruleset on
+# main requires a code owner's review (docs/security.md). A maintainer with bypass rights can still
+# merge their own change.
 /.github/                @peter-adam-dy
 /install.sh              @peter-adam-dy
 /internal/update/        @peter-adam-dy
+/internal/hooks/         @peter-adam-dy
 /scripts/release/        @peter-adam-dy
+/scripts/ci/             @peter-adam-dy
+/scripts/dev/            @peter-adam-dy
 /.goreleaser.yaml        @peter-adam-dy
 /go.mod                  @peter-adam-dy
 /go.sum                  @peter-adam-dy
-/scripts/ci/             @peter-adam-dy
+/tests/                  @peter-adam-dy
+# What the agents are told, and the workflow that gates every change
+/AGENTS.md               @peter-adam-dy
+/CLAUDE.md               @peter-adam-dy
+/.claude/                @peter-adam-dy
+/docs/ship.md            @peter-adam-dy
+/docs/agentic-review.md  @peter-adam-dy
+# The security story and the licence
+/SECURITY.md             @peter-adam-dy
+/docs/security.md        @peter-adam-dy
+/LICENSE                 @peter-adam-dy
+/NOTICE                  @peter-adam-dy
