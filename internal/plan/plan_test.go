@@ -307,7 +307,7 @@ func TestPlanStaleBaseKeepsTheSwapAndSaysSo(t *testing.T) {
 			t.Fatalf("unexpected %v", kinds(got))
 		}
 	}
-	if stale == nil || records != 1 || !strings.Contains(stale.Fix, "outfit diff AGENTS.md") || !strings.Contains(stale.Fix, "outfit ack AGENTS.md") {
+	if stale == nil || records != 1 || stale.Fix != "outfit diff AGENTS.md" || !strings.Contains(stale.Reason, "outfit ack AGENTS.md") {
 		t.Fatalf("%v %+v", kinds(got), got)
 	}
 	// Same blob: nothing to say. An older state file with nothing recorded: say nothing.

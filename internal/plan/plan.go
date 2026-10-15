@@ -63,8 +63,9 @@ type PathFacts struct {
 type Record struct {
 	Target      string
 	VariantHash string
-	// BaseBlob is the base file's blob when the link was made: what "the base changed
-	// upstream" is measured against. VariantBlob is the variant's at the same moment.
+	// BaseBlob is the base blob the swap stands on (set at link time, moved by an ack or
+	// an adapted commit): what "the base is different" is measured against. VariantBlob
+	// is the variant's at the last sync.
 	BaseBlob    string
 	VariantBlob string
 	// SeenBase is the base blob the last sync saw.
@@ -116,7 +117,7 @@ type Facts struct {
 	// has no other copy, and the next `git reset` would lose it.
 	StagedProfiles []string
 	// SameProfile says the active profile is the one the last sync recorded: a path it
-	// no longer lists then went away from the profile itself (removed upstream), not
+	// no longer lists then went away from the profile itself (removed), not
 	// because of a switch.
 	SameProfile bool
 }
@@ -293,7 +294,7 @@ func Plan(w Want, f Facts) []Action {
 		case Link:
 			a := Action{Kind: RemoveLink, Path: p}
 			if f.SameProfile && !listed[p] {
-				a.Reason = p + " is no longer in the profile (removed upstream?): the link is gone and the base file is back"
+				a.Reason = p + " is no longer in the profile (removed, or an older branch?): the link is gone and the base file is back"
 			}
 			out = append(out, a)
 		case File:
@@ -352,8 +353,8 @@ func Plan(w Want, f Facts) []Action {
 			// maintainer adapting it to the new base (the record follows, see apply).
 			if had && rec.BaseBlob != "" && pf.BaseBlob != "" && !rec.BaseKnown(pf.BaseBlob) && !Adapted(rec, pf) {
 				out = append(out, Action{Kind: Stale, Path: p,
-					Reason: p + ": the base file is different from when outfit swapped it (a pull, a merge or a checkout); the profile's copy is kept as it is",
-					Fix:    "outfit diff " + shq(p) + "   (then, when the profile is fine as it is: outfit ack " + shq(p) + ")"})
+					Reason: p + ": the base file is different from when outfit swapped it (a pull, a merge or a checkout); the profile's copy is kept as it is. When the profile is fine as it is: outfit ack " + shq(p),
+					Fix:    "outfit diff " + shq(p)})
 			}
 		case Missing:
 			out = append(out, Action{Kind: LinkPath, Path: p, Target: s.Target})
@@ -411,6 +412,9 @@ func hasKind(as []Action, k ActionKind) bool {
 }
 
 func managed(text string) bool { return strings.HasPrefix(text, Marker) }
+
+// Quote quotes a path for a command a person pastes (the fixes outfit prints).
+func Quote(s string) string { return shq(s) }
 
 // shq quotes a path for a fix command.
 func shq(s string) string {

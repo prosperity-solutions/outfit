@@ -155,9 +155,6 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		}
 	}
 	sort.Strings(all)
-	// A `<path>~cruft` symlink might be our own link, moved aside by older git during a
-	// merge. Ask the index about it too (the same call): one that git tracks is the
-	// repository's own file and is never ours to remove.
 	ask := append([]string(nil), all...)
 	// A committed profile's variants are asked about too: git's blob for one tells a
 	// pull that changed the profile from an edit made through the link.
@@ -170,6 +167,9 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			}
 		}
 	}
+	// A `<path>~cruft` symlink might be our own link, moved aside by older git during a
+	// merge. Ask the index about it too (the same call): one that git tracks is the
+	// repository's own file and is never ours to remove.
 	cruft := map[string]string{}
 	for _, p := range all {
 		if realParents(in.W.WorkTree, p) {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/prosperity-solutions/outfit/internal/apply"
+	"github.com/prosperity-solutions/outfit/internal/plan"
 )
 
 // swappedPath turns the argument of `diff`/`ack` (relative to where the person is,
@@ -50,7 +51,17 @@ func staleCommand(ctx context.Context, e Env, name string, args []string) (l *lo
 	if err != nil {
 		return fail(err)
 	}
-	return l, syncInput(ctx, e, l, false), p, *j, 0, false
+	in = syncInput(ctx, e, l, false)
+	// The fixes outfit prints name paths from the worktree root; from a subdirectory
+	// that is not where "AGENTS.md" is relative to. Try the root-relative reading too.
+	if _, berr := apply.BaseOf(ctx, in, p); errors.Is(berr, apply.ErrNotSwapped) && !filepath.IsAbs(pos[0]) {
+		if alt := filepath.ToSlash(filepath.Clean(pos[0])); alt != p && !strings.HasPrefix(alt, "../") {
+			if _, aerr := apply.BaseOf(ctx, in, alt); aerr == nil {
+				p = alt
+			}
+		}
+	}
+	return l, in, p, *j, 0, false
 }
 
 // isObjectID reports a full-length hex object name (SHA-1 or SHA-256).
@@ -70,7 +81,7 @@ func notSwapped(path string) error {
 	return Errorf("%s is not swapped by outfit, so there is no base to compare", path).WithFix("outfit status")
 }
 
-// cmdDiff shows what changed in a swapped path's base file upstream since outfit
+// cmdDiff shows what changed in a swapped path's base file since outfit
 // swapped it: the profile's copy stays as it is, this is what it no longer sits on.
 func cmdDiff(ctx context.Context, e Env, args []string) int {
 	l, in, path, asJSON, code, done := staleCommand(ctx, e, "diff", args)
@@ -98,7 +109,7 @@ func cmdDiff(ctx context.Context, e Env, args []string) int {
 			// The recorded version may be gone (a deleted branch, a gc): then there is
 			// nothing to compare, but the current base can still be read and acknowledged.
 			return fail(Errorf("cannot compare the two versions of %s (the one outfit swapped over is probably no longer in this repository): %v", path, err).
-				WithFix("git show :" + path + "   (the base as it is now; when the profile is fine with it: outfit ack " + path + ")"))
+				WithFix("git show :" + plan.Quote(path) + "   (the base as it is now; when the profile is fine with it: outfit ack " + plan.Quote(path) + ")"))
 		}
 		text = strings.ReplaceAll(strings.ReplaceAll(string(res.Stdout), "a/"+b.Recorded, "a/"+path+" (swapped over)"), "b/"+b.Current, "b/"+path+" (now)")
 	}
@@ -119,7 +130,7 @@ func cmdDiff(ctx context.Context, e Env, args []string) int {
 	}
 	fmt.Fprintf(e.Stdout, "# %s: the base file is different from when outfit swapped it (was %.8s, is %.8s); the profile's copy is kept as it is\n", path, b.Recorded, b.Current)
 	fmt.Fprint(e.Stdout, text)
-	fmt.Fprintf(e.Stdout, "# the whole new base: git show :%s\n# when the profile is fine as it is: outfit ack %s\n", path, path)
+	fmt.Fprintf(e.Stdout, "# the whole new base: git show :%s\n# when the profile is fine as it is: outfit ack %s\n", plan.Quote(path), plan.Quote(path))
 	return ExitOK
 }
 

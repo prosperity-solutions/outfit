@@ -64,24 +64,32 @@ func Ack(ctx context.Context, in Input, path string) (changed bool, err error) {
 		if s.BaseBlob == cur {
 			return false, nil
 		}
-		rec := plan.Record{BaseBlob: s.BaseBlob, KnownBases: s.KnownBases}
-		if rec.BaseKnown(cur) && cur != s.BaseBlob {
-			// Already acknowledged earlier (a branch switch back): the swap now stands on it.
-			next.Swaps[i].BaseBlob = cur
-			next.Swaps[i].KnownBases = append([]string{s.BaseBlob}, s.KnownBases...)
-			_, err = state.Write(in.W.GitDir, &next)
-			return err == nil, err
-		}
+		// The swap now stands on the current base (a new one, or one acknowledged earlier:
+		// a branch switch back); the one it stood on joins the acknowledged ones.
 		next.Swaps[i].BaseBlob = cur
-		known := append([]string{s.BaseBlob}, s.KnownBases...)
-		if len(known) > 8 {
-			known = known[:8]
-		}
-		next.Swaps[i].KnownBases = known
+		next.Swaps[i].KnownBases = pushKnown(s.KnownBases, s.BaseBlob, cur)
 		_, err = state.Write(in.W.GitDir, &next)
 		return err == nil, err
 	}
 	return false, ErrNotSwapped
+}
+
+// pushKnown puts blob at the front of the acknowledged bases without duplicates (and
+// without the base the swap now stands on), keeping the newest eight.
+func pushKnown(known []string, blob, standingOn string) []string {
+	out := []string{}
+	if blob != "" && blob != standingOn {
+		out = append(out, blob)
+	}
+	for _, k := range known {
+		if k != blob && k != standingOn && len(out) < 8 {
+			out = append(out, k)
+		}
+	}
+	if len(out) > 8 {
+		out = out[:8]
+	}
+	return out
 }
 
 // currentBlob is the blob id the index holds for path.

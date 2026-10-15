@@ -9,6 +9,7 @@ and the same exit code.
 
 ```sh
 outfit init              # install (idempotent); --dry-run shows what would change
+outfit init --agents     # also a Claude Code SessionStart entry that runs outfit sync
 outfit uninstall         # undo it, in every worktree
 ```
 
@@ -20,7 +21,8 @@ outfit uninstall         # undo it, in every worktree
 | `core.hooksPath` = that directory, in the **per-worktree config of every worktree** | `<git-dir>/config.worktree` |
 | `extensions.worktreeConfig = true` | the repo's own config |
 | what uninstall needs (was the extension already on, which `outfit.*` settings existed) | `<git-common-dir>/outfit/install.json`, written **first** |
-| a small `state.json` (schema version, git version, later the swapped files) | `<git-dir>/outfit/` of each worktree |
+| a small `state.json` (schema version, git version, the swapped files and what they stand on) | `<git-dir>/outfit/` of each worktree |
+| with `--agents`: a SessionStart entry, and an ignore line for the personal settings file it lives in | `.claude/settings.local.json` of each worktree that has `.claude/`, and `<git-common-dir>/info/exclude` |
 
 Nothing in the working tree changes and nothing is committed. Worktree scope beats
 `--local`, so husky rewriting `core.hooksPath` on every `npm install` cannot win. The
@@ -42,7 +44,7 @@ another tool already set `core.hooksPath` at worktree scope.
 
 `uninstall` unsets `core.hooksPath` in every worktree *before* it removes the shims, so
 a dangling path can never silently disable your hooks, then removes the `outfit.*`
-settings made since init (those that were there before are kept), the state files and
+settings made since init (those that were there before are kept), the SessionStart entry and its ignore line, the state files and
 `extensions.worktreeConfig` if init was the one to enable it. `git config --list` comes
 back exactly (a test compares it). It does as much as it can and exits 1 listing
 anything it could not undo.
@@ -152,7 +154,7 @@ additions working.
 After `post-checkout`, `post-merge` and `post-rewrite` the dispatcher runs `outfit sync`
 (see [profiles.md](profiles.md)) so the swapped files follow what git just did. It runs
 after the team's own hook, and its result never changes the hook's exit code: a failing
-sync prints what went wrong on stderr and git carries on. If the team's own hook fails, the sync is skipped (git is already failing that command); `hook.post-checkout=off` skips the team's hook but the sync still runs.
+sync prints what went wrong on stderr and git carries on. On the `post-checkout` that `git worktree add` fires (all-zero old sha), in a worktree outfit has not synced yet, it first strips the `outfit.*` keys git copied from the main worktree's config and, if the main worktree has outfit's Claude Code SessionStart entry, gives the new worktree one (see [profiles.md](profiles.md)). If the team's own hook fails, the sync is skipped (git is already failing that command); `hook.post-checkout=off` skips the team's hook but the sync still runs.
 
 ## Environment variables
 

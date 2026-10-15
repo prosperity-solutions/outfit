@@ -34,8 +34,9 @@ const (
 	IgnoreLine    = "/" + SettingsFile
 )
 
-// Command is the SessionStart command: silent, never fails the session, finds the
-// binary by the path recorded at init and then on PATH.
+// Command is the SessionStart command: quiet when sync works, one line when it does
+// not, never failing the session, finding the binary by the path recorded at init and
+// then on PATH.
 func Command(exe string) string {
 	run := "outfit sync"
 	if exe != "" {
@@ -62,7 +63,9 @@ type object = map[string]json.RawMessage
 // the way is a link: a repository (a teammate's branch, a clone) can commit
 // `.claude` or `settings.local.json` as a symlink, and reading through it would copy
 // somebody else's settings into this worktree, writing or removing would reach
-// outside it. Missing is fine (Install makes it); anything but a plain file is not.
+// outside it. A `.claude` that is not a real directory counts as "no .claude" (nothing
+// to do); a settings file that is missing is fine (Install makes it); one that is not a
+// plain file is refused with an error.
 func settingsPath(worktree string) (string, error) {
 	if !filepath.IsAbs(worktree) {
 		return "", errNoClaude // never resolve .claude against the current directory

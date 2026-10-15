@@ -1,7 +1,8 @@
 # Scenario 3 (docs/HANDOVER.md §7.4): a merge that conflicts on a swapped path.
 # Git replaces the link with a regular file full of markers (it does not write
 # through the link). outfit never absorbs that: it reports the conflict, prints the
-# fix, exits 3; once resolved, the link is back and the variant was never touched.
+# fix, exits 3; `diff`/`ack` say why they cannot compare it. Once resolved, the link is
+# back, the variant was never touched, the merge made the base differ (stale: `ack`).
 fixture repo team conflict
 cd repo
 outfit init

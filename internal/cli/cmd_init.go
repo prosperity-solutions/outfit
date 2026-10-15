@@ -71,7 +71,7 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 			case settingsTracked(ctx, l, w.Path):
 				// A repository that commits the file makes it everyone's: editing it would
 				// put this machine's binary path and a sync into every teammate's session.
-				agentsOut.Errors = append(agentsOut.Errors, w.Path+"/"+agents.SettingsFile+" is tracked by git, so outfit does not edit it (it is meant to be personal)")
+				agentsOut.Errors = append(agentsOut.Errors, w.Path+"/"+agents.SettingsFile+errTracked)
 			case *dry:
 				if would, aerr := agents.WouldInstall(w.Path, e.Exe); aerr != nil {
 					agentsOut.Errors = append(agentsOut.Errors, aerr.Error())
@@ -189,6 +189,13 @@ func settingsTracked(ctx context.Context, l *loaded, worktree string) bool {
 	return err == nil && len(res.Stdout) > 0
 }
 
+// Texts that are built in one place and recognised in another.
+const (
+	errTracked          = " is tracked by git, so outfit does not edit it (it is meant to be personal)"
+	agentsRemovedPrefix = "Claude Code SessionStart entry in "
+	excludeRemoved      = ".git/info/exclude entry for the Claude Code settings"
+)
+
 // agentsJSON is what `init --agents` did in each worktree.
 type agentsJSON struct {
 	Added    []string `json:"added"`
@@ -199,12 +206,12 @@ type agentsJSON struct {
 }
 
 func printAgents(e Env, a *agentsJSON, dry bool) {
-	verb := "added"
-	if dry {
-		verb = "would add"
-	}
 	if len(a.Added) > 0 {
-		fmt.Fprintf(e.Stdout, "Claude Code SessionStart entry %s in %d worktree(s) (%s)\n", verb, len(a.Added), agents.SettingsFile)
+		if dry {
+			fmt.Fprintf(e.Stdout, "would add the Claude Code SessionStart entry in %d worktree(s) (%s)\n", len(a.Added), agents.SettingsFile)
+		} else {
+			fmt.Fprintf(e.Stdout, "Claude Code SessionStart entry added in %d worktree(s) (%s)\n", len(a.Added), agents.SettingsFile)
+		}
 	}
 	if len(a.NoClaude) > 0 && len(a.Added) == 0 && len(a.Errors) == 0 && len(a.NoClaude) == a.worktrees {
 		fmt.Fprintln(e.Stdout, "no .claude directory here, so no SessionStart entry (create it, then run: outfit init --agents)")
@@ -212,7 +219,7 @@ func printAgents(e Env, a *agentsJSON, dry bool) {
 	for _, er := range a.Errors {
 		fmt.Fprintf(e.Stderr, "outfit: could not add the SessionStart entry: %s\n", er)
 		switch {
-		case strings.Contains(er, "is tracked by git"):
+		case strings.HasSuffix(er, errTracked):
 			fmt.Fprintln(e.Stderr, "  fix: git rm --cached "+agents.SettingsFile+"   (keep it personal), then: outfit init --agents")
 		default:
 			fmt.Fprintln(e.Stderr, "  fix: repair or remove "+agents.SettingsFile+" by hand (or add the hook yourself: outfit sync on SessionStart), then: outfit init --agents")
@@ -221,9 +228,10 @@ func printAgents(e Env, a *agentsJSON, dry bool) {
 }
 
 // initExit is 0 when the dispatcher is in and the profile files are in order, and
-// 3 when the dispatcher is installed but a person has to look at the profile files
-// (a sparse checkout that is not ours, a refusal, an error): init's own job is done
-// either way, and rerunning it is harmless.
+// 3 when the dispatcher is installed but a person has to look: at the profile files
+// (a sparse checkout that is not ours, a refusal, an error) or at the SessionStart entry
+// `--agents` asked for and could not write. init's own job is done either way, and
+// rerunning it is harmless.
 func initExit(syncRes *apply.Result, syncErr error, a *agentsJSON) int {
 	if syncErr != nil || (syncRes != nil && syncExit(syncRes) != ExitOK) || (a != nil && len(a.Errors) > 0) {
 		return ExitNeedsHuman
@@ -266,17 +274,17 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 			undoFailed = append(undoFailed, aerr.Error())
 			agentsFailed = true
 		} else if changed {
-			undone = append(undone, "Claude Code SessionStart entry in "+w.Path)
+			undone = append(undone, agentsRemovedPrefix+w.Path)
 		}
 	}
 	// The exclude line stays while an entry is still there to be ignored: a rerun after
 	// the file is fixed finishes the job.
-	if agentsFailed {
-		// (nothing)
-	} else if removed, rerr := apply.RemoveExcludeEntry(filepath.Join(l.Repo.CommonDir, "info", "exclude"), agents.IgnoreComment, agents.IgnoreLine); rerr != nil {
-		undoFailed = append(undoFailed, "info/exclude: "+rerr.Error())
-	} else if removed {
-		undone = append(undone, ".git/info/exclude entry for the Claude Code settings")
+	if !agentsFailed {
+		if removed, rerr := apply.RemoveExcludeEntry(filepath.Join(l.Repo.CommonDir, "info", "exclude"), agents.IgnoreComment, agents.IgnoreLine); rerr != nil {
+			undoFailed = append(undoFailed, "info/exclude: "+rerr.Error())
+		} else if removed {
+			undone = append(undone, excludeRemoved)
+		}
 	}
 	res, err := hooks.Uninstall(ctx, l.Git, l.Repo, l.Cfg, e.Getenv("HOME"))
 	if err != nil {
@@ -319,7 +327,7 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 	}
 	fmt.Fprintf(e.Stdout, "uninstalled: %d shims, %d config entries, %d state files removed\n", shims, cfgs, state)
 	for _, r := range res.Removed {
-		if strings.HasPrefix(r, "Claude Code ") || strings.HasPrefix(r, ".git/info/exclude entry for the Claude") {
+		if strings.HasPrefix(r, agentsRemovedPrefix) || r == excludeRemoved {
 			fmt.Fprintf(e.Stdout, "  also removed: %s\n", r)
 		}
 	}

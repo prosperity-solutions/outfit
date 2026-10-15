@@ -135,7 +135,7 @@ worktree outfit has already synced keeps its settings, and so does the main work
 
 `reset --hard` fires no hook, so a coding agent's session can start with the files out of
 step. `outfit init --agents` adds a Claude Code `SessionStart` entry that runs
-`outfit sync` (silently, never failing the session) to `.claude/settings.local.json` in
+`outfit sync` (quiet when it works, one line when it does not, never failing the session) to `.claude/settings.local.json` in
 every worktree that has a `.claude` directory, and in worktrees added later (the main
 worktree's entry is copied when the new one has a `.claude` directory): the **personal**
 settings file, kept out of `git add -A` by an entry in `.git/info/exclude` (unless git

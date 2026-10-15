@@ -37,6 +37,12 @@ cd ../repo
 exec git config --worktree --get outfit.profile
 stdout '^lean$'
 
+# `git worktree add --no-checkout` fires no hook, so the copied pin stays (documented).
+exec git worktree add -q --no-checkout ../repo-nc
+exec git -C ../repo-nc config --worktree --get outfit.profile
+stdout '^lean$'
+exec git worktree remove --force ../repo-nc
+
 # The strip is for a NEW linked worktree only. A zero-sha post-checkout in the main
 # worktree (a clone's first checkout looks like this) keeps the pin it has...
 exec sh -c 'outfit hook post-checkout 0000000000000000000000000000000000000000 $(git rev-parse HEAD) 1'

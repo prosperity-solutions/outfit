@@ -23,8 +23,9 @@ type Result struct {
 	// Actions are the steps that were planned, informational ones included.
 	Actions []plan.Action `json:"-"`
 	// Lasting is the part of Notes that stays true after a later pass: what was
-	// quarantined, and what gather noticed in the state it read (an ignored record,
-	// an oversize profile). A skip note (a file not on disk yet) does not.
+	// quarantined, a link removed because the profile no longer has its file, and what
+	// gather noticed in the state it read (an ignored record, an oversize profile). A
+	// skip note (a file not on disk yet) does not.
 	Lasting []string `json:"-"`
 	// Done holds the steps earlier passes of one converge carried out: the last
 	// pass of a switch plans nothing, but the switch happened.
@@ -139,7 +140,7 @@ func (in Input) now() time.Time {
 func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action, res *Result) (*Result, error) {
 	next := *st
 	quarantined := map[string]bool{}
-	adapted := map[string]bool{}
+	adapted := map[string]bool{} // paths whose recorded base moves (plan.Adapted)
 	for _, a := range acts {
 		if a.Kind == plan.RecordHash && a.Adapted {
 			adapted[a.Path] = true
@@ -249,9 +250,9 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 				}
 			}
 		case pf.FS == plan.Link && pf.LinkTarget == sw.Target && pf.Tracked && pf.VariantHash != "":
-			// The base blob is the one from when the link was made: an `ack` (or the
-			// first link) sets it, a later sync never moves it, or "stale" would clear
-			// itself the next time anything else changed.
+			// The base blob the swap stands on: the first link sets it, an `ack` or an adapted
+			// commit (plan.Adapted, decided by the plan) moves it, an ordinary sync never
+			// does, or "stale" would clear itself the next time anything else changed.
 			base := g.blobs[sw.Path]
 			var known []string
 			for _, old := range st.Swaps {
@@ -489,6 +490,8 @@ func AddExcludeEntry(path, comment, line string) error {
 	return state.WriteFileAtomic(path, []byte(text), 0o644)
 }
 
+// RemoveExclude takes outfit's own .outfit entry out of .git/info/exclude: the comment
+// line and the pattern line after it, never one a person wrote.
 func RemoveExclude(path string) (bool, error) {
 	return RemoveExcludeEntry(path, excludeComment, excludeLine)
 }
