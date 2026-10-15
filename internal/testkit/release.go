@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -264,7 +265,12 @@ func (f *FakeRelease) handleAPI(w http.ResponseWriter, r *http.Request, p string
 			http.NotFound(w, r)
 			return
 		}
-		var assets []string
+		type asset struct {
+			URL  string `json:"url"`
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		}
+		var assets []asset
 		names := make([]string, 0, len(files.ids))
 		for n := range files.ids {
 			names = append(names, n)
@@ -274,10 +280,13 @@ func (f *FakeRelease) handleAPI(w http.ResponseWriter, r *http.Request, p string
 			if n == f.Break.MissingFile {
 				continue
 			}
-			assets = append(assets, fmt.Sprintf(`{"url":"%s/api/releases/assets/%d","id":%d,"name":%q}`, f.URL, files.ids[n], files.ids[n], n))
+			assets = append(assets, asset{URL: fmt.Sprintf("%s/api/releases/assets/%d", f.URL, files.ids[n]), ID: files.ids[n], Name: n})
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"tag_name":%q,"assets":[%s]}`, tag, strings.Join(assets, ","))
+		_ = json.NewEncoder(w).Encode(struct {
+			TagName string  `json:"tag_name"`
+			Assets  []asset `json:"assets"`
+		}{tag, assets})
 	case strings.HasPrefix(p, "/releases/assets/"):
 		id, _ := strconv.Atoi(strings.TrimPrefix(p, "/releases/assets/"))
 		f.mu.Lock()

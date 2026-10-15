@@ -309,3 +309,36 @@ func TestIsTimeout(t *testing.T) {
 		t.Fatal("IsTimeout misclassifies")
 	}
 }
+
+func TestCacheFilesArePrivateAndNeedAnAbsoluteDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "cache", "outfit")
+	unlock, err := Lock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if err := writeCache(dir, cacheFile{CheckedAt: time.Now(), Latest: "0.2.0"}); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]os.FileMode{dir: 0o700, filepath.Join(dir, "update.lock"): 0o600, filepath.Join(dir, "update.json"): 0o600} {
+		fi, err := os.Stat(path)
+		if err != nil || fi.Mode().Perm() != want {
+			t.Errorf("%s: mode %v, %v; want %v", path, fi.Mode().Perm(), err, want)
+		}
+	}
+	// A relative directory is refused, never created next to the cwd.
+	if _, err := Lock("relative/cache"); err == nil {
+		t.Error("a relative lock directory was accepted")
+	}
+	if err := writeCache("relative/cache", cacheFile{CheckedAt: time.Now()}); err == nil {
+		t.Error("a relative cache directory was accepted")
+	}
+	if _, ok := readCache("relative/cache"); ok {
+		t.Error("a relative cache directory was read")
+	}
+	b := &Banner{Current: "0.1.0", Dir: "relative/cache", Check: newer("0.2.0")}
+	b.Start(context.Background())
+	if got := b.Finish(); got != "" {
+		t.Errorf("banner %q with a relative cache directory", got)
+	}
+}

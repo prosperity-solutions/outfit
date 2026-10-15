@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -43,7 +44,21 @@ type cacheFile struct {
 	Failed bool `json:"failed,omitempty"`
 }
 
+// cleanDir validates a cache directory taken from the environment (HOME,
+// XDG_CACHE_HOME): it must be an absolute path, and is returned cleaned. A relative
+// one would put outfit's files inside whatever repository it runs in.
+func cleanDir(dir string) (string, bool) {
+	if dir == "" || !filepath.IsAbs(dir) {
+		return "", false
+	}
+	return filepath.Clean(dir), true
+}
+
 func readCache(dir string) (cacheFile, bool) {
+	dir, ok := cleanDir(dir)
+	if !ok {
+		return cacheFile{}, false
+	}
 	b, err := os.ReadFile(filepath.Join(dir, "update.json"))
 	if err != nil {
 		return cacheFile{}, false
@@ -58,7 +73,11 @@ func readCache(dir string) (cacheFile, bool) {
 // writeCache is atomic, so a reader never sees half a file. Errors are ignored by
 // the caller: a banner is never worth failing a command.
 func writeCache(dir string, c cacheFile) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	dir, ok := cleanDir(dir)
+	if !ok {
+		return errors.New("the cache directory is not an absolute path")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil { // private: it holds one small file of ours
 		return err
 	}
 	b, _ := json.Marshal(c)
@@ -107,7 +126,7 @@ type checkResult struct {
 // goroutine. Call it at the start of an eligible command, and Finish at the end.
 func (b *Banner) Start(ctx context.Context) {
 	cur, err := ParseVersion(b.Current)
-	if err != nil || b.Dir == "" || b.Check == nil {
+	if _, ok := cleanDir(b.Dir); err != nil || !ok || b.Check == nil {
 		return // a development build, or no cache dir: nothing to compare
 	}
 	b.cur = cur

@@ -58,13 +58,14 @@ func ExtractBinary(archive []byte) ([]byte, error) {
 		if h.Size > maxBinary {
 			return nil, fmt.Errorf("entry %q is larger than %d bytes", h.Name, maxBinary)
 		}
+		// Reads are bounded by the entry's declared size, itself capped above.
 		if h.Name != "outfit" {
-			if _, err := io.Copy(io.Discard, tr); err != nil {
+			if _, err := io.CopyN(io.Discard, tr, h.Size); err != nil {
 				return nil, fmt.Errorf("unreadable archive: %w", err)
 			}
 			continue
 		}
-		bin, err = io.ReadAll(tr)
+		bin, err = io.ReadAll(io.LimitReader(tr, h.Size))
 		if err != nil {
 			return nil, fmt.Errorf("unreadable archive: %w", err)
 		}
