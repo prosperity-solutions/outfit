@@ -287,12 +287,9 @@ jobs:
         with:
           name: release-files
           path: out
-      # minisign is what lets install.sh check the signature too, against the
-      # key built into the script, so the real key and the real signature meet
-      # here for the first time on every runner.
-      - name: Install minisign
-        run: |
-          if [ "$RUNNER_OS" = macOS ]; then brew install minisign; else sudo apt-get update -qq && sudo apt-get install -y -qq minisign; fi
+      # No minisign is installed here on purpose: install.sh fetches its own pinned
+      # copy, so the real key, the real signature and the real pinned download meet
+      # on every runner type, as they do on a person's machine.
       - name: Serve the build and install from it
         run: |
           set -e
@@ -305,6 +302,7 @@ jobs:
           # No token: this exercises the public-URL path. (Runners have none, and a
           # stray one would send the script to the API instead.)
           unset GH_TOKEN GITHUB_TOKEN OUTFIT_GITHUB_TOKEN
+          command -v minisign >/dev/null 2>&1 && echo "note: this runner image has a minisign, so the pinned download was not used" || true
           sh install.sh | tee install.log
           grep -q "signature OK" install.log
           got=$("$OUTFIT_INSTALL_DIR/outfit" version | awk '{print $2}')

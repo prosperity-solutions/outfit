@@ -68,5 +68,14 @@ yaml_files=$(sed -n 's/^    files: \[\(.*\)\]$/\1/p' .goreleaser.yaml | tr -d ' 
 want_files=$(printf '%s' "LICENSE README.md NOTICE" | tr ' ' '\n' | sort | tr -d '\n')
 [ "$yaml_files" = "$want_files" ] || bad ".goreleaser.yaml's archive files ($yaml_files) differ from install.sh's allow-list minus the binary ($want_files)"
 
+# 6. The pinned signature checker: an https URL on jedisct1/minisign's releases and a
+# SHA-256, for each platform; nothing else may be fetched and run.
+for p in LINUX MACOS; do
+  url=$(sed -n "s/^BOOT_${p}_URL=//p" install.sh)
+  sum=$(sed -n "s/^BOOT_${p}_SHA256=//p" install.sh)
+  case "$url" in https://github.com/jedisct1/minisign/releases/download/*) ;; *) bad "BOOT_${p}_URL is not a jedisct1/minisign release download: '$url'" ;; esac
+  [[ "$sum" =~ ^[0-9a-f]{64}$ ]] || bad "BOOT_${p}_SHA256 is not a SHA-256: '$sum'"
+done
+
 [ "$fail" = 0 ] && echo "install contract OK ($(wc -w <<<"$header" | tr -d ' ') variables, $(wc -l <<<"$embedded" | tr -d ' ') key(s))"
 exit "$fail"

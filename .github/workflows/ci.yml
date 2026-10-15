@@ -233,7 +233,7 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = macOS ]; then brew install minisign; else sudo apt-get update -qq && sudo apt-get install -y -qq minisign; fi
       - name: install.sh tests
-        run: REQUIRE_MINISIGN=1 bash tests/install-test.sh
+        run: REQUIRE_MINISIGN=1 INSTALL_TEST_NETWORK=1 bash tests/install-test.sh
       - name: install.sh contract
         run: bash tests/validate-install-contract.sh
       - name: publish.sh tests

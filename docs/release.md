@@ -119,6 +119,20 @@ break-glass switch. In one go:
    about five minutes). Clients that only know the leaked key cannot verify the new release
    and must reinstall with `install.sh`; say so in the release notes.
 
+## The signature checker `install.sh` fetches
+
+A machine without `minisign` still gets the signature checked: `install.sh` downloads
+jedisct1/minisign's own static build and runs it only when its SHA-256 equals the one
+written in the script (`BOOT_LINUX_*` and `BOOT_MACOS_*`, at the top). Those builds
+are immutable release files, so the pins do not go stale. To move to a newer minisign:
+download the release files, verify them with the upstream key (printed in
+[minisign's README](https://github.com/jedisct1/minisign#readme)), run
+`shasum -a 256` on them, and put the new URLs and hashes in the script. macOS stays on
+0.11 while the macOS build of a newer one is arm64 only; the Linux build is static for
+both architectures. `tests/validate-install-contract.sh` checks the shape of the pins and
+CI downloads them for real (`INSTALL_TEST_NETWORK=1`), and every release's verify job
+installs through them on all four runner types.
+
 ## When a release run fails
 
 - Before **publish**: nothing is public. Fix forward in a new PR; the next merge
