@@ -1,0 +1,38 @@
+# Scenario 9 (docs/HANDOVER.md §7.4): `git worktree add` gets its links, the
+# outfit.profile copied from the main worktree's config.worktree is stripped (so the
+# new worktree follows the clone's default), and `use --here` still overrides.
+# The copied core.hooksPath stays.
+fixture repo team
+cd repo
+outfit init
+outfit use lean --here
+exec git config --worktree --get outfit.profile
+stdout '^lean$'
+outfit use yolo
+# The main worktree pins lean for itself; the clone's default is yolo.
+exec git config --local --get outfit.profile
+stdout '^yolo$'
+
+exec git worktree add -q ../repo-new
+# The new worktree did NOT inherit the pin: it follows the clone's default and has
+# its links.
+cd ../repo-new
+! exec git config --worktree --get outfit.profile
+exec git config --get outfit.profile
+stdout '^yolo$'
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec git status --short
+! stdout .
+# The copied hooksPath is kept, so hooks run there.
+exec git config --worktree --get core.hooksPath
+stdout 'outfit/hooks'
+outfit status
+stdout 'profile  yolo'
+stdout 'state    in sync'
+
+# `use --here` overrides again, and the main worktree keeps its own pin.
+outfit use base --here
+! islink AGENTS.md
+cd ../repo
+exec git config --worktree --get outfit.profile
+stdout '^lean$'

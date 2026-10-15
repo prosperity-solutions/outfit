@@ -1,0 +1,36 @@
+# Scenario 16 (docs/HANDOVER.md §7.4): a variant that is missing at HEAD (an older
+# branch, or upstream removed it) is unswapped: no dangling link, the base file is
+# back, one line says why, and checking the branch out again swaps it again: no loop.
+fixture repo team
+cd repo
+outfit init
+outfit use yolo
+islink CLAUDE.md .outfit/profiles/yolo/CLAUDE.md
+exec git checkout -q -b without-claude
+exec git rm -q --sparse .outfit/profiles/yolo/CLAUDE.md
+exec git commit -qm 'chore: yolo has no CLAUDE.md here'
+exec git checkout -q main
+islink CLAUDE.md .outfit/profiles/yolo/CLAUDE.md
+
+# Checking out the branch removes the variant; sync's one line says what happened.
+exec git checkout -q without-claude
+stderr 'CLAUDE.md is no longer in the profile'
+! islink CLAUDE.md .outfit/profiles/yolo/CLAUDE.md
+exec cat CLAUDE.md
+stdout 'base'
+! stdout 'yolo rules'
+exec git status --short
+! stdout .
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+outfit status
+stdout 'state    in sync'
+outfit sync
+! stderr .
+
+# And back again: the variant is there, the link is too.
+exec git checkout -q main
+islink CLAUDE.md .outfit/profiles/yolo/CLAUDE.md
+exec git status --short
+! stdout .
+outfit status
+stdout 'state    in sync'

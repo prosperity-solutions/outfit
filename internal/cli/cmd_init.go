@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/prosperity-solutions/outfit/internal/agents"
 	"github.com/prosperity-solutions/outfit/internal/apply"
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 	"github.com/prosperity-solutions/outfit/internal/hooks"
@@ -18,6 +19,7 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 	fs := newFlags("init")
 	asJSON := fs.Bool("json", false, "print machine-readable output")
 	dry := fs.Bool("dry-run", false, "show what would change and write nothing")
+	agentsFlag := fs.Bool("agents", false, "also add a Claude Code SessionStart entry (.claude/settings.local.json) that runs `outfit sync`")
 	pos, code, stop := parseArgs(e, fs, args)
 	if stop {
 		return code
@@ -57,13 +59,35 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 			syncRes, _, syncErr = converge(ctx, e, l2, true)
 		}
 	}
+	// A Claude Code SessionStart entry, in each worktree that has a .claude directory.
+	var agentsOut *agentsJSON
+	if *agentsFlag {
+		agentsOut = &agentsJSON{Added: []string{}, NoClaude: []string{}, Errors: []string{}}
+		for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
+			switch {
+			case !agents.HasClaude(w.Path):
+				agentsOut.NoClaude = append(agentsOut.NoClaude, w.Path)
+			case *dry:
+				if !agents.Installed(w.Path) {
+					agentsOut.Added = append(agentsOut.Added, w.Path)
+				}
+			default:
+				if changed, aerr := agents.Install(w.Path, e.Exe); aerr != nil {
+					agentsOut.Errors = append(agentsOut.Errors, aerr.Error())
+				} else if changed {
+					agentsOut.Added = append(agentsOut.Added, w.Path)
+				}
+			}
+		}
+	}
 	if *asJSON {
 		out := struct {
 			*hooks.InstallResult
-			Sync      *syncJSON `json:"sync,omitempty"`
-			SyncError string    `json:"sync_error,omitempty"`
-			Fix       string    `json:"fix,omitempty"`
-		}{InstallResult: res}
+			Agents    *agentsJSON `json:"agents,omitempty"`
+			Sync      *syncJSON   `json:"sync,omitempty"`
+			SyncError string      `json:"sync_error,omitempty"`
+			Fix       string      `json:"fix,omitempty"`
+		}{InstallResult: res, Agents: agentsOut}
 		if syncRes != nil {
 			j := toJSON(syncRes)
 			out.Sync = &j
@@ -82,6 +106,9 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 		fmt.Fprintf(e.Stderr, "outfit: profile files were not set up: %v\n  fix: outfit sync\n", syncErr)
 	} else if syncRes != nil {
 		printNotes(e, syncRes)
+	}
+	if agentsOut != nil {
+		printAgents(e, agentsOut, *dry)
 	}
 	verb := map[bool]string{true: "would install", false: "installed"}[*dry]
 	switch {
@@ -108,6 +135,29 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 		}
 	}
 	return initExit(syncRes, syncErr)
+}
+
+// agentsJSON is what `init --agents` did in each worktree.
+type agentsJSON struct {
+	Added    []string `json:"added"`
+	NoClaude []string `json:"no_claude_dir"`
+	Errors   []string `json:"errors"`
+}
+
+func printAgents(e Env, a *agentsJSON, dry bool) {
+	verb := "added"
+	if dry {
+		verb = "would add"
+	}
+	if len(a.Added) > 0 {
+		fmt.Fprintf(e.Stdout, "Claude Code SessionStart entry %s in %d worktree(s) (%s)\n", verb, len(a.Added), agents.SettingsFile)
+	}
+	if len(a.NoClaude) > 0 && len(a.Added) == 0 && len(a.Errors) == 0 {
+		fmt.Fprintln(e.Stdout, "no .claude directory here, so no SessionStart entry (create it, then run: outfit init --agents)")
+	}
+	for _, er := range a.Errors {
+		fmt.Fprintf(e.Stderr, "outfit: could not add the SessionStart entry: %s\n", er)
+	}
 }
 
 // initExit is 0 when the dispatcher is in and the profile files are in order, and
@@ -149,6 +199,13 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 		undoFailed = append(undoFailed, "info/exclude: "+err.Error())
 	} else if removed {
 		undone = append(undone, ".git/info/exclude entry")
+	}
+	for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
+		if changed, aerr := agents.Remove(w.Path); aerr != nil {
+			undoFailed = append(undoFailed, aerr.Error())
+		} else if changed {
+			undone = append(undone, "Claude Code SessionStart entry in "+w.Path)
+		}
 	}
 	res, err := hooks.Uninstall(ctx, l.Git, l.Repo, l.Cfg, e.Getenv("HOME"))
 	if err != nil {

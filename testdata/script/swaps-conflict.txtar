@@ -1,0 +1,54 @@
+# Scenario 3 (docs/HANDOVER.md §7.4): a merge that conflicts on a swapped path.
+# Git replaces the link with a regular file full of markers (it does not write
+# through the link). outfit never absorbs that: it reports the conflict, prints the
+# fix, exits 3; once resolved, the link is back and the variant was never touched.
+fixture repo team conflict
+cd repo
+outfit init
+outfit use yolo
+exec cat .outfit/profiles/yolo/AGENTS.md
+cp stdout $WORK/variant-before.txt
+
+! exec git merge conflict
+exec git ls-files -u -- AGENTS.md
+stdout 'AGENTS.md'
+exec cat AGENTS.md
+stdout '<<<<<<<'
+# The variant is untouched, the markers are not in it.
+exec cat .outfit/profiles/yolo/AGENTS.md
+cmp stdout $WORK/variant-before.txt
+
+# sync does not absorb; it names the conflict and the fix. Exit 3.
+! outfit sync
+stderr 'AGENTS.md is in the middle of a merge conflict'
+stderr 'fix: resolve it, then: git add --sparse AGENTS.md && git commit'
+exec cat AGENTS.md
+stdout '<<<<<<<'
+exec cat .outfit/profiles/yolo/AGENTS.md
+cmp stdout $WORK/variant-before.txt
+! outfit status
+stdout 'NEEDS A PERSON'
+! outfit sync --json
+stdout '"needs_human":true'
+
+# The commit of the unresolved merge is refused by git itself; resolve like the
+# printed fix says (the BASE file is what conflicted).
+exec sh -c 'printf "# Agents\nresolved base\n" > AGENTS.md'
+exec git add --sparse AGENTS.md
+exec git commit -qm 'merge: resolve base'
+outfit sync
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec cat .outfit/profiles/yolo/AGENTS.md
+cmp stdout $WORK/variant-before.txt
+exec git status --short
+! stdout .
+# The merge changed the base file under the swap: stale (exit 4), nothing else wrong.
+! outfit status
+stdout 'state    stale'
+outfit ack AGENTS.md
+outfit status
+stdout 'state    in sync'
+# the resolved base is what base shows
+outfit use base
+exec cat AGENTS.md
+stdout 'resolved base'

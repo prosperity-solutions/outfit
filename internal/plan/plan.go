@@ -44,12 +44,22 @@ type PathFacts struct {
 	VariantHash  string // SHA-256 of the variant file; "" when it is missing
 	// VariantExec says the variant file has an executable bit.
 	VariantExec bool
+	// CruftLink says `<path>~cruft` is OUR link, moved aside: older git renames what
+	// stands in the way of a conflict's markers file (the link) to that name, and it
+	// would show up as an untracked symlink that `git add -A` could commit.
+	CruftLink bool
+	// BaseBlob is the blob id the index holds for the base file now ("" when git does
+	// not know the path). A pull that changes the base moves it under a swap.
+	BaseBlob string
 }
 
 // Record is what sync remembered about a path the last time it linked it.
 type Record struct {
 	Target      string
 	VariantHash string
+	// BaseBlob is the base file's blob when the link was made: what "the base changed
+	// upstream" is measured against.
+	BaseBlob string
 }
 
 // Facts is the actual state of the worktree.
@@ -64,6 +74,10 @@ type Facts struct {
 	// committed. Hiding a profile removes its files from disk; a staged-only file
 	// has no other copy, and the next `git reset` would lose it.
 	StagedProfiles []string
+	// SameProfile says the active profile is the one the last sync recorded: a path it
+	// no longer lists then went away from the profile itself (removed upstream), not
+	// because of a switch.
+	SameProfile bool
 }
 
 // Want is the desired state, derived from the active profile.
@@ -94,6 +108,7 @@ const (
 	RepairSkip     ActionKind = "repair-skip"      // git update-index --skip-worktree: the bit was lost (a `git reset -- <path>`)
 	AddExclude     ActionKind = "add-exclude"      // .git/info/exclude
 	Conflict       ActionKind = "conflict"         // unmerged path: leave it alone, exit 3
+	Stale          ActionKind = "stale"            // the base file changed upstream since the swap: keep it, say so
 	Skip           ActionKind = "skip"             // cannot swap this path; says why
 	Refuse         ActionKind = "refuse"           // nothing is applied at all
 )
@@ -160,6 +175,7 @@ func Plan(w Want, f Facts) []Action {
 			Fix:    "git commit -m 'feat: add profile'   (or: outfit author on, which keeps every profile on disk)"})
 	}
 	var skips, conflicts []Action
+	inConflict := map[string]bool{} // paths in the middle of a merge: nothing about them is touched
 	for _, p := range paths {
 		pf := f.Paths[p]
 		// The ORDER of these cases is part of the behaviour: a refusal must come before
@@ -169,6 +185,7 @@ func Plan(w Want, f Facts) []Action {
 			skips = append(skips, Action{Kind: Skip, Path: p, Reason: p + " is not tracked by git (a name must match the repository's exactly, case included), and outfit swaps only files the repository has"})
 			delete(want, p)
 		case pf.Unmerged:
+			inConflict[p] = true
 			conflicts = append(conflicts, Action{Kind: Conflict, Path: p,
 				Reason: p + " is in the middle of a merge conflict: outfit leaves it alone",
 				Fix:    "resolve it, then: git add --sparse " + shq(p) + " && git commit, then outfit sync"})
@@ -208,11 +225,18 @@ func Plan(w Want, f Facts) []Action {
 		out = append(out, Action{Kind: SetExpectFiles})
 	}
 
+	// Our own link, moved aside by git during a merge that is over: remove it.
+	for _, p := range sortedKeys(f.Paths) {
+		if f.Paths[p].CruftLink && !inConflict[p] {
+			out = append(out, Action{Kind: RemoveLink, Path: p + "~cruft"})
+		}
+	}
+
 	// Links the profile no longer wants go first, so the sparse change that follows
 	// can bring the base file back.
 	var obsolete []string
 	for p := range f.Recorded {
-		if _, still := want[p]; !still {
+		if _, still := want[p]; !still && !inConflict[p] {
 			obsolete = append(obsolete, p)
 		}
 	}
@@ -220,7 +244,11 @@ func Plan(w Want, f Facts) []Action {
 	for _, p := range obsolete {
 		switch pf := f.Paths[p]; pf.FS {
 		case Link:
-			out = append(out, Action{Kind: RemoveLink, Path: p})
+			a := Action{Kind: RemoveLink, Path: p}
+			if f.SameProfile {
+				a.Reason = p + " is no longer in the profile (removed upstream?): the link is gone and the base file is back"
+			}
+			out = append(out, a)
 		case File:
 			if pf.Tracked && !pf.SkipWorktree && pf.MatchesIndex {
 				// Git already put the base file back (a sparse change that was cut short,
@@ -271,6 +299,12 @@ func Plan(w Want, f Facts) []Action {
 				out = append(out, Action{Kind: LinkPath, Path: p, Target: s.Target})
 			case !had || rec.VariantHash != pf.VariantHash || rec.Target != s.Target:
 				out = append(out, Action{Kind: RecordHash, Path: p, Target: s.Target})
+			}
+			// The swap stays; a person decides whether the new base needs a look.
+			if had && rec.BaseBlob != "" && pf.BaseBlob != "" && rec.BaseBlob != pf.BaseBlob {
+				out = append(out, Action{Kind: Stale, Path: p,
+					Reason: p + ": the base file changed upstream since outfit swapped it; the profile's copy is kept as it is",
+					Fix:    "outfit diff " + shq(p) + "   (then, when the profile is fine as it is: outfit ack " + shq(p) + ")"})
 			}
 		case Missing:
 			out = append(out, Action{Kind: LinkPath, Path: p, Target: s.Target})
@@ -356,4 +390,13 @@ func firstN(s []string, n int) []string {
 		return append(append([]string(nil), s[:n]...), "…and more")
 	}
 	return s
+}
+
+func sortedKeys(m map[string]PathFacts) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

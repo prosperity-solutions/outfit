@@ -101,7 +101,7 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 		}
 	}
 	st.Dispatcher = dispatcherHealth(ctx, l, e.Getenv("HOME"))
-	var outOfSync bool
+	var outOfSync, stale bool
 	if st.Dispatcher.Installed && !st.Dispatcher.OK {
 		outOfSync = true
 		st.Warnings = append(st.Warnings, config.Warning{Source: "hook dispatcher", Message: st.Dispatcher.Problem + ": your team's hooks are NOT running. Fix: outfit init"})
@@ -127,10 +127,12 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 				exit = ExitNeedsHuman
 			case sr.Pending():
 				outOfSync = true
+			case len(sr.Stale()) > 0:
+				stale = true
 			}
 		}
 	}
-	if outOfSync && exit == ExitOK {
+	if (outOfSync || stale) && exit == ExitOK {
 		exit = ExitOutOfSync
 	}
 	if *asJSON {
@@ -203,6 +205,8 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 			fmt.Fprintln(w, "state    NEEDS A PERSON (see below)")
 		case syncRes.Pending():
 			fmt.Fprintln(w, "state    out of sync: run outfit sync")
+		case len(syncRes.Stale()) > 0:
+			fmt.Fprintf(w, "state    stale: the base changed upstream under %d swapped file(s) (outfit diff <path>, outfit ack <path>)\n", len(syncRes.Stale()))
 		default:
 			fmt.Fprintln(w, "state    in sync")
 		}

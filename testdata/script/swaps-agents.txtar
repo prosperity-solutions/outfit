@@ -1,0 +1,72 @@
+# `outfit init --agents` (docs/HANDOVER.md §3.5 triggers, §4): a Claude Code
+# SessionStart entry that runs `outfit sync`, added only where a .claude directory
+# exists, to the PERSONAL settings.local.json, leaving every other setting alone, and
+# taken away by uninstall.
+fixture repo team worktrees=1
+cd repo
+
+# Without --agents nothing is written, .claude or not.
+exec mkdir .claude
+outfit init
+! exists .claude/settings.local.json
+
+# --dry-run says what it would do and writes nothing.
+outfit init --agents --dry-run
+stdout 'would add'
+! exists .claude/settings.local.json
+
+# With --agents: the entry, once, in the worktree that has .claude (the linked one
+# has none: it is skipped, not an error).
+outfit init --agents
+stdout 'SessionStart entry added in 1 worktree'
+exists .claude/settings.local.json
+grep '"SessionStart"' .claude/settings.local.json
+grep '# outfit-managed' .claude/settings.local.json
+grep ' sync' .claude/settings.local.json
+! exists ../repo-wt1/.claude
+# Twice changes nothing.
+exec cp .claude/settings.local.json $WORK/settings.once
+outfit init --agents
+! stdout 'added'
+cmp .claude/settings.local.json $WORK/settings.once
+outfit init --agents --json
+stdout '"agents":\{"added":\[\],'
+
+# The session-start command is silent and works: it runs sync (a missing link is
+# back) without printing anything.
+outfit use yolo
+exec rm AGENTS.md
+exec sh -c 'cmd=$(sed -n "s/.*\"command\": \"\(.*\)\",*$/\1/p" .claude/settings.local.json); sh -c "$cmd"'
+! stdout .
+! stderr .
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+
+# Other settings and hooks survive an update and an uninstall.
+cp $WORK/mine.json .claude/settings.local.json
+outfit init --agents
+grep 'Bash\(go test' .claude/settings.local.json
+grep 'echo mine' .claude/settings.local.json
+grep '# outfit-managed' .claude/settings.local.json
+outfit uninstall
+grep 'echo mine' .claude/settings.local.json
+grep 'Bash\(go test' .claude/settings.local.json
+! grep 'outfit-managed' .claude/settings.local.json
+
+# A settings file outfit made is removed with its entry.
+rm .claude/settings.local.json
+outfit init --agents
+exists .claude/settings.local.json
+outfit uninstall
+! exists .claude/settings.local.json
+exists .claude
+
+# A settings file outfit cannot read is left exactly as it is, with a message.
+cp $WORK/bad.json .claude/settings.local.json
+outfit init --agents
+stderr 'could not add the SessionStart entry'
+cmp .claude/settings.local.json $WORK/bad.json
+-- mine.json --
+{"permissions":{"allow":["Bash(go test:*)"]},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo mine"}]}]}}
+-- bad.json --
+{ // not json
+}

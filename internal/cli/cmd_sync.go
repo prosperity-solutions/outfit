@@ -126,12 +126,17 @@ type syncJSON struct {
 	Notes      []string `json:"notes"`
 	Refused    []string `json:"refused"`
 	Fixes      []string `json:"fixes"`
+	// Stale lists swapped paths whose base file changed upstream (`outfit diff`, `outfit ack`).
+	Stale      []string `json:"stale"`
 	Quarantine string   `json:"quarantine,omitempty"`
 }
 
 func toJSON(res *apply.Result) syncJSON {
 	j := syncJSON{Changed: res.Changed, NeedsHuman: res.NeedsHuman || len(res.Refused) > 0, Notes: nonNilStrings(res.Notes),
-		Refused: []string{}, Fixes: []string{}, Quarantine: res.Quarantine, InSync: !res.Pending() && !res.NeedsHuman}
+		Refused: []string{}, Fixes: []string{}, Stale: []string{}, Quarantine: res.Quarantine, InSync: !res.Pending() && !res.NeedsHuman && len(res.Stale()) == 0}
+	for _, a := range res.Stale() {
+		j.Stale = append(j.Stale, a.Path)
+	}
 	for _, a := range res.Refused {
 		j.Refused = append(j.Refused, a.Reason)
 	}

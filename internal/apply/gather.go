@@ -113,6 +113,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	g := &gathered{blobs: map[string]string{}}
 	var want plan.Want
 	facts := plan.Facts{Paths: map[string]plan.PathFacts{}, Recorded: map[string]plan.Record{}}
+	facts.SameProfile = in.Profile != nil && st.Profile == in.Profile.Name
 
 	var candidates []string
 	if in.Profile != nil {
@@ -143,7 +144,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			g.messages = append(g.messages, "ignored a recorded swap: "+err.Error())
 			continue
 		}
-		facts.Recorded[s.Path] = plan.Record{Target: s.Target, VariantHash: s.VariantHash}
+		facts.Recorded[s.Path] = plan.Record{Target: s.Target, VariantHash: s.VariantHash, BaseBlob: s.BaseBlob}
 	}
 
 	// Which of those paths does git know, and in what state?
@@ -170,6 +171,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		ie := idx[p]
 		pf.Tracked, pf.SkipWorktree, pf.Unmerged, pf.Mode = ie.tracked, ie.skip, ie.unmerged, ie.mode
 		g.blobs[p] = ie.blob
+		pf.BaseBlob = ie.blob
 
 		fi, err := os.Lstat(in.abs(p))
 		switch {
@@ -193,6 +195,11 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			pf.FS = plan.Dir
 		default:
 			pf.FS = plan.Other
+		}
+		if realParents(in.W.WorkTree, p) {
+			if t, err := os.Readlink(in.abs(p) + "~cruft"); err == nil && t != "" {
+				pf.CruftLink = t == facts.Recorded[p].Target || (in.Profile != nil && t == in.Target(p))
+			}
 		}
 		if in.Profile != nil {
 			pf.VariantHash = hashFile(in.variantPath(p))
@@ -219,9 +226,21 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	}
 
 	var hidden []string
+	// A path in the middle of a merge keeps the pattern state it has: git leaves an
+	// unmerged file in place whatever the patterns say, and a rewrite that "unhides" it
+	// would only make git complain.
+	curSparse, _ := plan.ParseSparse(sparseNow(in.W.GitDir))
+	wasHidden := map[string]bool{}
+	for _, h := range curSparse.Hidden {
+		wasHidden[h] = true
+	}
 	for _, p := range candidates {
 		pf := facts.Paths[p]
 		want.Swaps = append(want.Swaps, plan.Swap{Path: p, Target: in.Target(p)})
+		if pf.Unmerged && wasHidden[p] {
+			hidden = append(hidden, p)
+			continue
+		}
 		if pf.Tracked && !pf.Unmerged && pf.Mode != "120000" && pf.VariantHash != "" && (pf.FS == plan.Missing || pf.FS == plan.Link || pf.FS == plan.File) {
 			hidden = append(hidden, p)
 		}

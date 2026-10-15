@@ -99,13 +99,16 @@ func (in Input) planOnce(ctx context.Context, st *state.State) (*Result, []plan.
 	res.NeedsHuman = plan.NeedsHuman(acts)
 	for _, a := range acts {
 		switch a.Kind {
-		case plan.Skip, plan.Conflict, plan.QuarantineBoth, plan.QuarantineFile:
+		case plan.Skip, plan.Conflict, plan.QuarantineBoth, plan.QuarantineFile, plan.Stale, plan.RemoveLink:
+			if a.Kind == plan.RemoveLink && a.Reason == "" {
+				continue
+			}
 			line := a.Reason
 			if a.Fix != "" {
 				line += "\n  fix: " + a.Fix
 			}
 			res.Notes = append(res.Notes, line)
-			if a.Kind == plan.QuarantineBoth || a.Kind == plan.QuarantineFile {
+			if a.Kind == plan.QuarantineBoth || a.Kind == plan.QuarantineFile || a.Kind == plan.RemoveLink {
 				res.Lasting = append(res.Lasting, line)
 			}
 		}
@@ -117,7 +120,7 @@ func (in Input) planOnce(ctx context.Context, st *state.State) (*Result, []plan.
 func actionable(acts []plan.Action) bool {
 	for _, a := range acts {
 		switch a.Kind {
-		case plan.Skip, plan.Conflict:
+		case plan.Skip, plan.Conflict, plan.Stale:
 		default:
 			return true
 		}
@@ -142,7 +145,7 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 	stepErr := func() error {
 		for _, a := range acts {
 			switch a.Kind {
-			case plan.Skip, plan.Conflict, plan.RecordHash:
+			case plan.Skip, plan.Conflict, plan.RecordHash, plan.Stale:
 				// Nothing to run; RecordHash only changes the state written below.
 			case plan.SetExpectFiles:
 				if _, err := in.Git.Write(ctx, "config", "--worktree", "sparse.expectFilesOutsideOfPatterns", "true"); err != nil {
@@ -240,7 +243,16 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 				}
 			}
 		case pf.FS == plan.Link && pf.LinkTarget == sw.Target && pf.Tracked && pf.VariantHash != "":
-			next.Swaps = append(next.Swaps, state.Swap{Path: sw.Path, Target: sw.Target, VariantHash: pf.VariantHash, BaseBlob: g.blobs[sw.Path]})
+			// The base blob is the one from when the link was made: an `ack` (or the
+			// first link) sets it, a later sync never moves it, or "stale" would clear
+			// itself the next time anything else changed.
+			base := g.blobs[sw.Path]
+			for _, old := range st.Swaps {
+				if old.Path == sw.Path && old.Target == sw.Target && old.BaseBlob != "" {
+					base = old.BaseBlob
+				}
+			}
+			next.Swaps = append(next.Swaps, state.Swap{Path: sw.Path, Target: sw.Target, VariantHash: pf.VariantHash, BaseBlob: base})
 		}
 	}
 	sort.Slice(next.Swaps, func(i, j int) bool { return next.Swaps[i].Path < next.Swaps[j].Path })
@@ -543,10 +555,21 @@ func (r *Result) Pending() bool {
 	}
 	for _, a := range r.Actions {
 		switch a.Kind {
-		case plan.Skip, plan.Conflict, plan.RecordHash:
+		case plan.Skip, plan.Conflict, plan.RecordHash, plan.Stale:
 		default:
 			return true
 		}
 	}
 	return false
+}
+
+// Stale lists the swaps whose base file changed upstream since outfit swapped it.
+func (r *Result) Stale() []plan.Action {
+	var out []plan.Action
+	for _, a := range r.Actions {
+		if a.Kind == plan.Stale {
+			out = append(out, a)
+		}
+	}
+	return out
 }

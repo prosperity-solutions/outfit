@@ -107,7 +107,8 @@ func stableExe() string {
 const usage = `usage: outfit <command> [flags]
 
 commands:
-  init [--dry-run]       install the hook dispatcher (git hooks keep working)
+  init [--agents]        install the hook dispatcher (git hooks keep working); --agents also adds a
+                         Claude Code SessionStart entry that runs outfit sync
   uninstall              remove everything init installed, in every worktree
   get <key>              print a toggle's value (exit 1 when unset)
   set <key>=<val>…       personal toggle override; key= unsets   [--here | --global]
@@ -116,7 +117,9 @@ commands:
   ls                     list profiles across the three tiers
   show <profile> [path]  a profile's toggles and files, without switching to it
   author on|off          put every committed profile on disk to edit side by side
-  status                 the active profile and where every value comes from
+  status                 the active profile and where every value comes from, in sync or not
+  diff <path>            what changed in a swapped file's base upstream since it was swapped
+  ack <path>             accept the new base: the profile's copy stays, the note goes away
   update                 install the latest release (or --version vX.Y.Z); --check only looks
   version                version, commit, build date, git version found
 
@@ -153,6 +156,10 @@ func dispatch(ctx context.Context, e Env, args []string) int {
 		return cmdShow(ctx, e, args[1:])
 	case "author":
 		return cmdAuthor(ctx, e, args[1:])
+	case "diff":
+		return cmdDiff(ctx, e, args[1:])
+	case "ack":
+		return cmdAck(ctx, e, args[1:])
 	case "version":
 		return cmdVersion(ctx, e, args[1:])
 	case "get":

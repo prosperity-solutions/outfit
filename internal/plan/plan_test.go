@@ -287,3 +287,62 @@ func TestPlanIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanStaleBaseKeepsTheSwapAndSaysSo(t *testing.T) {
+	w, f := inSync()
+	f.Recorded["AGENTS.md"] = Record{Target: tgt, VariantHash: "h1", BaseBlob: "old"}
+	pf := f.Paths["AGENTS.md"]
+	pf.BaseBlob = "new"
+	f.Paths["AGENTS.md"] = pf
+	got := Plan(w, f)
+	if len(got) != 1 || got[0].Kind != Stale || !strings.Contains(got[0].Fix, "outfit diff AGENTS.md") || !strings.Contains(got[0].Fix, "outfit ack AGENTS.md") {
+		t.Fatalf("%v %+v", kinds(got), got)
+	}
+	// Same blob, or nothing recorded yet (an older state file): nothing to say.
+	pf.BaseBlob = "old"
+	f.Paths["AGENTS.md"] = pf
+	if got := Plan(w, f); len(got) != 0 {
+		t.Fatalf("%v", kinds(got))
+	}
+	f.Recorded["AGENTS.md"] = Record{Target: tgt, VariantHash: "h1"}
+	pf.BaseBlob = "new"
+	f.Paths["AGENTS.md"] = pf
+	if got := Plan(w, f); len(got) != 0 {
+		t.Fatalf("%v", kinds(got))
+	}
+}
+
+func TestPlanVariantRemovedFromTheActiveProfileIsUnswappedWithAReason(t *testing.T) {
+	w, f := inSync()
+	w.Swaps = nil
+	w.Sparse = SparseText(SparseOptions{HideProfiles: true, Active: "yolo"})
+	f.SameProfile = true
+	got := Plan(w, f)
+	var found bool
+	for _, a := range got {
+		if a.Kind == RemoveLink && strings.Contains(a.Reason, "AGENTS.md is no longer in the profile") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("%v %+v", kinds(got), got)
+	}
+	// A switch to another profile removes the same link without the note.
+	f.SameProfile = false
+	for _, a := range Plan(w, f) {
+		if a.Kind == RemoveLink && a.Reason != "" {
+			t.Fatalf("a switch should not warn: %+v", a)
+		}
+	}
+}
+
+func TestPlanLeavesAConflictedPathAlone(t *testing.T) {
+	w, f := inSync()
+	pf := f.Paths["AGENTS.md"]
+	pf.FS, pf.Tracked, pf.Unmerged, pf.SkipWorktree = File, false, true, false
+	f.Paths["AGENTS.md"] = pf
+	got := Plan(w, f)
+	if len(got) != 1 || got[0].Kind != Conflict {
+		t.Fatalf("%v", kinds(got))
+	}
+}

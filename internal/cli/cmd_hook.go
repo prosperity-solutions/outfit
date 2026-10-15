@@ -57,6 +57,15 @@ func cmdHook(ctx context.Context, e Env, args []string) int {
 		return 0
 	}
 
+	// `git worktree add` fires post-checkout in the NEW worktree with an all-zero old
+	// sha, after copying the main worktree's whole config.worktree into it: that copy
+	// carries `outfit.*` personal settings (a pinned profile) that were never chosen for
+	// this worktree. Strip them first, so it follows the clone's default until
+	// `outfit use --here` says otherwise. The copied hooksPath and sparse settings stay.
+	if name == "post-checkout" && len(rest) >= 3 && allZeros(rest[0]) && rest[2] == "1" && r.GitDir != r.CommonDir {
+		stripCopiedWorktreeKeys(ctx, e, r)
+	}
+
 	l, lerr := load(ctx, e)
 	var gc config.GitConfig
 	g := gitx.Client{Dir: r.WorkTree}
@@ -112,6 +121,32 @@ func cmdHook(ctx context.Context, e Env, args []string) int {
 		}
 	}
 	return 0
+}
+
+// allZeros reports a git object id made only of zeros (the "null" old sha).
+func allZeros(s string) bool {
+	return s != "" && strings.Trim(s, "0") == ""
+}
+
+// stripCopiedWorktreeKeys unsets every outfit.* key the new worktree's
+// config.worktree inherited. Best effort: a hook must not fail over it.
+func stripCopiedWorktreeKeys(ctx context.Context, e Env, r repo.Repo) {
+	g := gitx.Client{Dir: r.WorkTree}
+	if e.Getenv("GIT_DIR") != "" {
+		g.Env = []string{"GIT_DIR=" + r.GitDir}
+	}
+	res, err := g.Read(ctx, "config", "--worktree", "--name-only", "--list")
+	if err != nil {
+		return // no per-worktree config: nothing was copied
+	}
+	seen := map[string]bool{}
+	for _, k := range strings.Split(string(res.Stdout), "\n") {
+		k = strings.TrimSpace(k)
+		if strings.HasPrefix(k, "outfit.") && !seen[k] {
+			seen[k] = true
+			_, _ = g.Write(ctx, "config", "--worktree", "--unset-all", k)
+		}
+	}
 }
 
 func absFrom(dir, p string) string {
