@@ -49,6 +49,11 @@ func (r *Repo) RunOutfit(bin string, extraEnv []string, args ...string) Outcome 
 // RunOutfitIn is RunOutfit in another directory (a linked worktree).
 func (r *Repo) RunOutfitIn(dir, bin string, extraEnv []string, args ...string) Outcome {
 	r.T.Helper()
+	// bin is what BuildOutfit returned: an absolute path to a file named outfit. Anything else
+	// is a bug in the test, not something to run.
+	if bin = filepath.Clean(bin); !filepath.IsAbs(bin) || filepath.Base(bin) != "outfit" {
+		r.T.Fatalf("RunOutfit: %q is not a built outfit binary", bin)
+	}
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
 	cmd.Env = append(append([]string(nil), r.Env...), extraEnv...)

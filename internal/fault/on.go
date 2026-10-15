@@ -4,6 +4,7 @@ package fault
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"syscall"
@@ -21,12 +22,29 @@ var count atomic.Int64
 func Point(name string) {
 	n := count.Add(1)
 	if path := os.Getenv("OUTFIT_FAULT_LOG"); path != "" {
-		if f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
-			_, _ = f.WriteString(strconv.FormatInt(n, 10) + " " + name + "\n")
-			_ = f.Close()
-		}
+		appendLog(path, strconv.FormatInt(n, 10)+" "+name+"\n")
 	}
 	if at, _ := strconv.ParseInt(os.Getenv("OUTFIT_FAULT_AT"), 10, 64); at > 0 && n == at {
 		_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
 	}
+}
+
+// appendLog appends one line to the log file. The path is a test's own (absolute, in its
+// temporary directory); the file is opened through a Root on its directory, so no link or ".."
+// in the name can lead somewhere else.
+func appendLog(path, line string) {
+	if !filepath.IsAbs(path) {
+		return
+	}
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return
+	}
+	defer func() { _ = root.Close() }()
+	f, err := root.OpenFile(filepath.Base(path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	_, _ = f.WriteString(line)
+	_ = f.Close()
 }
