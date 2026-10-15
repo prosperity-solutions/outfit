@@ -176,7 +176,9 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 
 	stepErr := func() error {
 		for _, a := range acts {
-			fault.Point("before " + string(a.Kind))
+			if !a.Kind.Informational() && !a.Kind.Bookkeeping() {
+				fault.Point("before step " + string(a.Kind)) // (a loop: every action adds one, in order)
+			}
 			switch a.Kind {
 			case plan.Skip, plan.Conflict, plan.RecordHash, plan.Stale:
 				// (plan.ActionKind.Informational / Bookkeeping: nothing to run; RecordHash only changes the state written below.
@@ -394,7 +396,7 @@ func (in Input) linkVia(abs, path, target string) error {
 	if err := os.Symlink(target, tmp); err != nil {
 		return err
 	}
-	fault.Point("link made under a temporary name")
+	fault.Point("link made in the git dir, not yet renamed into place")
 	if err := os.Rename(tmp, abs); err != nil {
 		_ = os.Remove(tmp)
 		return err
@@ -418,7 +420,7 @@ func (in Input) linkBeside(abs, path, target string) error {
 	if err := os.Symlink(target, tmp); err != nil {
 		return err
 	}
-	fault.Point("link made under a temporary name")
+	fault.Point("link made beside its target (other filesystem), not yet renamed")
 	if err := os.Rename(tmp, abs); err != nil {
 		_ = os.Remove(tmp)
 		return err

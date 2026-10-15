@@ -476,7 +476,7 @@ func Uninstall(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitCon
 	}
 
 	// 1. hooksPath first, everywhere.
-	fault.Point("uninstall: nothing undone yet")
+	fault.Point("uninstall: the sync side is undone, hooks and settings not yet")
 	for _, w := range wts {
 		if v, ok := hooksPathIn(ctx, cg, w.ConfigFile()); ok && ownsHooksPath(expand(v, w.Path, home), ours) {
 			if err := unset(ctx, cg, w.ConfigFile(), "core.hooksPath"); err != nil {

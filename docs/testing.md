@@ -10,8 +10,8 @@ and caches them per git version, and the testscript commands (`outfit`, `fixture
 |---|---|---|
 | Unit | `internal/*/…_test.go` | `go test -race -short ./...` |
 | Scenarios (real git, real outfit) | `testdata/script/*.txtar` through `internal/e2e` | `go test ./internal/e2e -run TestScripts/<name>` |
-| Properties (random sequences) | `internal/e2e/property_test.go` | `go test ./internal/e2e -run TestProperties` |
-| Fault injection | `internal/e2e/fault_test.go` | `go test ./internal/e2e -run TestFaultInjection` |
+| Properties (random sequences) | `internal/e2e/property_test.go` | `go test -count=1 ./internal/e2e -run TestProperties` |
+| Fault injection | `internal/e2e/fault_test.go` | `go test -count=1 ./internal/e2e -run TestFaultInjection` |
 | Fuzz targets | `FuzzParseFile`, `FuzzNormalizeKey` (config), `FuzzSparse`, `FuzzPlan` (plan), `FuzzExtractBinary`, `FuzzExtractBinaryEntries` (update) | `scripts/dev/fuzz.sh [seconds]` |
 | Performance, hard | `gitcalls` in `testdata/script/perf-gates.txtar` (and the budgets in `swaps-basic`, `default-variant`) | part of the scenarios, on every OS |
 | Performance, soft | `scripts/ci/perf-soft.sh` (hyperfine, Linux) | `scripts/ci/perf-soft.sh` |
@@ -68,9 +68,16 @@ checks after **every** step:
 
 and at the end that a second `sync` changes nothing: no write, no mtime of the swapped paths,
 the profiles or outfit's own files, in the main worktree and in every linked one.
-`OUTFIT_PROPERTY_CHECKS` (default 8) sets how many sequences run; `-rapid.seed=<n>` replays a
-failure (rapid prints the seed and the steps; it also writes the failing sequence to
-`testdata/rapid/`, which is git-ignored). A failing sequence is worth turning into a
+`OUTFIT_PROPERTY_CHECKS` (default 8) sets how many sequences run. A failure prints the
+invariant that broke, a dump of the tree (status, the swapped paths and where they point,
+`state.json`, the quarantine) and every step with the token it wrote. To replay it copy the
+`-rapid.seed=<n>` rapid prints into
+`go test -count=1 ./internal/e2e -run TestProperties -rapid.seed=<n>` (the `-rapid.failfile`
+it also prints exists only on the machine that ran it; rapid replays a leftover failfile from
+the git-ignored `internal/e2e/testdata/rapid/` until you delete it). Every sequence starts with `use yolo`
+and fails at once if the model then finds no swapped path (so a model that stopped reading
+`state.json` cannot pass by testing nothing); a run of 30 or more sequences must also have
+executed edit steps (a short run may simply not draw one). A failing sequence is worth turning into a
 testscript line next to the scenario it belongs to, as `swaps-refusals.txtar` did for the
 first one this test found.
 
@@ -82,10 +89,10 @@ patterns are written, before the state is written, in the teardown), in every at
 write (`state.WriteFileAtomic`, between the temporary file and its rename), in a profile copy
 and in `promote` (before the rename, before the local copy is removed), and in `init` and
 `uninstall` (between their phases). With `OUTFIT_FAULT_AT=N` the process dies by SIGKILL at
-the Nth point; `OUTFIT_FAULT_LOG=<file>` lists them. `TestFaultInjection` kills thirteen
+the Nth point; `OUTFIT_FAULT_LOG=<file>` lists them. `TestFaultInjection` kills fourteen
 operations (use, switch, back to base, absorb, quarantine, `author on/off`, use of a local
-profile, `promote`, `init`, `uninstall`, uninstall in a worktree farm, a killed `use`
-followed by `uninstall`) at **every** point each has, in parallel, then reruns `sync` (or
+profile, the same from a symlinked spelling of the path, `promote`, `init`, `uninstall`,
+uninstall in a worktree farm, a killed `use` followed by `uninstall`) at **every** point each has, in parallel, then reruns `sync` (or
 `uninstall`) twice and checks that both runs simply worked (exit 0, except the one scenario
 that ends in "a person must look"), nothing was lost, no temporary link or untracked file is
 left behind, the profile on disk is the profile in config, and an uninstall (or the undo of a
@@ -99,9 +106,30 @@ beside the target (it now lives in the git dir; `swaps-stray.txtar` covers the f
 git dir on another filesystem), and temporary files of a killed write in outfit's hooks
 directory.
 
+A failing kill names its point and prints how to rerun just that one, for example
+`go test -count=1 ./internal/e2e -run '^TestFaultInjection$/^uninstall$/^kill-at-04-teardown-sparse-checkout-is-off$'`,
+together with the numbered list of the operation's points.
+
 What a kill cannot reach: the places outside the code above that change things (the git
 config writes of `use`, `set` and `author`, the agents' settings file), and torn writes
 (SIGKILL stops the process between system calls, it does not tear one).
+
+## Adding coverage
+
+- **A new place that changes the worktree, the git dir or the config** (a rename, a remove,
+  a symlink, a config write): put a `fault.Point("<what has happened when it is reached>")`
+  right before it, with a name of its own. Points are counted per process in the order they
+  are reached (a point in a loop counts once per round), so inserting one renumbers the later
+  ones: the failing test's name carries the point's name, not just its number. An existing
+  operation picks a new point up by itself.
+- **A new operation** (a command that changes things): add a `faultScenario` in
+  `faultScenarios()` (setup, the killed `op`, what to `recover` with) and a `step` in
+  `steps()` of `property_test.go` (a step that does not apply must log and return, never
+  skip). Nothing fails when an operation is missing: look for `os.Rename`, `os.Remove`,
+  `os.Symlink` and `config` writes in your diff and ask which test kills them.
+- **A bug found by a random test**: reduce it to a testscript line next to the scenario it
+  belongs to (`swaps-refusals.txtar` and `swaps-safety.txtar` have two) and keep the
+  fuzz input under `testdata/fuzz/<Target>/`.
 
 ## Fuzzing
 

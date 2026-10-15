@@ -6,5 +6,6 @@
 // Point is an empty function (docs/testing.md, "Fault injection").
 package fault
 
-// Point marks a kill point.
+// Point marks a kill point. Name it for what has happened when it is reached (the state
+// of the tree), and give every call site its own name.
 func Point(string) {}

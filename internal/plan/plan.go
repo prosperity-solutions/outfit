@@ -118,6 +118,12 @@ type Facts struct {
 	// committed. Hiding a profile removes its files from disk; a staged-only file
 	// has no other copy, and the next `git reset` would lose it.
 	StagedProfiles []string
+	// GitBusy names the git operation in progress in this worktree ("rebase", "merge",
+	// "cherry-pick", "revert"), or "". git rewrites tracked files by itself during one (a
+	// `rebase --abort` is a hard reset), so a tracked file outfit changed meanwhile can be
+	// reverted behind its back: an editor's save is not absorbed into the profile's
+	// (tracked) file until the operation is over.
+	GitBusy string
 	// SameProfile says the active profile is the one the last sync recorded: a path it
 	// no longer lists then went away from the profile itself (removed), not
 	// because of a switch.
@@ -370,6 +376,13 @@ func Plan(w Want, f Facts) []Action {
 				// The file and the profile's copy are the same bytes (a person resolved a
 				// quarantine by making them equal): nothing to choose, just relink.
 				out = append(out, Action{Kind: Absorb, Path: p, Target: s.Target})
+			case had && rec.VariantHash == pf.VariantHash && f.GitBusy != "":
+				// The same, but git is in the middle of a rebase/merge: it may reset the tracked
+				// variant (a `rebase --abort`), taking the saved bytes with it. They stay where
+				// they are, in the file the editor wrote, until git is done.
+				out = append(out, Action{Kind: Skip, Path: p,
+					Reason: p + " was replaced by a regular file (an editor's save), and git is in the middle of a " + f.GitBusy + ": the new bytes stay in that file and are copied into the profile once the " + f.GitBusy + " is over",
+					Fix:    "finish or abort the " + f.GitBusy + ", then: outfit sync"})
 			case had && rec.VariantHash == pf.VariantHash:
 				// An editor's atomic save replaced the link. The variant is unchanged since
 				// linking, so the file is the newer copy: absorb it, byte for byte.

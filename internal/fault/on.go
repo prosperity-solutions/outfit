@@ -11,7 +11,10 @@ import (
 
 var faultCount atomic.Int64
 
-// Point is a numbered kill point. With OUTFIT_FAULT_AT=N the process is killed (SIGKILL: no
+// Point is a numbered kill point. Points are counted per process, from 1, in the order they
+// are reached: a point in a loop counts once per round, and inserting one renumbers every
+// later one (the names are for the log and for humans, the number is what OUTFIT_FAULT_AT
+// takes). With OUTFIT_FAULT_AT=N the process is killed (SIGKILL: no
 // deferred function runs, no buffer is flushed, like power loss) when the Nth point is
 // reached; OUTFIT_FAULT_LOG=<file> appends every point's name, so a test can learn how
 // many there are and where. Only a binary built with the faultinject tag has this.

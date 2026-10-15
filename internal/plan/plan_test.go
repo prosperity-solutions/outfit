@@ -446,3 +446,17 @@ func TestPlanRemovesOurStrayLinksNextToASwappedPath(t *testing.T) {
 		t.Fatalf("%v %v", kinds(got), removed)
 	}
 }
+
+func TestPlanDoesNotAbsorbAnEditorsSaveWhileGitIsRebasing(t *testing.T) {
+	w, f := inSync()
+	f.Paths["AGENTS.md"] = PathFacts{FS: File, Tracked: true, SkipWorktree: true, Mode: "100644", FileHash: "new", VariantHash: "h1"}
+	got := Plan(w, f)
+	if len(got) != 1 || got[0].Kind != Absorb {
+		t.Fatalf("idle: %v", kinds(got))
+	}
+	f.GitBusy = "rebase"
+	got = Plan(w, f)
+	if len(got) != 1 || got[0].Kind != Skip || !strings.Contains(got[0].Reason, "in the middle of a rebase") {
+		t.Fatalf("busy: %v %+v", kinds(got), got)
+	}
+}

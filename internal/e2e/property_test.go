@@ -30,17 +30,18 @@ import (
 // (-rapid.checks, -rapid.seed for a failing run's seed) work too.
 
 type model struct {
-	t      *testing.T
-	rt     *rapid.T
-	bin    string
-	r      *testkit.Repo
-	tokens []string
-	other  string // a second clone that pushes to the upstream
-	wts    []string
-	nWT    int
-	nProf  int
-	locals []string
-	steps  []string
+	t        *testing.T
+	rt       *rapid.T
+	bin      string
+	r        *testkit.Repo
+	tokens   []string
+	other    string // a second clone that pushes to the upstream
+	wts      []string
+	nWT      int
+	nProf    int
+	locals   []string
+	steps    []string
+	executed map[string]int // steps that really did something (not skipped), by name
 	// pending: a user edit exists that sync has not absorbed or the tree has not shown.
 	pending bool
 }
@@ -73,20 +74,47 @@ func (m *model) outfit(args ...string) testkit.Outcome {
 
 func (m *model) git(args ...string) (string, error) {
 	out, err := m.r.GitErr(args...)
-	m.logf("git %s -> err=%v", strings.Join(args, " "), err)
+	if err != nil {
+		// A tolerated failure (a conflicting pop, a refused rebase) must not look like a pass.
+		m.logf("git %s -> failed: %v: %s", strings.Join(args, " "), err, clip(strings.TrimSpace(out), 160))
+	} else {
+		m.logf("git %s -> ok", strings.Join(args, " "))
+	}
 	return out, err
+}
+
+// dump is what a failing invariant prints next to its message: the tree as outfit sees it.
+func (m *model) dump() string {
+	var b strings.Builder
+	st, _ := m.r.GitErr("status", "--short")
+	fmt.Fprintf(&b, "-- git status --short:\n%s\n", st)
+	for _, p := range m.swapped() {
+		if tgt, err := os.Readlink(m.r.Path(p)); err == nil {
+			fmt.Fprintf(&b, "-- %s -> %s\n", p, tgt)
+		} else {
+			fmt.Fprintf(&b, "-- %s is a regular file (or gone): %v\n", p, err)
+		}
+	}
+	if sj, err := os.ReadFile(filepath.Join(m.r.Dir, ".git", "outfit", "state.json")); err == nil {
+		fmt.Fprintf(&b, "-- state.json:\n%s\n", clip(string(sj), 1500))
+	}
+	q, _ := filepath.Glob(filepath.Join(m.r.Dir, ".git", "outfit", "quarantine", "*", "*", "*"))
+	fmt.Fprintf(&b, "-- quarantine: %v\n-- steps so far:\n%s\n", q, strings.Join(m.steps, "\n"))
+	return b.String()
 }
 
 func (m *model) swapped() []string {
 	b, err := os.ReadFile(filepath.Join(m.r.Dir, ".git", "outfit", "state.json"))
 	if err != nil {
-		return nil
+		return nil // no record yet
 	}
 	var st struct {
 		Swaps []struct{ Path string } `json:"swaps"`
 	}
-	if json.Unmarshal(b, &st) != nil {
-		return nil
+	if err := json.Unmarshal(b, &st); err != nil {
+		// A model that cannot read the record would silently stop editing anything and
+		// "pass": never tolerate that.
+		m.rt.Fatalf("the model cannot read .git/outfit/state.json (%v): the test would pass without testing\n%s", err, string(b))
 	}
 	var out []string
 	for _, s := range st.Swaps {
@@ -175,9 +203,11 @@ func steps() []step {
 				m.logf("skipped: the file is not there")
 				return
 			}
-			_, _ = f.WriteString(m.newToken() + "\n")
+			tok := m.newToken()
+			_, _ = f.WriteString(tok + "\n")
 			_ = f.Close()
-			m.logf("edit %s through the link", p)
+			m.executed["edit-through-the-link"]++
+			m.logf("edit %s through the link: %s", p, tok)
 		}},
 		{"editor-atomic-save", false, func(m *model) {
 			p, ok := m.pickSwapped()
@@ -199,7 +229,8 @@ func steps() []step {
 				m.logf("skipped: nothing applies")
 				return
 			}
-			m.logf("atomic save of %s", p)
+			m.executed["editor-atomic-save"]++
+			m.logf("atomic save of %s: %s", p, m.tokens[len(m.tokens)-1])
 		}},
 		{"sync", true, func(m *model) {
 			if o := m.outfit("sync"); o.Code != 0 && o.Code != 3 {
@@ -300,10 +331,10 @@ func (m *model) check(after string) {
 	}
 	// No symlink in history, none staged.
 	if out, _ := m.r.GitErr("ls-tree", "-r", "HEAD"); strings.Contains(out, "120000 ") {
-		m.rt.Fatalf("after %s: a symlink is committed:\n%s", after, out)
+		m.rt.Fatalf("after %s: a symlink is committed (invariant: no symlink in history):\n%s\n%s", after, out, m.dump())
 	}
 	if out, _ := m.r.GitErr("diff", "--cached", "--raw"); strings.Contains(out, " 120000 ") {
-		m.rt.Fatalf("after %s: a symlink is staged:\n%s", after, out)
+		m.rt.Fatalf("after %s: a symlink is staged (invariant: none ever):\n%s\n%s", after, out, m.dump())
 	}
 	// No swapped path staged (paths in the middle of a merge are unmerged, not staged by anyone).
 	unmerged := map[string]bool{}
@@ -321,14 +352,14 @@ func (m *model) check(after string) {
 		}
 		for _, s := range strings.Split(staged, "\n") {
 			if s == p {
-				m.rt.Fatalf("after %s: the swapped path %s is staged", after, p)
+				m.rt.Fatalf("after %s: the swapped path %s is staged (invariant: never)\n%s", after, p, m.dump())
 			}
 		}
 	}
 	// No user byte lost.
 	for _, tok := range m.tokens {
 		if !m.tokenFound(tok) {
-			m.rt.Fatalf("after %s: user bytes %q are gone\nsteps:\n%s", after, tok, strings.Join(m.steps, "\n"))
+			m.rt.Fatalf("after %s: user bytes %q are gone (invariant: every token written is still in a worktree, outfit's directories, a stash or a commit; the step log names the step that wrote it)\n%s", after, tok, m.dump())
 		}
 	}
 }
@@ -403,12 +434,12 @@ func (m *model) assertSyncIdempotent() {
 		m.rt.Fatalf("sync --json is not JSON (%v): %+v", err, o)
 	}
 	if j.Changed {
-		m.rt.Fatalf("a second sync still changed something: %s\nsteps:\n%s", o.Stdout, strings.Join(m.steps, "\n"))
+		m.rt.Fatalf("a second sync still changed something (invariant: sync twice, the second is empty): %s\n%s", o.Stdout, m.dump())
 	}
 	after := m.mtimes()
 	for k, v := range before {
 		if after[k] != v {
-			m.rt.Fatalf("a second sync touched %s (%s -> %s)\nsteps:\n%s", k, v, after[k], strings.Join(m.steps, "\n"))
+			m.rt.Fatalf("a second sync touched %s (%s -> %s) (invariant: it writes nothing)\n%s", k, v, after[k], m.dump())
 		}
 	}
 }
@@ -424,11 +455,19 @@ func TestProperties(t *testing.T) {
 		_ = flag.Set("rapid.checks", checks)
 	}
 	all := steps()
+	totals := map[string]int{} // how often each user-edit step really ran, over every sequence
 	rapid.Check(t, func(rt *rapid.T) {
-		m := &model{t: t, rt: rt, bin: bin}
+		m := &model{t: t, rt: rt, bin: bin, executed: map[string]int{}}
 		m.r = testkit.New(t, testkit.Team, testkit.WithUpstream(), testkit.WithConflictBranch())
 		if o := m.r.RunOutfit(bin, nil, "init"); o.Code != 0 {
 			rt.Fatalf("init: %+v", o)
+		}
+		// Every sequence starts with a profile in use, so there is always something to edit
+		// and the model's reading of state.json is exercised deterministically: if it finds
+		// no swapped path here, the test would pass by testing nothing.
+		m.outfit("use", "yolo")
+		if len(m.swapped()) == 0 {
+			rt.Fatalf("after `outfit use yolo` the model finds no swapped path: does it still read .git/outfit/state.json right?\n%s", m.dump())
 		}
 		n := rapid.IntRange(3, 12).Draw(rt, "steps")
 		for i := 0; i < n; i++ {
@@ -448,8 +487,11 @@ func TestProperties(t *testing.T) {
 			}
 			if s.clean && wasClean && !pendingBefore && !m.statusClean() {
 				out, _ := m.r.GitErr("status", "--short")
-				rt.Fatalf("a clean status became dirty after %s:\n%s\nsteps:\n%s", s.name, out, strings.Join(m.steps, "\n"))
+				rt.Fatalf("a clean status became dirty after %s (invariant: it must stay clean):\n%s\n%s", s.name, out, m.dump())
 			}
+		}
+		for k, v := range m.executed {
+			totals[k] += v
 		}
 		m.assertSyncIdempotent()
 		m.check("final sync")
@@ -465,4 +507,15 @@ func TestProperties(t *testing.T) {
 			}
 		}
 	})
+	// A model that never edits anything proves nothing about user bytes. Over a handful of
+	// random sequences an edit step can fail to be drawn by chance, so only a longer run is
+	// held to it; the deterministic start of every sequence (above) guards the short one.
+	t.Logf("steps that really ran: %v", totals)
+	if n, _ := strconv.Atoi(checks); n >= 30 {
+		for _, name := range []string{"edit-through-the-link", "editor-atomic-save"} {
+			if totals[name] == 0 {
+				t.Fatalf("the property test never executed %q over %d sequences: the invariant \"no user byte is lost\" was not exercised", name, n)
+			}
+		}
+	}
 }

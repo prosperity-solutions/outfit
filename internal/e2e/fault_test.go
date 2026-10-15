@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,8 +33,23 @@ type faultScenario struct {
 	needsHuman bool
 	// worktrees is how many linked worktrees the fixture has.
 	worktrees int
-	// beforeInit scenarios kill `init` itself, so setup runs before it.
+	// noInit scenarios kill `init` itself, so setup runs before it.
 	noInit bool
+	// viaLink runs the killed operation from a symlinked spelling of the repository's path,
+	// and the recovery from the physical one (an IDE and a terminal rarely agree).
+	viaLink bool
+}
+
+// opDir is where the killed operation runs.
+func (sc faultScenario) opDir(t *testing.T, r *testkit.Repo) string {
+	if !sc.viaLink {
+		return r.Dir
+	}
+	link := filepath.Join(t.TempDir(), "via")
+	if err := os.Symlink(r.Dir, link); err != nil {
+		t.Fatal(err)
+	}
+	return link
 }
 
 func writeToken(t *testing.T, r *testkit.Repo, tokens *[]string, path string, atomic bool) {
@@ -123,6 +139,11 @@ func faultScenarios() []faultScenario {
 			}
 		}, op: []string{"use", "mine"}, recover: []string{"sync"}},
 		{name: "uninstall", uninstalls: true, setup: use("yolo"), op: []string{"uninstall"}, recover: []string{"uninstall"}},
+		{name: "local-profile-killed-via-a-symlinked-path-then-uninstall", uninstalls: true, viaLink: true, setup: func(t *testing.T, r *testkit.Repo, bin string, tokens *[]string) {
+			if o := r.RunOutfit(bin, nil, "new", "mine", "--from", "yolo"); o.Code != 0 {
+				t.Fatalf("setup new: %+v", o)
+			}
+		}, op: []string{"use", "mine"}, recover: []string{"uninstall"}},
 		{name: "uninstall-in-a-worktree-farm", uninstalls: true, worktrees: 1, setup: use("yolo"), op: []string{"uninstall"}, recover: []string{"uninstall"}},
 		{name: "use-then-uninstall", uninstalls: true, setup: func(*testing.T, *testkit.Repo, string, *[]string) {}, op: []string{"use", "yolo"}, recover: []string{"uninstall"}},
 		{name: "init", uninstalls: true, noInit: true, setup: func(*testing.T, *testkit.Repo, string, *[]string) {}, op: []string{"init"}, recover: []string{"uninstall"}},
@@ -134,13 +155,56 @@ func faultScenarios() []faultScenario {
 	}
 }
 
+// faultCtx says which kill a failing check belongs to, and how to rerun just that.
+type faultCtx struct {
+	sc     faultScenario
+	k      int
+	points []string // every point of the operation, in order (index 0 is point 1)
+}
+
+func (fc faultCtx) subtest() string {
+	return fmt.Sprintf("kill-at-%02d-%s", fc.k, slug(fc.points[fc.k-1]))
+}
+
+func (fc faultCtx) fatalf(t *testing.T, format string, a ...any) {
+	t.Helper()
+	t.Fatalf("%s\n\n-- killed at point %d of `outfit %s`: %q\n-- the points of this operation, in order:\n%s\n-- reproduce: go test ./internal/e2e -count=1 -run '^TestFaultInjection$/^%s$/^%s$'",
+		fmt.Sprintf(format, a...), fc.k, strings.Join(fc.sc.op, " "), fc.points[fc.k-1], numbered(fc.points), fc.sc.name, fc.subtest())
+}
+
+func numbered(points []string) string {
+	var b strings.Builder
+	for i, p := range points {
+		fmt.Fprintf(&b, "   %2d %s\n", i+1, p)
+	}
+	return b.String()
+}
+
+var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
+
+// slug makes a point name usable in a subtest name (and in -run).
+func slug(s string) string {
+	s = strings.Trim(nonWord.ReplaceAllString(strings.ToLower(s), "-"), "-")
+	if len(s) > 48 {
+		s = strings.Trim(s[:48], "-")
+	}
+	return s
+}
+
+func clip(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
+}
+
 func TestFaultInjection(t *testing.T) {
 	testkit.SkipIfShort(t)
 	bin := testkit.BuildOutfit(t, "faultinject")
 	for _, sc := range faultScenarios() {
 		t.Run(sc.name, func(t *testing.T) {
-			// How many points does the operation have? Run it once with the log on.
-			count := func() int {
+			// Which points does the operation have? Run it once with the log on.
+			points := func() []string {
 				r := testkit.New(t, testkit.Team, testkit.WithWorktrees(sc.worktrees))
 				var tokens []string
 				if !sc.noInit {
@@ -150,17 +214,23 @@ func TestFaultInjection(t *testing.T) {
 				}
 				sc.setup(t, r, bin, &tokens)
 				log := filepath.Join(t.TempDir(), "points.log")
-				r.RunOutfit(bin, []string{"OUTFIT_FAULT_LOG=" + log}, sc.op...)
+				r.RunOutfitIn(sc.opDir(t, r), bin, []string{"OUTFIT_FAULT_LOG=" + log}, sc.op...)
 				b, _ := os.ReadFile(log)
-				return strings.Count(string(b), "\n")
+				var names []string
+				for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+					if _, name, ok := strings.Cut(line, " "); ok {
+						names = append(names, name)
+					}
+				}
+				return names
 			}()
-			if count == 0 {
+			if len(points) == 0 {
 				t.Fatalf("%v has no fault points: the scenario tests nothing", sc.op)
 			}
-			t.Logf("%v has %d fault points", sc.op, count)
-			for k := 1; k <= count; k++ {
-				k := k
-				t.Run("kill-at-"+strconv.Itoa(k), func(t *testing.T) {
+			t.Logf("%v has %d fault points:\n%s", sc.op, len(points), numbered(points))
+			for k := 1; k <= len(points); k++ {
+				fc := faultCtx{sc: sc, k: k, points: points}
+				t.Run(fc.subtest(), func(t *testing.T) {
 					t.Parallel() // each kill point has its own fixture and its own process
 					r := testkit.New(t, testkit.Team, testkit.WithWorktrees(sc.worktrees))
 					var tokens []string
@@ -171,31 +241,32 @@ func TestFaultInjection(t *testing.T) {
 						}
 					}
 					sc.setup(t, r, bin, &tokens)
-					o := r.RunOutfit(bin, []string{"OUTFIT_FAULT_AT=" + strconv.Itoa(k)}, sc.op...)
+					o := r.RunOutfitIn(sc.opDir(t, r), bin, []string{"OUTFIT_FAULT_AT=" + strconv.Itoa(k)}, sc.op...)
 					if !o.Killed {
-						t.Fatalf("point %d did not kill the process: %+v", k, o)
+						fc.fatalf(t, "the point did not kill the process (the operation changed): %+v", o)
 					}
-					assertConverges(t, r, bin, sc, tokens, before)
+					assertConverges(t, r, bin, fc, tokens, before)
 				})
 			}
 		})
 	}
 }
 
-func assertConverges(t *testing.T, r *testkit.Repo, bin string, sc faultScenario, tokens []string, configBefore string) {
+func assertConverges(t *testing.T, r *testkit.Repo, bin string, fc faultCtx, tokens []string, configBefore string) {
 	t.Helper()
+	sc := fc.sc
 	// Rerun until it settles: twice is enough for any single kill.
 	var last testkit.Outcome
 	for i := 0; i < 2; i++ {
 		last = r.RunOutfit(bin, nil, sc.recover...)
 		if last.Code != 0 && (!sc.needsHuman || last.Code != 3) {
-			t.Fatalf("recovery %v run %d did not simply work: %+v", sc.recover, i+1, last)
+			fc.fatalf(t, "recovery %v run %d did not simply work: stdout=%q stderr=%q exit=%d", sc.recover, i+1, clip(last.Stdout, 400), clip(last.Stderr, 800), last.Code)
 		}
 	}
 	// Nothing lost.
 	for _, tok := range tokens {
 		if !tokenFound(r, tok) {
-			t.Fatalf("user bytes %q are gone after a kill and a rerun", tok)
+			fc.fatalf(t, "user bytes %q are gone after a kill and a rerun", tok)
 		}
 	}
 	// No stray temporary link in the worktree (a killed write's `.tmp-*` and a killed profile
@@ -205,25 +276,25 @@ func assertConverges(t *testing.T, r *testkit.Repo, bin string, sc faultScenario
 			return filepath.SkipDir
 		}
 		if err == nil && strings.HasPrefix(d.Name(), ".outfit-link") {
-			t.Errorf("a leftover of a killed run, %s, is still there", path)
+			fc.fatalf(t, "a leftover of a killed run, %s, is still there", path)
 		}
 		return nil
 	})
 	if out := r.Git("status", "--porcelain", "--untracked-files=all"); strings.Contains(out, "?? ") && !sc.uninstalls {
-		t.Fatalf("status shows something untracked left behind (a stray link, a temporary file):\n%s", out)
+		fc.fatalf(t, "status shows something untracked left behind (a stray link, a temporary file):\n%s", out)
 	}
 	if out := r.Git("ls-tree", "-r", "HEAD"); strings.Contains(out, "120000 ") {
-		t.Fatalf("a symlink is in HEAD:\n%s", out)
+		fc.fatalf(t, "a symlink is in HEAD:\n%s", out)
 	}
 	if sc.uninstalls {
 		if after := r.Git("config", "--list"); after != configBefore {
-			t.Fatalf("git config --list differs after a killed uninstall and a rerun:\n--- before\n%s\n--- after\n%s", configBefore, after)
+			fc.fatalf(t, "git config --list differs after a killed uninstall and a rerun:\n--- before\n%s\n--- after\n%s", configBefore, after)
 		}
 		if s := r.Git("status", "--short"); strings.TrimSpace(s) != "" {
-			t.Fatalf("status is not clean after uninstall:\n%s", s)
+			fc.fatalf(t, "status is not clean after uninstall:\n%s", s)
 		}
 		if ls := r.Git("ls-files", "-t"); strings.Contains(ls, "S ") {
-			t.Fatalf("a path is still skip-worktree after uninstall:\n%s", ls)
+			fc.fatalf(t, "a path is still skip-worktree after uninstall:\n%s", ls)
 		}
 		return
 	}
@@ -239,15 +310,15 @@ func assertConverges(t *testing.T, r *testkit.Repo, bin string, sc faultScenario
 		Files []struct{ Path string } `json:"files"`
 	}
 	if err := json.Unmarshal([]byte(st.Stdout), &sj); err != nil {
-		t.Fatalf("status --json: %v %+v", err, st)
+		fc.fatalf(t, "status --json: %v %+v", err, st)
 	}
 	if sj.Sync != nil && (!sj.Sync.InSync || (sj.Sync.NeedsHuman && !sc.needsHuman)) {
-		t.Fatalf("not in sync after the rerun: %s", st.Stdout)
+		fc.fatalf(t, "not in sync after the rerun (status --json): %s", clip(st.Stdout, 700))
 	}
 	for _, f := range sj.Files {
 		fi, err := os.Lstat(r.Path(f.Path))
 		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
-			t.Fatalf("%s should be a link to the %s profile: %v", f.Path, sj.Profile.Name, err)
+			fc.fatalf(t, "%s should be a link to the %s profile: %v", f.Path, sj.Profile.Name, err)
 		}
 	}
 	again := r.RunOutfit(bin, nil, "sync", "--json")
@@ -255,9 +326,9 @@ func assertConverges(t *testing.T, r *testkit.Repo, bin string, sc faultScenario
 		Changed bool `json:"changed"`
 	}
 	if err := json.Unmarshal([]byte(again.Stdout), &aj); err != nil {
-		t.Fatalf("sync --json is not JSON (%v): %+v", err, again)
+		fc.fatalf(t, "sync --json is not JSON (%v): %+v", err, again)
 	}
 	if aj.Changed {
-		t.Fatalf("a further sync still changed something: %s", again.Stdout)
+		fc.fatalf(t, "a further sync still changed something: %s", again.Stdout)
 	}
 }

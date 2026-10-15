@@ -114,6 +114,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	var want plan.Want
 	facts := plan.Facts{Paths: map[string]plan.PathFacts{}, Recorded: map[string]plan.Record{}}
 	facts.SameProfile = in.Profile != nil && st.Profile == in.Profile.Name
+	facts.GitBusy = gitBusy(in.W.GitDir)
 
 	var candidates []string
 	if in.Profile != nil {
@@ -337,6 +338,19 @@ func (in Input) sameCommit(ctx context.Context, base, variant string) bool {
 	}
 	res, err = in.Git.Read(ctx, "--literal-pathspecs", "diff-tree", "--no-commit-id", "--name-only", "-r", "--no-renames", c, "--", variant)
 	return err == nil && strings.TrimSpace(string(res.Stdout)) != ""
+}
+
+// gitBusy names the git operation in progress in the worktree whose git dir this is.
+func gitBusy(gitDir string) string {
+	for _, probe := range []struct{ file, name string }{
+		{"rebase-merge", "rebase"}, {"rebase-apply", "rebase"}, {"MERGE_HEAD", "merge"},
+		{"CHERRY_PICK_HEAD", "cherry-pick"}, {"REVERT_HEAD", "revert"},
+	} {
+		if _, err := os.Lstat(filepath.Join(gitDir, probe.file)); err == nil {
+			return probe.name
+		}
+	}
+	return ""
 }
 
 // sparseNow is the current info/sparse-checkout text ("" when absent).

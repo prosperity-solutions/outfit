@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/prosperity-solutions/outfit/internal/fault"
@@ -27,6 +28,13 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 	if err != nil {
 		return nil, []string{"state file of " + w.WorkTree + ": " + err.Error()}
 	}
+	// No sync may run while the links come off: it would link again behind this, or find
+	// its temporary link gone.
+	lock, lerr := AcquireLock(w.GitDir)
+	if lerr != nil {
+		return nil, []string{"a sync is running in " + w.WorkTree + " (" + lerr.Error() + ")"}
+	}
+	defer lock.Release()
 	g := gitx.Client{Dir: w.WorkTree}
 	if w.WorkTree == "" {
 		// Never "a deleted checkout": an unknown path means links may still stand
@@ -153,10 +161,41 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 	return did, failed
 }
 
-// unrecordedLinks finds links of ours that state.json does not list: a sync killed
-// between making a link and writing the record leaves one (its skip-worktree bit is set,
-// the file on disk is a symlink into a profile directory). Without this the uninstall that
-// follows would switch sparse checkout off over it (` T`, `commit -a` commits a symlink).
+// profileLinkText is the text of a committed profile's link: relative, up to the root,
+// then `.outfit/profiles/`.
+var profileLinkText = regexp.MustCompile(`^(\.\./)*\.outfit/profiles/`)
+
+// isOurLinkText reports that a link's text points into one of outfit's profile
+// directories: a committed profile (relative text), or a personal one (absolute). The
+// absolute text is the spelling of the directory the sync ran from (a logical, maybe
+// symlinked path), the uninstall may run from another: compare resolved paths too.
+func isOurLinkText(t string, personal []string) bool {
+	if profileLinkText.MatchString(t) {
+		return true
+	}
+	if !filepath.IsAbs(t) {
+		return false
+	}
+	resolved := t
+	if dir, err := filepath.EvalSymlinks(filepath.Dir(t)); err == nil {
+		resolved = filepath.Join(dir, filepath.Base(t))
+	}
+	for _, p := range personal {
+		if strings.HasPrefix(t, p) || strings.HasPrefix(resolved, p) {
+			return true
+		}
+		if rp, err := filepath.EvalSymlinks(strings.TrimSuffix(p, string(filepath.Separator))); err == nil && strings.HasPrefix(resolved, rp+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// unrecordedLinks finds links of ours that state.json does not list, and removes the
+// leftover temporary links beside paths that are still hidden: a sync killed between making
+// a link and writing the record leaves them (the skip-worktree bit is set, the file on disk
+// is a symlink into a profile directory). Without this the uninstall that follows would
+// switch sparse checkout off over them (` T`, `commit -a` commits a symlink).
 func unrecordedLinks(ctx context.Context, g gitx.Client, w Workspace, st *state.State) []state.Swap {
 	known := map[string]bool{}
 	for _, s := range st.Swaps {
@@ -173,18 +212,27 @@ func unrecordedLinks(ctx context.Context, g gitx.Client, w Workspace, st *state.
 	var out []state.Swap
 	for _, rec := range strings.Split(string(res.Stdout), "\x00") {
 		tag, path, ok := strings.Cut(rec, " ")
-		if !ok || tag != "S" || known[path] || plan.ValidSwapPath(path) != nil || !realParents(w.WorkTree, path) {
+		if !ok || tag != "S" || plan.ValidSwapPath(path) != nil || !realParents(w.WorkTree, path) {
+			continue
+		}
+		// A temporary link beside the path (the fallback for a git dir on another
+		// filesystem), ours by its text, not tracked.
+		for _, stray := range []string{path + "~cruft", tmpLinkPath(path)} {
+			sp := filepath.Join(w.WorkTree, filepath.FromSlash(stray))
+			if t, err := os.Readlink(sp); err == nil && isOurLinkText(t, personal) {
+				if res, err := g.Read(ctx, "--literal-pathspecs", "ls-files", "-z", "--", stray); err == nil && len(res.Stdout) == 0 {
+					_ = os.Remove(sp)
+				}
+			}
+		}
+		if known[path] {
 			continue
 		}
 		t, err := os.Readlink(filepath.Join(w.WorkTree, filepath.FromSlash(path)))
 		if err != nil {
 			continue
 		}
-		ours := strings.HasPrefix(t, ".outfit/profiles/") || strings.Contains(t, "/.outfit/profiles/")
-		for _, p := range personal {
-			ours = ours || strings.HasPrefix(t, p)
-		}
-		if ours {
+		if isOurLinkText(t, personal) {
 			out = append(out, state.Swap{Path: path, Target: t})
 		}
 	}

@@ -94,3 +94,31 @@ exec cat AGENTS.md
 stdout 'precious'
 exec git status --short
 ! stdout .
+
+# Found by the property test: an editor's atomic save, then a rebase that git aborts. The
+# hook sync that runs while the rebase is in progress must not copy the saved bytes into the
+# TRACKED profile file: `rebase --abort` is a hard reset and would take them with it. They
+# wait in the file the editor wrote until git is done.
+exec git reset -q --hard
+outfit use base
+outfit use yolo
+exec git commit --allow-empty -qm 'chore: a'
+exec git commit --allow-empty -qm 'chore: b'
+atomicsave AGENTS.md 'saved just before a rebase\n'
+exec sh -c 'GIT_SEQUENCE_EDITOR="sed -i.bak s/^pick/edit/" git -c core.editor=true rebase -i HEAD~2'
+exec ls .git
+exec sh -c 'ls -d .git/rebase-merge'
+outfit sync
+stderr 'in the middle of a rebase'
+! islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec cat AGENTS.md
+stdout 'saved just before a rebase'
+exec git status --short
+! stdout 'outfit'
+exec git rebase --abort
+exec cat AGENTS.md
+stdout 'saved just before a rebase'
+outfit sync
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec cat .outfit/profiles/yolo/AGENTS.md
+stdout 'saved just before a rebase'
