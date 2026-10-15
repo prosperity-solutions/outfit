@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/prosperity-solutions/outfit/internal/apply"
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 	"github.com/prosperity-solutions/outfit/internal/hooks"
+	"github.com/prosperity-solutions/outfit/internal/profiles"
 )
 
 // cmdInit installs the hook dispatcher: shims, per-worktree config and
@@ -196,6 +198,38 @@ const (
 	excludeRemoved      = ".git/info/exclude entry for the Claude Code settings"
 )
 
+// personalProfiles lists the directories of local profiles and of every worktree's
+// worktree profiles: outfit's own copies of what the person wrote.
+func personalProfiles(l *loaded) []string {
+	var out []string
+	add := func(tierDir string) {
+		ents, err := os.ReadDir(tierDir)
+		if err != nil {
+			return
+		}
+		for _, en := range ents {
+			if en.IsDir() && profiles.ValidName(en.Name()) == nil {
+				out = append(out, filepath.Join(tierDir, en.Name()))
+			}
+		}
+	}
+	add(filepath.Join(l.Repo.CommonDir, "outfit", "profiles"))
+	for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
+		add(filepath.Join(w.GitDir, "outfit", "worktree-profiles"))
+	}
+	return out
+}
+
+// removeProfileDir deletes one profile directory (below its tier directory only).
+func removeProfileDir(dir string) error {
+	root, err := os.OpenRoot(filepath.Dir(dir))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.RemoveAll(filepath.Base(dir))
+}
+
 // agentsJSON is what `init --agents` did in each worktree.
 type agentsJSON struct {
 	Added    []string `json:"added"`
@@ -242,6 +276,7 @@ func initExit(syncRes *apply.Result, syncErr error, a *agentsJSON) int {
 // cmdUninstall undoes init everywhere.
 func cmdUninstall(ctx context.Context, e Env, args []string) int {
 	fs := newFlags("uninstall")
+	purge := fs.Bool("purge", false, "also delete your local and worktree profiles (they are kept otherwise)")
 	asJSON := fs.Bool("json", false, "print machine-readable output")
 	pos, code, stop := parseArgs(e, fs, args)
 	if stop {
@@ -286,6 +321,20 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 			undone = append(undone, excludeRemoved)
 		}
 	}
+	// Local and worktree profiles are the person's own files, never versioned: they
+	// survive unless --purge says otherwise.
+	kept := personalProfiles(l)
+	if *purge {
+		for _, dir := range kept {
+			if rerr := removeProfileDir(dir); rerr != nil {
+				undoFailed = append(undoFailed, dir+": "+rerr.Error())
+			} else {
+				undone = append(undone, "personal profile "+dir)
+				_ = os.Remove(filepath.Dir(dir)) // the tier directory too, when that was its last profile
+			}
+		}
+		kept = nil
+	}
 	res, err := hooks.Uninstall(ctx, l.Git, l.Repo, l.Cfg, e.Getenv("HOME"))
 	if err != nil {
 		return fail(Errorf("%v", err))
@@ -296,7 +345,10 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 	}
 	res.Failed = append(res.Failed, undoFailed...)
 	if *asJSON {
-		out, _ := json.Marshal(res)
+		out, _ := json.Marshal(struct {
+			*hooks.UninstallResult
+			KeptProfiles []string `json:"kept_profiles"`
+		}{res, nonNilStrings(kept)})
 		fmt.Fprintln(e.Stdout, string(out))
 		if len(res.Failed) > 0 {
 			return ExitError
@@ -310,6 +362,11 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 		fmt.Fprintln(e.Stderr, "fix: resolve the above, then rerun `outfit uninstall` (it continues where it stopped)")
 		return ExitError
 	}
+	defer func() {
+		if len(kept) > 0 {
+			fmt.Fprintf(e.Stdout, "  kept %d personal profile(s) (local and worktree profiles are yours): outfit uninstall --purge deletes them\n", len(kept))
+		}
+	}()
 	if !res.Changed {
 		fmt.Fprintln(e.Stdout, "nothing to uninstall")
 		return ExitOK

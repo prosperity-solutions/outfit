@@ -1,0 +1,167 @@
+# Scenario 19 (docs/HANDOVER.md §7.4): local and worktree profiles. `new` makes
+# them (never shadowing an existing name), their links are absolute and their edits
+# do not show in `git status` (so `outfit status` says when they were made),
+# `git worktree remove` takes worktree profiles with it, `promote` moves a local
+# profile into .outfit/profiles/ for git to version, and name clashes are refused.
+fixture repo team worktrees=1
+cd repo
+outfit init
+
+# --- names ---
+! outfit new base
+stderr 'reserved'
+! outfit new Bad_Name
+stderr 'invalid profile name'
+! outfit new yolo
+stderr 'already exists'
+stderr 'fix: outfit new <another-name>'
+! outfit new
+stderr 'usage: outfit new'
+
+# --- a local profile from nothing ---
+outfit new mine
+stdout 'created local profile mine'
+stdout 'outfit use mine'
+exists .git/outfit/profiles/mine/profile.config
+outfit ls
+stdout 'mine\s+local'
+exec sh -c 'printf "# mine\nmy own rules\n" > .git/outfit/profiles/mine/AGENTS.md'
+outfit use mine
+islink AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+exec cat AGENTS.md
+stdout 'my own rules'
+# Edits through the link do not show in git status, by design: status lists the file.
+exec sh -c 'echo "more" >> AGENTS.md'
+exec git status --short
+! stdout .
+exec cat .git/outfit/profiles/mine/AGENTS.md
+stdout 'more'
+outfit status
+stdout 'AGENTS.md ← mine \(local, edited '
+stdout 'state    in sync'
+outfit status --json
+stdout '"tier":"local"'
+stdout '"modified":"20'
+# An editor's atomic save is absorbed into the local profile (after a sync noted the
+# edit through the link; nothing runs by itself when a file is edited).
+outfit sync
+atomicsave AGENTS.md 'saved by an editor\n'
+outfit sync
+islink AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+exec cat .git/outfit/profiles/mine/AGENTS.md
+stdout 'saved by an editor'
+outfit use base
+exec cat AGENTS.md
+stdout 'base'
+exec git status --short
+! stdout .
+
+# --- copies: from a committed profile that is hidden from disk, from a local one ---
+! exists .outfit/profiles/yolo
+outfit new yolo2 --from yolo
+stdout 'copied'
+exists .git/outfit/profiles/yolo2/AGENTS.md
+exec cat .git/outfit/profiles/yolo2/AGENTS.md
+stdout 'yolo rules'
+exists .git/outfit/profiles/yolo2/CLAUDE.md
+exists .git/outfit/profiles/yolo2/profile.config
+! exists .outfit/profiles/yolo
+outfit new mine2 --from mine
+exec cat .git/outfit/profiles/mine2/AGENTS.md
+stdout 'saved by an editor'
+! outfit new nope --from missing
+stderr 'no profile called'
+! exists .git/outfit/profiles/nope
+outfit new empty --from base
+exists .git/outfit/profiles/empty/profile.config
+outfit new --json jj
+stdout '"tier":"local"'
+stdout '"next":"outfit use jj"'
+
+# --- worktree profiles go away with the worktree ---
+outfit new here-only --here
+stdout 'created worktree profile here-only'
+exists .git/outfit/worktree-profiles/here-only
+outfit ls
+stdout 'here-only\s+worktree'
+cd ../repo-wt1
+outfit init
+outfit new only-in-wt1 --here
+exists $WORK/repo/.git/worktrees/repo-wt1/outfit/worktree-profiles/only-in-wt1
+outfit ls
+stdout 'only-in-wt1\s+worktree'
+! stdout 'here-only'
+outfit use only-in-wt1 --here
+cd ../repo
+! outfit use only-in-wt1
+stderr 'no profile called'
+exec git worktree remove --force ../repo-wt1
+! exists .git/worktrees/repo-wt1
+outfit ls
+! stdout 'only-in-wt1'
+
+# --- promote ---
+outfit use mine
+outfit promote mine
+stdout 'promoted mine to .outfit/profiles/mine'
+stdout 'git add --sparse -f'
+! exists .git/outfit/profiles/mine
+exists .outfit/profiles/mine/AGENTS.md
+exec cat .outfit/profiles/mine/AGENTS.md
+stdout 'saved by an editor'
+# The link follows (now a relative one into the worktree) and the content is the same.
+islink AGENTS.md .outfit/profiles/mine/AGENTS.md
+exec cat AGENTS.md
+stdout 'saved by an editor'
+# git does not have it yet: status warns, and says how.
+outfit status
+stderr 'git clean -x'
+exec git add --sparse -f .outfit/profiles/mine
+exec git commit -qm 'feat: add profile mine'
+outfit ls
+stdout 'mine\*?\s+committed'
+outfit status
+! stderr 'git clean -x'
+outfit use base
+! exists .outfit/profiles/mine
+outfit use mine
+islink AGENTS.md .outfit/profiles/mine/AGENTS.md
+outfit use base
+# only local profiles are promoted
+! outfit promote yolo
+stderr 'already a committed profile'
+! outfit promote nothere
+stderr 'no profile called'
+! outfit promote here-only
+stderr 'worktree profile'
+stderr 'fix: outfit new <name> --from worktree:here-only'
+! outfit promote
+
+# --- a name clash: the committed profile wins, the warning names the fix ---
+outfit new dup
+exec sh -c 'printf "mine\n" > .git/outfit/profiles/dup/AGENTS.md'
+exec sh -c 'mkdir -p .outfit/profiles/dup && printf "# teammate\n" > .outfit/profiles/dup/AGENTS.md'
+exec git add --sparse -f .outfit/profiles/dup
+exec git commit -qm 'feat: a teammate adds dup'
+outfit ls
+stderr 'name clashes with the committed profile "dup"'
+stderr 'outfit new <other-name> --from local:dup'
+outfit status
+stderr 'name clashes'
+outfit new dup-mine --from local:dup
+exec cat .git/outfit/profiles/dup-mine/AGENTS.md
+stdout '^mine$'
+outfit use dup
+stdout 'using dup'
+outfit use base
+
+# --- uninstall keeps personal profiles unless --purge ---
+outfit uninstall
+stdout 'kept [0-9]+ personal profile'
+exists .git/outfit/profiles/dup-mine/AGENTS.md
+outfit init
+outfit uninstall --purge
+! exists .git/outfit/profiles
+! exists .git/outfit/worktree-profiles
+exec git status --short
+! stdout 'outfit'

@@ -70,13 +70,15 @@ outfit ls                        # the profiles you can switch to
 outfit use yolo                  # swap in the yolo profile's files (and toggles)
 outfit use base                  # back to exactly the committed files
 outfit show lean                 # a profile's toggles and files, without switching
+outfit new mine --from yolo      # a personal profile: local, never versioned (--here: this worktree only)
+outfit promote mine              # move it into .outfit/profiles/ so git (and your team) can have it
 outfit status                    # the active profile, where every value comes from, in sync or not
 outfit diff AGENTS.md            # the base file differs from when it was swapped (a pull, a checkout): what changed
 outfit ack AGENTS.md             # ...and that is fine: the profile's copy stays
 outfit init --agents             # a Claude Code SessionStart entry that runs outfit sync
 outfit sync                      # put the files right again (hooks run it after checkout and merge)
 outfit author on                 # all profiles on disk, to edit side by side (author off hides them)
-outfit uninstall                 # put the repository back as it was
+outfit uninstall                 # put the repository back as it was (--purge also deletes your own profiles)
 outfit update                    # install the latest release (--check only looks)
 ```
 
@@ -105,8 +107,8 @@ profile, then the team's committed defaults in `.outfit/config`. Keys the team
 
 Under construction, one pull request at a time: toggles, the hook dispatcher and
 the release pipeline, `outfit update` and profile file swaps (`use`, `sync`, `show`,
-`author`), conflict and stale-base detection (`diff`, `ack`) and `init --agents` are in;
-local and worktree profiles (`new`, `promote`) are next. Swaps: [docs/profiles.md](docs/profiles.md). How a
+`author`), conflict and stale-base detection (`diff`, `ack`), `init --agents` and personal
+profiles (`new`, `promote`) are in; the property tests and the final polish are next. Swaps: [docs/profiles.md](docs/profiles.md). How a
 release is built and checked: [docs/release.md](docs/release.md). The plan is
 [docs/HANDOVER.md](docs/HANDOVER.md); how git actually behaves, pinned by tests, is
 [docs/git-behavior.md](docs/git-behavior.md).

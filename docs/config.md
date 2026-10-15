@@ -97,6 +97,7 @@ A profile name that no longer exists is treated as `base`, with a warning.
 | `outfit get <key>` | prints the value. Unset: prints nothing and exits **1** (like `git config --get`). One git process, no writes. |
 | `outfit set <key>=<val>… [--here\|--global]` | personal override in git config; `key=` unsets (in that scope only: it prints which scopes still set the key). `--global` works outside a repo. `--here` needs `extensions.worktreeConfig`, which `outfit init` enables. Note that git copies a worktree's `config.worktree` into every worktree created afterwards, so `--here` in the main worktree leaks into new ones until outfit strips the copies on `worktree add`. |
 | `outfit ls` | profiles across the three tiers (`committed`, `local`, `worktree`), their keys and files; `*` marks the active one. |
+| `outfit new <name> [--from <profile>] [--here]` / `outfit promote <name>` | make a personal profile, move a local one into `.outfit/profiles/`: [profiles.md](profiles.md). |
 | `outfit init` / `outfit uninstall` | install or remove the hook dispatcher: [hooks.md](hooks.md). |
 | `outfit status` | the active profile, where every toggle comes from, the files it swaps, whether the files are in sync and the hook dispatcher's health (exit 4 when out of sync or the dispatcher is broken, 3 when a person must look) and warnings. Enforces git ≥ 2.36. |
 

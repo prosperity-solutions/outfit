@@ -113,6 +113,8 @@ commands:
   uninstall              remove everything init installed, in every worktree
   get <key>              print a toggle's value (exit 1 when unset)
   set <key>=<val>…       personal toggle override; key= unsets   [--here | --global]
+  new <name>             make a personal profile (local; --here: for this worktree only); --from <profile>
+  promote <name>         move a local profile into .outfit/profiles/ so git can version it
   use <profile> [--here] switch the clone's (or this worktree's) profile and sync
   sync                   make the files match the active profile (hooks and agents run it)
   ls                     list profiles across the three tiers
@@ -157,6 +159,10 @@ func dispatch(ctx context.Context, e Env, args []string) int {
 		return cmdShow(ctx, e, args[1:])
 	case "author":
 		return cmdAuthor(ctx, e, args[1:])
+	case "new":
+		return cmdNew(ctx, e, args[1:])
+	case "promote":
+		return cmdPromote(ctx, e, args[1:])
 	case "diff":
 		return cmdDiff(ctx, e, args[1:])
 	case "ack":

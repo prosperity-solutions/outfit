@@ -84,6 +84,10 @@ func TierDir(r repo.Repo, t Tier) string {
 // Listing is the result of List.
 type Listing struct {
 	Profiles []Profile
+	// Shadowed are the profiles a committed (or earlier-tier) profile of the same name
+	// hides. They are not usable by name, but `outfit new <other> --from tier:name`
+	// can still copy them, which is the fix the clash warning prints.
+	Shadowed []Profile
 	Warnings []config.Warning
 }
 
@@ -109,9 +113,10 @@ func List(ctx context.Context, g gitx.Client, r repo.Repo) Listing {
 	seen := map[string]Profile{}
 	add := func(p Profile) {
 		if prev, ok := seen[p.Name]; ok {
+			l.Shadowed = append(l.Shadowed, p)
 			l.Warnings = append(l.Warnings, config.Warning{
 				Source:  string(p.Tier) + " profile " + p.Name,
-				Message: fmt.Sprintf("name clashes with the %s profile %q, which wins; rename your directory %s to a free name", prev.Tier, p.Name, p.Dir),
+				Message: fmt.Sprintf("name clashes with the %s profile %q, which wins; keep yours under another name: outfit new <other-name> --from %s:%s   (then delete %s)", prev.Tier, p.Name, p.Tier, p.Name, p.Dir),
 			})
 			return
 		}

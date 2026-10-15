@@ -19,6 +19,40 @@ A profile swaps **tracked files only**: a file in the profile that the repositor
 not have is skipped (and `outfit sync` says so). `base` is the profile with no swaps;
 with no `outfit.profile` set you are on `base` and get exactly the committed repository.
 
+## Three tiers: committed, local, worktree
+
+| Tier | Lives in | Versioned | Gone when |
+|---|---|---|---|
+| committed | `.outfit/profiles/<name>/` | by git, shared with the team | a commit removes it |
+| local | `<git-common-dir>/outfit/profiles/<name>/` | never | `outfit uninstall --purge`, or you delete it |
+| worktree | `<git-dir>/outfit/worktree-profiles/<name>/` | never | `git worktree remove` (the directory is inside that worktree's git dir) |
+
+Names are unique across all three: `outfit new` refuses a name any tier already uses, and
+`outfit ls` shows each profile's tier. The links for a committed profile are relative
+(`.outfit/profiles/<name>/AGENTS.md`), so an edit through the link shows in plain `git
+status` as an edit of the profile. The links for a local or worktree profile are
+**absolute** into the git dir, and edits to those files do not show in `git status`, by
+design (they are not in git): `outfit status` lists each file with when it last changed, e.g.
+`AGENTS.md ← mine (local, edited 2h ago)`. There is no history and no snapshot: plain files,
+edited in place.
+
+```sh
+outfit new mine                 # an empty local profile (profile.config + room for files)
+# then put files in it at the same relative paths as the tracked files they replace
+outfit new mine3 --from yolo    # a copy of a committed (or local) profile, hidden ones included
+outfit new scratch --here       # only for this worktree; deleted with it
+outfit use mine                 # ...then it behaves like any other profile
+outfit promote mine             # move it into .outfit/profiles/mine/, then commit it
+```
+
+`promote` copies first and removes the local copy only after the copy worked. Git does not
+have the new profile until you commit it, and `git clean -x` would delete it, so `status`
+warns and `promote` prints the command: `git add --sparse -f .outfit/profiles/<name> && git
+commit` (`--sparse` because git's patterns hide profile directories). If a profile of the
+same name is committed later by a teammate, **the committed one wins**: `ls` and `status`
+warn, and the fix is `outfit new <other-name> --from local:<name>` (a `tier:name` reaches a
+profile the winner hides), then delete the old directory.
+
 ## The commands
 
 | Command | What it does |
@@ -26,10 +60,13 @@ with no `outfit.profile` set you are on `base` and get exactly the committed rep
 | `outfit init` | installs the dispatcher (see [hooks.md](hooks.md)), hides inactive profiles, adds `/.outfit/` to `.git/info/exclude` |
 | `outfit use <profile> [--here]` | makes it this clone's profile (or only this worktree's with `--here`), then syncs |
 | `outfit sync` | makes the files match the active profile; silent on success. Hooks and agents run it |
+| `outfit new <name> [--from <profile>] [--here]` | makes a **personal** profile: local (this clone, never versioned), or with `--here` a worktree profile that goes away with the worktree; empty, or a copy of another profile |
+| `outfit promote <name>` | moves a local profile into `.outfit/profiles/<name>/` so git can version it |
 | `outfit show <profile> [path]` | a profile's toggles and files, or one file's content, without switching |
 | `outfit author on\|off` | puts every committed profile on disk to edit side by side, or hides them again |
 | `outfit status` | the active profile, where each value comes from, and `state in sync` / `out of sync` |
-| `outfit uninstall` | removes the links, restores the base files, then undoes everything else |
+| `outfit diff <path>` / `outfit ack <path>` | the base of a swapped file changed under it: see what changed, accept it (below) |
+| `outfit uninstall [--purge]` | removes the links, restores the base files, then undoes everything else; your local and worktree profiles are kept unless `--purge` |
 
 `use` needs `outfit init` first: without the dispatcher nothing would keep a swapped file
 out of a commit. `outfit use base` returns to the committed files.

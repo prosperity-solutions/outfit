@@ -95,7 +95,7 @@ func TestLocalAndWorktreeTiersAndNameClash(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
-	if len(l.Warnings) != 1 || !strings.Contains(l.Warnings[0].Message, "rename your directory") {
+	if len(l.Warnings) != 1 || !strings.Contains(l.Warnings[0].Message, "outfit new <other-name> --from local:yolo") {
 		t.Fatalf("the clash must name the fix: %v", l.Warnings)
 	}
 

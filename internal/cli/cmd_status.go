@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/prosperity-solutions/outfit/internal/agents"
 	"github.com/prosperity-solutions/outfit/internal/apply"
@@ -22,6 +24,9 @@ type statusFile struct {
 	Path    string `json:"path"`
 	Profile string `json:"profile"`
 	Tier    string `json:"tier"`
+	// Modified (local and worktree profiles only) is when the profile's file last
+	// changed, RFC 3339: edits to them never show in `git status`, so status says so.
+	Modified string `json:"modified,omitempty"`
 }
 
 type dispatcherInfo struct {
@@ -101,7 +106,13 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 			sort.Strings(files)
 		}
 		for _, f := range files {
-			st.Files = append(st.Files, statusFile{Path: f, Profile: l.Profile.Name, Tier: st.Tier})
+			sf := statusFile{Path: f, Profile: l.Profile.Name, Tier: st.Tier}
+			if l.Profile.Tier != profiles.Committed {
+				if fi, err := os.Stat(filepath.Join(l.Profile.Dir, filepath.FromSlash(f))); err == nil {
+					sf.Modified = fi.ModTime().UTC().Format(time.RFC3339)
+				}
+			}
+			st.Files = append(st.Files, sf)
 		}
 	}
 	st.Dispatcher = dispatcherHealth(ctx, l, e.Getenv("HOME"))
@@ -195,7 +206,13 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 		if i == 0 {
 			label = "files    "
 		}
-		fmt.Fprintf(w, "%s%s ← %s (%s)\n", label, f.Path, f.Profile, f.Tier)
+		tier := f.Tier
+		if f.Modified != "" {
+			if t, err := time.Parse(time.RFC3339, f.Modified); err == nil {
+				tier += ", edited " + ago(time.Since(t))
+			}
+		}
+		fmt.Fprintf(w, "%s%s ← %s (%s)\n", label, f.Path, f.Profile, tier)
 	}
 	if st.Dispatcher.Installed {
 		if st.Dispatcher.OK {
@@ -307,4 +324,18 @@ func show(v string) string {
 		return v
 	}
 	return strconv.Quote(v)
+}
+
+// ago renders a duration the way a person says it: "just now", "5m ago", "2h ago", "3d ago".
+func ago(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return strconv.Itoa(int(d/time.Minute)) + "m ago"
+	case d < 48*time.Hour:
+		return strconv.Itoa(int(d/time.Hour)) + "h ago"
+	default:
+		return strconv.Itoa(int(d/(24*time.Hour))) + "d ago"
+	}
 }
