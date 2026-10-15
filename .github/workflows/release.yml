@@ -5,8 +5,8 @@ name: Release
 # docs/release.md.
 #
 #   version -> build -> smoke (4 native runners) -+
-#         \-> ci (waits for main's all-green) ----+-> publish -> verify (4 runners)
-#                                                           \-> verify-signing
+#         \-> ci (waits for main's all-green) ----+-> attest -> publish -> verify (4 runners)
+#                                                                    \-> verify-signing
 #
 # This is the ONLY workflow that references the MINISIGN_* and MACOS_* secrets, and only
 # its `build` job does, in the `release` environment, on a push to main. Until the owner
@@ -404,16 +404,43 @@ jobs:
           echo "::error::CI did not finish within 50 minutes; not releasing."
           exit 1
 
+  # ── 3c. Signed build provenance ───────────────────────────────────────────
+  # A statement, signed with this run's OIDC identity (Sigstore), that these exact files were
+  # built from this commit by this workflow. It lives in its own job so that `id-token: write`
+  # (the ability to mint that identity) is held by nothing but the download and the attest
+  # action, not by the job that runs Go tools and pushes the tag. Private repositories need
+  # GitHub Enterprise Cloud (this one is on it). `publish` refuses to continue without it.
+  attest:
+    name: Attest build provenance
+    needs: [version, build, smoke, ci]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      id-token: write # sign the attestation with this run's OIDC identity
+      attestations: write # store it with the repository
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: out
+      # The files must be the ones the build wrote: their hashes match checksums.txt (whose own
+      # signature `publish` checks against the committed key before anything is published).
+      - name: The archives match checksums.txt
+        run: cd out && sha256sum -c checksums.txt
+      - name: Attest the build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: out/*
+
   # ── 4. Publish: tag, then a verified draft-first release ──────────────────
   publish:
     name: Publish
-    needs: [version, build, smoke, ci]
+    needs: [version, build, smoke, ci, attest]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: write # create the tag and the release; the only job that can write
-      id-token: write # the attestation is signed with this run's OIDC identity (Sigstore)
-      attestations: write # ... and stored with the repository
+      attestations: read # gh attestation verify reads what the attest job made
     env:
       TAG: ${{ needs.version.outputs.tag }}
       GH_REPO: ${{ github.repository }}
@@ -446,14 +473,24 @@ jobs:
           # The release text came through the same artifact storage: it must be what build wrote.
           [ "$(sha256sum notes/notes.md | awk '{print $1}')" = "$NOTES_SHA256" ] || { echo "::error::notes.md is not the release text the build job wrote"; exit 1; }
           go run ./internal/tools/verifysig out/checksums.txt out/checksums.txt.minisig
-      # A signed statement, made by this workflow run, that these exact files were built from this
-      # commit: `gh attestation verify` checks it against the repository and workflow. It is made
-      # here, after the files were re-checked and before they become public. Private
-      # repositories need GitHub Enterprise Cloud (this one is on it).
-      - name: Attest the build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: out/*
+      # The provenance the `attest` job made must be there, for exactly this commit, from
+      # release.yml on main, before anything is public. (The attestation service can lag a
+      # moment: retry.)
+      - name: Check the build provenance before anything is public
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for f in out/outfit_*.tar.gz; do
+            ok=0
+            for attempt in 1 2 3 4 5 6; do
+              if gh attestation verify "$f" -R "$GH_REPO" \
+                  --cert-identity "https://github.com/$GH_REPO/.github/workflows/release.yml@refs/heads/main" \
+                  --source-digest "$GITHUB_SHA" --deny-self-hosted-runners; then ok=1; break; fi
+              echo "attempt $attempt of 6 for $f failed; retrying in 20s"
+              sleep 20
+            done
+            [ "$ok" = 1 ] || { echo "::error::no valid build provenance for $f"; exit 1; }
+          done
 
       # The tag is created through the API with the job's token, so no git credential is stored
       # in the checkout (persist-credentials: false) for a later step to find.
@@ -539,8 +576,8 @@ jobs:
           echo "::error::could not install $TAG within ten minutes"
           exit 1
 
-      # The archive for this runner, straight from the release, must carry an attestation made
-      # by this repository's release workflow. (The index can lag a moment: retry.)
+      # The archive for this runner, straight from the release, must carry an attestation made by
+      # release.yml on main for this very commit. (The index can lag a moment: retry.)
       - name: Check the build provenance of the published archive
         run: |
           case "$RUNNER_OS/$RUNNER_ARCH" in
@@ -552,7 +589,9 @@ jobs:
           cd "$RUNNER_TEMP/prov"
           gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "outfit_*_${plat}.tar.gz"
           for attempt in 1 2 3 4 5 6; do
-            if gh attestation verify ./outfit_*_"${plat}".tar.gz -R "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"; then
+            if gh attestation verify ./outfit_*_"${plat}".tar.gz -R "$GITHUB_REPOSITORY" \
+                --cert-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main" \
+                --source-digest "$GITHUB_SHA" --deny-self-hosted-runners; then
               echo "build provenance verified for $plat on $RUNNER_OS/$RUNNER_ARCH" | tee -a "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
