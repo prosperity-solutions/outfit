@@ -238,7 +238,15 @@ func steps() []step {
 			}
 		}},
 		{"pull-docs", true, func(m *model) { m.upstreamChange("docs/guide.md") }},
-		{"pull-base", false, func(m *model) { m.upstreamChange("AGENTS.md") }},
+		{"pull-base", false, func(m *model) {
+			// A pull whose rebase or merge conflicts on the base file overwrites an unabsorbed
+			// save the same way (git-behavior row 48): follow the documented rule.
+			if m.pendingAbsorb() {
+				m.logf("outfit sync first: a conflicting pull would overwrite an unabsorbed save (git-behavior row 48)")
+				m.outfit("sync")
+			}
+			m.upstreamChange("AGENTS.md")
+		}},
 		{"merge", false, func(m *model) {
 			// A save outfit has not absorbed yet is overwritten by the markers of a merge that
 			// conflicts on that file (git has no hook before a merge touches the tree, and the
