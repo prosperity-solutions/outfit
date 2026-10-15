@@ -8,7 +8,7 @@ import (
 )
 
 func TestSparseTextShape(t *testing.T) {
-	got := SparseText(SparseOptions{Hidden: []string{"CLAUDE.md", "AGENTS.md", "apps/web/AGENTS.md"}, HideProfiles: true, Active: "yolo"})
+	got := SparseText(SparseOptions{Hidden: []string{"CLAUDE.md", "AGENTS.md", "apps/web/AGENTS.md"}, HideProfiles: true, Show: []string{"yolo"}})
 	want := Marker + "\n/*\n!/AGENTS.md\n!/CLAUDE.md\n!/apps/web/AGENTS.md\n!/.outfit/profiles/*\n/.outfit/profiles/yolo/\n"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
@@ -23,12 +23,22 @@ func TestSparseTextShape(t *testing.T) {
 	}
 }
 
+func sortedCopy(s []string) []string {
+	if len(s) == 0 {
+		return nil
+	}
+	out := append([]string(nil), s...)
+	sort.Strings(out)
+	return out
+}
+
 func TestSparseRoundTrip(t *testing.T) {
 	for _, o := range []SparseOptions{
 		{},
 		{Hidden: []string{"AGENTS.md"}},
-		{Hidden: []string{"a b/c.md", "x*y", "[z]", "!bang", "#hash", `back\slash`, "trailing "}, HideProfiles: true, Active: "my.profile-1"},
+		{Hidden: []string{"a b/c.md", "x*y", "[z]", "!bang", "#hash", `back\slash`, "trailing "}, HideProfiles: true, Show: []string{"my.profile-1"}},
 		{HideProfiles: true},
+		{HideProfiles: true, Show: []string{"b", "a.c", "yolo"}},
 	} {
 		text := SparseText(o)
 		got, ok := ParseSparse(text)
@@ -39,7 +49,7 @@ func TestSparseRoundTrip(t *testing.T) {
 		if !reflect.DeepEqual(got.Hidden, o.Hidden) && (len(got.Hidden) != 0 || len(o.Hidden) != 0) {
 			t.Errorf("hidden: %q != %q", got.Hidden, o.Hidden)
 		}
-		if got.HideProfiles != o.HideProfiles || got.Active != o.Active {
+		if got.HideProfiles != o.HideProfiles || !reflect.DeepEqual(got.Show, sortedCopy(o.Show)) {
 			t.Errorf("%+v != %+v", got, o)
 		}
 		// Rendering twice gives the same text (an unchanged file is never rewritten).
@@ -97,7 +107,7 @@ func FuzzSparse(f *testing.F) {
 		if ValidSwapPath(path) != nil || strings.ContainsAny(active, "/\n\r\x00") || active == "" {
 			return
 		}
-		o := SparseOptions{Hidden: []string{path}, HideProfiles: true, Active: active}
+		o := SparseOptions{Hidden: []string{path}, HideProfiles: true, Show: []string{active}}
 		text := SparseText(o)
 		got, ok := ParseSparse(text)
 		if !ok || SparseText(got) != text {

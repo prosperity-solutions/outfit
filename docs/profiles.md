@@ -75,7 +75,7 @@ copy is limited to 2000 files, 32 MiB per file and 64 MiB in all.
 | `outfit new <name> [--from <profile>] [--here]` | makes a **personal** profile: local (this clone, never versioned), or with `--here` a worktree profile that goes away with the worktree; empty, or a copy of another profile |
 | `outfit promote <name>` | moves a local profile into `.outfit/profiles/<name>/` so git can version it |
 | `outfit show <profile> [path]` | a profile's toggles and files, or one file's content, without switching |
-| `outfit author on\|off` | puts every committed profile on disk to edit side by side, or hides them again |
+| `outfit author [on\|off] [profile…]` | shows (`on`) or hides (`off`) the inactive committed profiles' files in the working tree, all of them or the named ones; bare, says what is on disk. Hidden is the default. See below |
 | `outfit status` | the active profile, where each value comes from, and `state in sync` / `out of sync` |
 | `outfit diff <path>` / `outfit ack <path>` | the base of a swapped file changed under it: see what changed, accept it (below) |
 | `outfit uninstall [--purge]` | removes the links, restores the base files, then undoes everything else; your local and worktree profiles are kept unless `--purge`. If a link cannot be removed it stops there (exit 1; no hooks, settings or profiles are touched, worktrees whose links did come off stay undone) and the rerun continues |
@@ -103,7 +103,7 @@ dir for a local or worktree profile (see the tiers above). So:
   `diff <(git show :AGENTS.md) AGENTS.md`;
 - only the **active committed** profile is on disk (local and worktree profiles always are,
   in the git dir). The other committed ones are in git; look at them with
-  `outfit show`, or put them all on disk with `outfit author on`;
+  `outfit show`, or put them (or one) on disk with `outfit author on [profile]`;
 - `.outfit/` is in `.git/info/exclude`, which keeps search tools like `rg` out of it.
   Side effect (a git rule, [git-behavior.md](git-behavior.md) row 34): `git add
   .outfit/…` by path refuses; use `git add -u .outfit` (modified files), `git add -f` (a
@@ -122,6 +122,27 @@ how to make the two agree.
 
 The pre-commit guard refuses any commit that stages a swapped path, or a symlink at a swapped path, and says
 how to fix it.
+
+## Seeing and editing inactive profiles: `outfit author`
+
+Inactive committed profiles are hidden from the working tree on purpose (they would show up
+in every search, and in an agent's context). When you or an agent must read, edit or check files
+out of them in place, show them:
+
+```sh
+outfit author                # what is on disk now (default: only the active profile)
+outfit author on             # every committed profile
+outfit author on lean web    # just these (names must be committed profiles: outfit ls)
+outfit author off lean       # hide one again   (outfit author off: hide all the inactive ones)
+```
+
+The choice is per worktree and lives in the sparse patterns (`state.json` records it), so a sync
+keeps it, `git status` stays clean, and edits made there are ordinary git edits of
+`.outfit/profiles/<name>/…`. The active profile is always on disk, whatever is asked. Hiding a
+profile that has uncommitted edits is refused (exit 3, with the fix: commit them). `outfit status`
+has an `author` line while anything extra is shown (`author`/`author_profiles` in `--json`), and
+`outfit ls --json` says per profile whether it is `on_disk`. Local and worktree profiles are never
+hidden (they live in the git directory, outside the tree: `outfit show <profile>` prints where).
 
 ## `outfit sync`
 

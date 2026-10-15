@@ -52,6 +52,7 @@ func syncInput(ctx context.Context, e Env, l *loaded, useHead bool) apply.Input 
 	in.Git.Env = append(append([]string(nil), l.Git.Env...), syncActiveEnv+"=1", "LC_ALL=C", "LANGUAGE=")
 	if st != nil {
 		in.Author = st.Author
+		in.AuthorProfiles = st.AuthorProfiles
 		in.CommittedProfiles = st.CommittedProfiles
 	}
 	if !in.CommittedProfiles {
@@ -571,8 +572,9 @@ func contains(s []string, v string) bool {
 	return false
 }
 
-// cmdAuthor turns author mode on (every committed profile on disk, to edit side
-// by side) or off (only the active one).
+// cmdAuthor shows or hides the inactive committed profiles' files in the working tree (where an
+// agent or a person can read, edit and check them out): every one (`on`, `off`) or the named ones
+// (`on a b`, `off a b`); with no argument it says what is on disk. The default is hidden.
 func cmdAuthor(ctx context.Context, e Env, args []string) int {
 	fs := newFlags("author")
 	asJSON := fs.Bool("json", false, "print machine-readable output")
@@ -581,10 +583,9 @@ func cmdAuthor(ctx context.Context, e Env, args []string) int {
 		return code
 	}
 	fail := func(err error) int { return report(e.Stdout, e.Stderr, *asJSON, err) }
-	if len(pos) != 1 || (pos[0] != "on" && pos[0] != "off") {
-		return fail(Usagef("usage: outfit author on|off").WithFix("outfit author on"))
+	if len(pos) > 0 && pos[0] != "on" && pos[0] != "off" {
+		return fail(Usagef("usage: outfit author [on|off] [profile…]").WithFix("outfit author on"))
 	}
-	on := pos[0] == "on"
 	l, err := load(ctx, e)
 	if err != nil {
 		return fail(err)
@@ -599,50 +600,154 @@ func cmdAuthor(ctx context.Context, e Env, args []string) int {
 	if serr != nil {
 		return fail(Errorf("%v", serr).WithFix("outfit init"))
 	}
+	// The committed profiles that exist, and the active one (never hidden).
+	committed := map[string]bool{}
+	var names []string
+	for _, p := range profiles.List(ctx, l.Git, l.Repo).Profiles {
+		if p.Tier == profiles.Committed {
+			committed[p.Name] = true
+			names = append(names, p.Name)
+		}
+	}
+	sort.Strings(names)
+	active := ""
+	if l.Profile != nil && l.Profile.Tier == profiles.Committed {
+		active = l.Profile.Name
+	}
+	state0 := func() authorView { return authorOut(st, names, active) }
+	if len(pos) == 0 {
+		v := state0()
+		if *asJSON {
+			out, _ := json.Marshal(v)
+			fmt.Fprintln(e.Stdout, string(out))
+			return ExitOK
+		}
+		fmt.Fprintln(e.Stdout, v.sentence())
+		return ExitOK
+	}
+	on := pos[0] == "on"
+	targets := pos[1:]
+	for _, t := range targets {
+		if !committed[t] {
+			return fail(Usagef("%q is not a committed profile (only those are hidden from the working tree; local and worktree profiles are always on disk)", t).WithFix("outfit ls"))
+		}
+	}
+	prevAll, prevList := st.Author, append([]string(nil), st.AuthorProfiles...)
+	switch {
+	case on && len(targets) == 0:
+		st.Author, st.AuthorProfiles = true, nil
+	case on:
+		if !st.Author {
+			st.AuthorProfiles = mergeNames(st.AuthorProfiles, targets)
+		}
+	case len(targets) == 0:
+		st.Author, st.AuthorProfiles = false, nil
+	default:
+		if st.Author { // all were on: keep every other one
+			st.Author = false
+			st.AuthorProfiles = mergeNames(nil, names)
+		}
+		st.AuthorProfiles = removeNames(st.AuthorProfiles, targets)
+	}
 	if !on {
-		active := ""
-		if l.Profile != nil && l.Profile.Tier == profiles.Committed {
-			active = l.Profile.Name
+		// What is about to be hidden must not hold uncommitted edits: hiding would leave the tree half-switched.
+		hiding := map[string]bool{}
+		for _, n := range names {
+			if n != active && (prevAll || contains(prevList, n)) && !st.Author && !contains(st.AuthorProfiles, n) {
+				hiding[n] = true
+			}
 		}
 		var dirty []string
 		for _, p := range dirtyPaths(ctx, l, profiles.CommittedRoot+"/") {
-			if active == "" || !strings.HasPrefix(p, profiles.CommittedRoot+"/"+active+"/") {
-				dirty = append(dirty, p)
+			if rest, ok := strings.CutPrefix(p, profiles.CommittedRoot+"/"); ok {
+				if name, _, _ := strings.Cut(rest, "/"); hiding[name] {
+					dirty = append(dirty, p)
+				}
 			}
 		}
 		if len(dirty) > 0 {
-			return fail((&Error{Code: ExitNeedsHuman, Msg: fmt.Sprintf("profiles other than the active one have uncommitted edits (%s): hiding them would leave the tree half-switched", strings.Join(first(dirty, 3), ", "))}).
+			return fail((&Error{Code: ExitNeedsHuman, Msg: fmt.Sprintf("profiles that would be hidden have uncommitted edits (%s): hiding them would leave the tree half-switched", strings.Join(first(dirty, 3), ", "))}).
 				WithFix("git add --sparse -u .outfit && git commit -m 'update profiles'"))
 		}
 	}
-	prev := st.Author
-	st.Author = on
 	if _, err := state.Write(l.Repo.GitDir, st); err != nil {
 		return fail(Errorf("cannot record author mode: %v", err))
 	}
 	res, _, err := converge(ctx, e, l, true)
 	if err != nil || len(res.Refused) > 0 {
-		st.Author = prev
+		st.Author, st.AuthorProfiles = prevAll, prevList
 		_, _ = state.Write(l.Repo.GitDir, st)
 		if err != nil {
 			return fail(syncError(err))
 		}
 	}
+	v := authorOut(st, names, active)
 	if *asJSON {
 		out, _ := json.Marshal(struct {
-			Author bool `json:"author"`
+			authorView
 			syncJSON
-		}{on, toJSON(res)})
+		}{v, toJSON(res)})
 		fmt.Fprintln(e.Stdout, string(out))
 		return syncExit(res)
 	}
 	printNotes(e, res)
 	if len(res.Refused) == 0 {
-		if on {
-			fmt.Fprintln(e.Stdout, "author mode on: every committed profile is on disk under .outfit/profiles/ (outfit author off hides them again)")
-		} else {
-			fmt.Fprintln(e.Stdout, "author mode off: only the active profile is on disk")
-		}
+		fmt.Fprintln(e.Stdout, v.sentence())
 	}
 	return syncExit(res)
+}
+
+// authorView is what `outfit author` reports: which committed profiles are on disk.
+type authorView struct {
+	Author   bool     `json:"author"`   // every committed profile is on disk
+	Profiles []string `json:"profiles"` // the ones on disk besides the active one, when not all
+	OnDisk   []string `json:"on_disk"`  // every committed profile that is on disk (the active one included)
+	Hidden   []string `json:"hidden"`   // the committed profiles that are not
+}
+
+func authorOut(st *state.State, committed []string, active string) authorView {
+	v := authorView{Author: st.Author, Profiles: []string{}, OnDisk: []string{}, Hidden: []string{}}
+	for _, n := range committed {
+		switch {
+		case n == active || st.Author:
+			v.OnDisk = append(v.OnDisk, n)
+		case contains(st.AuthorProfiles, n):
+			v.OnDisk = append(v.OnDisk, n)
+			v.Profiles = append(v.Profiles, n)
+		default:
+			v.Hidden = append(v.Hidden, n)
+		}
+	}
+	return v
+}
+
+func (v authorView) sentence() string {
+	switch {
+	case v.Author:
+		return "author mode: every committed profile is on disk under .outfit/profiles/ (outfit author off hides the inactive ones again)"
+	case len(v.Profiles) > 0:
+		return "author mode: " + strings.Join(v.Profiles, ", ") + " on disk besides the active profile (outfit author off hides them; outfit author on <profile> adds one)"
+	}
+	return "author mode off: only the active committed profile is on disk (outfit author on [profile…] puts more there)"
+}
+
+func mergeNames(a, b []string) []string {
+	out := append([]string(nil), a...)
+	for _, n := range b {
+		if !contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func removeNames(a, drop []string) []string {
+	var out []string
+	for _, n := range a {
+		if !contains(drop, n) {
+			out = append(out, n)
+		}
+	}
+	return out
 }

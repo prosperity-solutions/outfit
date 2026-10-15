@@ -7,7 +7,7 @@
 - **Do not hand-edit state.** Never touch `.git/outfit/`, `.git/info/sparse-checkout` or the
   symlinks; use `outfit sync`, `use`, `author`.
 - **Inactive profiles are hidden.** To read one use `outfit show <profile> [path]`. To edit or
-  check files out of several, `outfit author on` (and `outfit author off` when done).
+  check files out of several, `outfit author on [profile…]` (and `outfit author off [profile…]` when done).
 - **Commits.** Never stage a swapped path itself (the pre-commit guard refuses it); an edit
   made through a link is staged and committed as `.outfit/profiles/<name>/…`, and a committed
   profile is shared with the team, so ask the person before committing into one.

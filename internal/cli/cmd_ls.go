@@ -13,9 +13,12 @@ import (
 )
 
 type lsEntry struct {
-	Name   string   `json:"name"`
-	Tier   string   `json:"tier"`
-	Active bool     `json:"active"`
+	Name   string `json:"name"`
+	Tier   string `json:"tier"`
+	Active bool   `json:"active"`
+	// OnDisk says a committed profile's files are in the working tree (the active one, or shown
+	// with `outfit author on`); personal profiles are always on disk, in the git dir.
+	OnDisk bool     `json:"on_disk"`
 	Keys   []string `json:"keys"`
 	Files  []string `json:"files"`
 	// Dir is where a local or worktree profile's files are.
@@ -40,10 +43,10 @@ func cmdLs(ctx context.Context, e Env, args []string) int {
 	listing := profiles.List(ctx, l.Git, l.Repo)
 
 	// base is built in and always first: "no swaps", what a non-user gets.
-	entries := []lsEntry{{Name: config.Base, Tier: "builtin", Active: l.Result.Profile.Name == config.Base || l.Profile == nil, Keys: []string{}, Files: []string{}}}
+	entries := []lsEntry{{Name: config.Base, Tier: "builtin", OnDisk: true, Active: l.Result.Profile.Name == config.Base || l.Profile == nil, Keys: []string{}, Files: []string{}}}
 	var inactiveWarnings []config.Warning
 	for _, p := range listing.Profiles {
-		ent := lsEntry{Name: p.Name, Tier: string(p.Tier), Active: p.Name == l.Result.Profile.Name, Keys: []string{}, Files: []string{}, Dir: personalDir(p)}
+		ent := lsEntry{Name: p.Name, Tier: string(p.Tier), Active: p.Name == l.Result.Profile.Name, OnDisk: p.Tier != profiles.Committed || profiles.RealDir(p.Dir), Keys: []string{}, Files: []string{}, Dir: personalDir(p)}
 		var cfg *config.File
 		if p.Tier == profiles.Committed && !profiles.RealDir(p.Dir) {
 			// Hidden from disk (inactive): read it as committed at HEAD.

@@ -3,18 +3,22 @@
 ## See and edit inactive profiles
 
 Inactive committed profiles are hidden from the working tree on purpose (they would show up in
-every search). When you or an agent must read or edit them in place:
+every search). When you or an agent must read or edit them in place, show them:
 
 ```sh
-outfit author on     # every committed profile is on disk under .outfit/profiles/, editable and diffable
-outfit author off    # hide the inactive ones again
-outfit show yolo     # without switching and without author mode: toggles + files of any profile
+outfit author                # what is on disk now (default: only the active profile)
+outfit author on             # every committed profile is on disk under .outfit/profiles/
+outfit author on lean web    # or just these (names must be committed profiles: outfit ls)
+outfit author off lean       # hide one again; `outfit author off` hides every inactive one
+outfit show yolo             # without switching and without showing it: toggles + files of any profile
 outfit show yolo AGENTS.md   # one file's content
 ```
 
-`author off` refuses while the hidden profiles hold uncommitted edits (commit them with
-`git add --sparse -u .outfit && git commit`, or stash). Edits made in author mode are
-ordinary git edits of `.outfit/profiles/<name>/…`.
+`author off` refuses while a profile it would hide holds uncommitted edits (commit them with
+`git add --sparse -u .outfit && git commit`, or stash). The active profile is always on disk.
+`outfit ls --json` says per profile whether it is `on_disk`. Edits made there are ordinary git
+edits of `.outfit/profiles/<name>/…`; local and worktree profiles are never hidden (they live in
+the git directory: `outfit show <profile>` prints where).
 
 ## Make a profile
 

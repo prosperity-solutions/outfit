@@ -127,6 +127,7 @@ func faultScenarios() []faultScenario {
 			writeToken(t, r, tokens, "AGENTS.md", true) // an editor replaces the link
 		}, op: []string{"sync"}, recover: []string{"sync"}},
 		{name: "author-on", setup: use("yolo"), op: []string{"author", "on"}, recover: []string{"sync"}},
+		{name: "author-on-one", setup: use("yolo"), op: []string{"author", "on", "lean"}, recover: []string{"sync"}},
 		{name: "author-off", setup: func(t *testing.T, r *testkit.Repo, bin string, tokens *[]string) {
 			use("yolo")(t, r, bin, tokens)
 			if o := r.RunOutfit(bin, nil, "author", "on"); o.Code != 0 {

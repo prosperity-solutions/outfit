@@ -44,9 +44,13 @@ type statusJSON struct {
 	Dispatcher dispatcherInfo `json:"dispatcher"`
 	// AgentsSessionStart says this worktree has outfit's Claude Code SessionStart
 	// entry (`outfit init --agents`).
-	AgentsSessionStart bool         `json:"agents_session_start"`
-	Locked             []string     `json:"locked"`
-	Files              []statusFile `json:"files"`
+	AgentsSessionStart bool `json:"agents_session_start"`
+	// Author says which inactive committed profiles are on disk (`outfit author on`): all of
+	// them, or just AuthorProfiles. Omitted while they are hidden (the default).
+	Author         bool         `json:"author,omitempty"`
+	AuthorProfiles []string     `json:"author_profiles,omitempty"`
+	Locked         []string     `json:"locked"`
+	Files          []statusFile `json:"files"`
 	// Sync says whether the worktree matches the active profile (only when outfit
 	// is installed here).
 	Sync     *syncJSON        `json:"sync,omitempty"`
@@ -117,6 +121,9 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 	}
 	st.Dispatcher = dispatcherHealth(ctx, l, e.Getenv("HOME"))
 	st.AgentsSessionStart = agents.Installed(l.Repo.WorkTree)
+	if as, aerr := state.Read(l.Repo.GitDir); aerr == nil && as != nil {
+		st.Author, st.AuthorProfiles = as.Author, as.AuthorProfiles
+	}
 	var outOfSync, stale bool
 	if st.Dispatcher.Installed && !st.Dispatcher.OK {
 		outOfSync = true
@@ -223,6 +230,12 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 	}
 	if st.AgentsSessionStart {
 		fmt.Fprintln(w, "agents   Claude Code SessionStart entry installed ("+agents.SettingsFile+")")
+	}
+	switch {
+	case st.Author:
+		fmt.Fprintln(w, "author   every committed profile is on disk (outfit author off hides the inactive ones)")
+	case len(st.AuthorProfiles) > 0:
+		fmt.Fprintln(w, "author   on disk besides the active profile: "+strings.Join(st.AuthorProfiles, ", ")+" (outfit author off hides them)")
 	}
 	if syncRes != nil {
 		switch {

@@ -34,6 +34,9 @@ type State struct {
 	// Author is author mode (`outfit author on`): every committed profile is on
 	// disk for editing side by side, instead of only the active one.
 	Author bool `json:"author,omitempty"`
+	// AuthorProfiles are committed profiles kept on disk one by one (`outfit author on <name>`),
+	// in addition to the active one; ignored while Author (all of them) is on.
+	AuthorProfiles []string `json:"author_profiles,omitempty"`
 	// CommittedProfiles remembers that the repository has committed profiles, so
 	// the no-op sync path can keep inactive ones hidden without asking git.
 	CommittedProfiles bool `json:"committed_profiles,omitempty"`

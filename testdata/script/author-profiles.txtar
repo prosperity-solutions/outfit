@@ -1,0 +1,72 @@
+# `outfit author`: show or hide the inactive committed profiles' files in the working tree
+# (so an agent or a person can read, edit and check them out): all of them or named ones,
+# hidden by default. Bare, it says what is on disk.
+fixture repo team
+cd repo
+outfit init
+outfit use yolo
+! exists .outfit/profiles/lean
+exists .outfit/profiles/yolo/profile.config
+
+# Bare: the state. Default hidden.
+outfit author
+stdout 'author mode off: only the active committed profile is on disk'
+outfit author --json
+stdout '"author":false'
+stdout '"hidden":\["lean"\]'
+stdout '"on_disk":\["yolo"\]'
+
+# One profile, by name. Its files appear; the others stay hidden; status and ls say so.
+outfit author on lean
+stdout 'lean on disk besides the active profile'
+exists .outfit/profiles/lean/profile.config
+exists .outfit/profiles/lean/apps/web/AGENTS.md
+outfit status
+stdout 'author   on disk besides the active profile: lean'
+outfit ls --json
+stdout '"name":"lean","tier":"committed","active":false,"on_disk":true'
+# A sync changes nothing and keeps it (the patterns carry the choice).
+outfit sync
+exists .outfit/profiles/lean/profile.config
+exec git status --short
+! stdout .
+# A name that is not a committed profile is a usage error naming the fix.
+! outfit author on nosuch
+stderr 'not a committed profile'
+stderr 'fix: outfit ls'
+
+# Edit it in place (that is the point), then hiding it refuses until the edit is committed.
+exec sh -c 'echo "# edited by an agent" >> .outfit/profiles/lean/profile.config'
+! outfit author off lean
+stderr 'uncommitted edits'
+exists .outfit/profiles/lean/profile.config
+exec git add --sparse -u .outfit
+exec git commit -qm 'docs: edit the lean profile'
+outfit author off lean
+stdout 'author mode off'
+! exists .outfit/profiles/lean
+exec git show HEAD:.outfit/profiles/lean/profile.config
+stdout 'edited by an agent'
+
+# All of them, then all but one.
+outfit author on
+stdout 'every committed profile is on disk'
+exists .outfit/profiles/lean/profile.config
+outfit author off lean
+! exists .outfit/profiles/lean
+exists .outfit/profiles/yolo/profile.config
+outfit author --json
+stdout '"author":false'
+# The active profile is never hidden, whatever is asked.
+outfit author off yolo
+exists .outfit/profiles/yolo/profile.config
+# Switching the active profile moves what is always shown; a named one stays.
+outfit author on lean
+outfit use base
+exists .outfit/profiles/lean/profile.config
+! exists .outfit/profiles/yolo
+outfit author off
+! exists .outfit/profiles/lean
+outfit uninstall
+exec git status --short
+! stdout .

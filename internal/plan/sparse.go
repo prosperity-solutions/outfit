@@ -76,16 +76,18 @@ type SparseOptions struct {
 	// HideProfiles hides the committed profiles that are not Active. False in
 	// author mode, and when the repository has none.
 	HideProfiles bool
-	// Active is the active COMMITTED profile whose directory stays on disk ("" for
-	// base, local and worktree profiles).
-	Active string
+	// Show are the committed profiles whose directories stay on disk although the others
+	// are hidden: the active one (none for base, local and worktree profiles) and any the
+	// person asked for (`outfit author on <name>`). Sorted, no duplicates, no empty names.
+	Show []string
 }
 
 // SparseText renders the managed sparse-checkout file (HANDOVER.md §3.4.3). The
 // patterns are non-cone: "/*" includes everything, then each "!/path" hides one
 // swapped file and "!/.outfit/profiles/*" hides every committed profile, then the
 // active one is included back. Paths are written in sorted order so the text is a
-// pure function of its inputs (an unchanged file is never rewritten).
+// pure function of its inputs (an unchanged file is never rewritten). Every shown profile
+// is included back after the "hide all" line.
 func SparseText(o SparseOptions) string {
 	var b strings.Builder
 	b.WriteString(Marker + "\n/*\n")
@@ -96,8 +98,12 @@ func SparseText(o SparseOptions) string {
 	}
 	if o.HideProfiles {
 		b.WriteString("!/" + CommittedRoot + "/*\n")
-		if o.Active != "" {
-			b.WriteString("/" + CommittedRoot + "/" + escapePattern(o.Active) + "/\n")
+		show := append([]string(nil), o.Show...)
+		sort.Strings(show)
+		for i, name := range show {
+			if name != "" && (i == 0 || name != show[i-1]) {
+				b.WriteString("/" + CommittedRoot + "/" + escapePattern(name) + "/\n")
+			}
 		}
 	}
 	return b.String()
@@ -116,7 +122,7 @@ func ParseSparse(text string) (o SparseOptions, ok bool) {
 		case l == "!/"+CommittedRoot+"/*":
 			o.HideProfiles = true
 		case strings.HasPrefix(l, "/"+CommittedRoot+"/") && strings.HasSuffix(l, "/"):
-			o.Active = unescapePattern(strings.TrimSuffix(strings.TrimPrefix(l, "/"+CommittedRoot+"/"), "/"))
+			o.Show = append(o.Show, unescapePattern(strings.TrimSuffix(strings.TrimPrefix(l, "/"+CommittedRoot+"/"), "/")))
 		case strings.HasPrefix(l, "!/"):
 			o.Hidden = append(o.Hidden, unescapePattern(strings.TrimPrefix(l, "!/")))
 		default:
