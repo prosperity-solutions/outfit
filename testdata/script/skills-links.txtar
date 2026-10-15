@@ -58,6 +58,26 @@ exec test -L $HOME/.claude/skills
 exec rm $HOME/.claude/skills
 exec ln -s $HOME/dot/skills $HOME/.claude/skills
 ! outfit skills install
-stderr 'points outside'
+stderr 'absolute or leads outside'
 ! outfit skills install --json
 stdout '"code":3'
+
+# A team that tracks the skill under another capitalisation (a Mac treats it as the same
+# folder), or has `.claude` as a submodule, is not written into either.
+exec git checkout -q main
+exec mkdir -p .Claude/skills/outfit
+exec sh -c 'printf -- "---\nname: outfit\nmetadata:\n  managed-by: outfit\n---\nteam\n" > .Claude/skills/outfit/SKILL.md'
+exec git add -f .Claude
+exec git commit -qm 'docs: team skill, other case'
+! outfit skills install --project
+stderr 'tracked by git'
+exec git rm -rq .Claude
+exec git commit -qm 'docs: drop it'
+exec git init -q $WORK/sub
+exec git -C $WORK/sub config user.email a@b
+exec git -C $WORK/sub config user.name a
+exec git -C $WORK/sub commit -q --allow-empty -m init
+exec git -c protocol.file.allow=always submodule add -q $WORK/sub .claude
+exec git commit -qm 'chore: .claude is a submodule'
+! outfit skills install --project
+stderr 'tracked by git'

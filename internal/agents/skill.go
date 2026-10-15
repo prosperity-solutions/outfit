@@ -173,7 +173,7 @@ func InstallSkill(base string, dry, strict bool) ([]SkillResult, error) {
 // the base) into the refusal it is, naming the path.
 func linkErr(p string, err error) error {
 	if strings.Contains(err.Error(), "escapes from parent") {
-		return fmt.Errorf("%s: a link on the way points outside the folder: %w", p, ErrSkillLink)
+		return fmt.Errorf("%s: a link on the way is absolute or leads outside the folder: %w", p, ErrSkillLink)
 	}
 	return fmt.Errorf("%s: %w", p, err)
 }

@@ -146,14 +146,22 @@ func skillsInstall(ctx context.Context, e Env, remove, project, dry, asJSON bool
 			return fail(err)
 		}
 		out.Base = l.Repo.WorkTree
-		// A skill directory git tracks is the team's own: not ours to write into.
-		for _, d := range agents.SkillDirs {
-			res, err := l.Git.Read(ctx, "--literal-pathspecs", "ls-files", "-z", "--", d)
-			if err != nil {
-				return fail(Errorf("cannot ask git about %s: %v", d, err))
+		// A skill directory git tracks is the team's own: not ours to write into. Asked
+		// without literal pathspecs and case-insensitively (a Mac tracks `.Claude/...` as
+		// the same folder), and a submodule (mode 160000) at `.claude` or `.agents` counts:
+		// the parent's index lists nothing inside it.
+		res, err := l.Git.Read(ctx, "--icase-pathspecs", "ls-files", "-z", "-s", "--", ".claude", ".agents")
+		if err != nil {
+			return fail(Errorf("cannot ask git what is tracked: %v", err))
+		}
+		for _, rec := range strings.Split(string(res.Stdout), "\x00") {
+			meta, p, ok := strings.Cut(rec, "\t")
+			if !ok {
+				continue
 			}
-			if len(res.Stdout) > 0 {
-				return fail((&Error{Code: ExitNeedsHuman, Msg: d + " is tracked by git (the team's own skill); outfit does not write into it"}).
+			low := strings.ToLower(p)
+			if strings.HasPrefix(meta, "160000") || strings.HasPrefix(low, ".claude/skills/outfit/") || strings.HasPrefix(low, ".agents/skills/outfit/") {
+				return fail((&Error{Code: ExitNeedsHuman, Msg: p + " is tracked by git (the team's own skill or a submodule); outfit does not write into it"}).
 					WithFix("outfit skills install   (for your home directory instead)"))
 			}
 		}
@@ -176,11 +184,19 @@ func skillsInstall(ctx context.Context, e Env, remove, project, dry, asJSON bool
 		fix := ""
 		if errors.Is(err, agents.ErrSkillLink) {
 			code = ExitNeedsHuman
-			fix = "replace the link with a real directory, or install into your home directory: outfit skills install"
+			fix = "make the link relative and inside the folder, or put the file there by hand (outfit skills " + map[bool]string{true: "remove", false: "install"}[remove] + " -h)"
+			if project {
+				fix = "replace the link with a real directory, or install into your home directory: outfit skills install"
+			}
 		} else if errors.Is(err, agents.ErrSkillNotOurs) {
 			code = ExitNeedsHuman
 			msg += ": a SKILL.md outfit did not write is left alone"
 			fix = "move or delete that file, then rerun"
+		}
+		// A write that failed half way leaves a file the exclude entry has to cover, or
+		// `git add -A` would commit it.
+		if project && l != nil && !dry && !remove && len(out.Files) > 0 {
+			_ = skillsExclude(ctx, l, false)
 		}
 		return fail((&Error{Code: code, Msg: msg}).WithFix(fix))
 	}
