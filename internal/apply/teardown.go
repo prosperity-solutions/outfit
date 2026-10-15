@@ -70,7 +70,7 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 		}
 	}
 
-	sparseText, _ := os.ReadFile(filepath.Join(w.GitDir, "info", "sparse-checkout"))
+	sparseText, _ := readInside(w.GitDir, "info/sparse-checkout")
 	managed := strings.HasPrefix(string(sparseText), plan.Marker)
 	if managed || st.SparseSet {
 		if managed {

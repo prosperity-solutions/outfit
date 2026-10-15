@@ -367,6 +367,16 @@ func cmdUse(ctx context.Context, e Env, args []string) int {
 	return syncExit(res)
 }
 
+// readProfileFile reads p below the profile's directory and can never leave it.
+func readProfileFile(dir, p string) ([]byte, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	return root.ReadFile(p)
+}
+
 // untrackedProfileWarning names the active committed profile's files git does not
 // know yet. Only the working tree holds them: `git clean -x` deletes them, and
 // `outfit` cannot bring them back. "" when there are none.
@@ -479,7 +489,7 @@ func cmdShow(ctx context.Context, e Env, args []string) int {
 				return fail(Errorf("cannot read %s at HEAD: %v", p, err))
 			}
 			b = res.Stdout
-		} else if b, err = os.ReadFile(filepath.Join(prof.Dir, filepath.FromSlash(p))); err != nil {
+		} else if b, err = readProfileFile(prof.Dir, p); err != nil {
 			return fail(Errorf("cannot read %s: %v", p, err))
 		}
 		_, _ = e.Stdout.Write(b)

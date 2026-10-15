@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -268,7 +269,7 @@ func (in Input) writeSparse(ctx context.Context, text string) error {
 	if strings.Contains(string(res.Stderr), "not up to date") || strings.Contains(string(res.Stderr), "left despite sparse patterns") {
 		return fmt.Errorf("git left files in place because they have uncommitted changes, so the switch is half done: %s\n  fix: commit those changes, or put them in the profile's copy, then: outfit sync", strings.TrimSpace(string(res.Stderr)))
 	}
-	b, err := os.ReadFile(filepath.Join(in.W.GitDir, "info", "sparse-checkout"))
+	b, err := readInside(in.W.GitDir, "info/sparse-checkout")
 	if err != nil {
 		return fmt.Errorf("git did not write the sparse-checkout file: %w", err)
 	}
@@ -306,6 +307,26 @@ func unsetWorktree(ctx context.Context, in Input, keys ...string) {
 	}
 }
 
+// mkdirAllLike makes the directories above rel (below root) with the permissions of
+// the repository's own top directory (what the person chose; git checks files out
+// the same way); os.Root keeps every one of them inside root.
+func mkdirAllLike(root, rel string) error {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+	dir := pathpkg.Dir(rel)
+	if dir == "." {
+		return nil
+	}
+	mode := os.FileMode(0o750)
+	if fi, err := os.Stat(root); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	return r.MkdirAll(dir, mode)
+}
+
 // link puts the symlink for path in place: parent directories first (sparse
 // checkout removes a directory whose only file was hidden, verified), the link
 // made under a temporary name and renamed over the target so there is never a
@@ -316,7 +337,7 @@ func (in Input) link(path, target string, replaces bool) error {
 		return fmt.Errorf("%s is below a symlinked directory: refusing to link through it", path)
 	}
 	abs := in.abs(path)
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+	if err := mkdirAllLike(in.W.WorkTree, path); err != nil {
 		return err
 	}
 	if fi, err := os.Lstat(abs); err == nil {

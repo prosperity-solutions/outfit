@@ -275,11 +275,22 @@ func IsJunk(n string) bool {
 
 // sparseNow is the current info/sparse-checkout text ("" when absent).
 func sparseNow(gitDir string) string {
-	b, err := os.ReadFile(filepath.Join(gitDir, "info", "sparse-checkout"))
+	b, err := readInside(gitDir, "info/sparse-checkout")
 	if err != nil {
 		return ""
 	}
 	return string(b)
+}
+
+// readInside reads rel below dir and can never leave it (os.Root refuses ".." and
+// links that point outside).
+func readInside(dir, rel string) ([]byte, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	return root.ReadFile(rel)
 }
 
 // dirty asks git which of paths differ from the index (content after filters,

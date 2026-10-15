@@ -20,10 +20,16 @@ const lockWait = 15 * time.Second // how long a second sync waits for the first
 // serialised, never skipped, so the last one to run sees everything the others did.
 func AcquireLock(gitDir string) (*Lock, error) {
 	path := filepath.Join(gitDir, "outfit", "sync.lock")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// Rooted at the git directory: the lock can only ever be made inside it.
+	root, err := os.OpenRoot(gitDir)
+	if err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll("outfit", 0o750); err != nil {
+		return nil, err
+	}
+	f, err := root.OpenFile("outfit/sync.lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
