@@ -126,13 +126,17 @@ jedisct1/minisign's own static build and runs it only when its SHA-256 equals th
 written in the script (`BOOT_LINUX_*` and `BOOT_MACOS_*`, at the top). Those builds
 are release files upstream could replace; if it ever does, installs without minisign
 stop (the hash no longer matches) until the pin is updated, and CI's real-download test
-is what shows it first. To move to a newer minisign:
+is what shows it first (on pushes to `main` for the macOS pin, on pull requests for
+Linux; there is no scheduled run). To move to a newer minisign:
 download the release files, verify them with the upstream key (printed in
 [minisign's README](https://github.com/jedisct1/minisign#readme)), run
-`shasum -a 256` on them, and put the new URLs and hashes in the script. macOS stays on
+`shasum -a 256` on them, list the archive (`tar -tzf`, `unzip -l`) to check that the
+member paths `bootstrap_minisign` extracts are still there, and put the new URLs and
+hashes in the script. Then update the version mentioned in the comment above the pins and
+in `docs/install.md`. macOS stays on
 0.11 while the macOS build of a newer one is arm64 only; the Linux build is static for
 both architectures. `tests/validate-install-contract.sh` checks the shape of the pins and
-CI downloads them for real (`INSTALL_TEST_NETWORK=1`), and every release's verify job
+CI downloads them for real (`INSTALL_TEST_NETWORK=1`, in the installer job), and every release's verify job
 installs through them on all four runner types.
 
 ## When a release run fails

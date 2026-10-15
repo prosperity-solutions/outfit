@@ -425,6 +425,15 @@ if [ "$HAVE_MINISIGN" = 1 ]; then
   D=$WORK/bs6
   run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_MINISIGN=1 WITH_SIGNATURE=1 "OUTFIT_BOOTSTRAP_URL=file://$WORK/does-not-exist" OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/key")"
   check "  a minisign on PATH is used without any download" rc_is 0
+  # A minisign on PATH that does not start counts as none: the pinned download is used.
+  BR=$WORK/bin-broken
+  farm "$BR"
+  printf '#!/bin/sh\nexit 127\n' >"$BR/minisign"
+  chmod +x "$BR/minisign"
+  D=$WORK/bs8
+  run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_SIGNATURE=1 "PATH=$BR" "$(boot_env)" OUTFIT_BOOTSTRAP_SHA256="$BOOT_SHA" OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/key")"
+  check "  a minisign on PATH that does not start is replaced by the pinned download" rc_is 0
+  check "    and says so" out_has "signature OK (pinned minisign download)"
   if [ "${INSTALL_TEST_NETWORK:-0}" = 1 ]; then
     D=$WORK/bs7
     run_install "$(base_env)" OUTFIT_INSTALL_DIR="$D" WITH_SIGNATURE=1 OUTFIT_MINISIGN_PUBKEY="$(pubkey_of "$WORK/key")"

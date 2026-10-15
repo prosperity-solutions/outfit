@@ -20,8 +20,9 @@
 #                         For tests.
 #   OUTFIT_API_URL        API base (default https://api.github.com/repos/prosperity-solutions/outfit).
 #                         For tests; the token is sent only to api.github.com or this machine.
-#   OUTFIT_SKIP_SIGNATURE   Set to 1 to install with only the SHA-256 check, when no signature
-#                         check can run at all (see below). Prints a warning.
+#   OUTFIT_SKIP_SIGNATURE   Set to 1 to install with only the SHA-256 check when no signature
+#                         checker can be had (no minisign on PATH, and the pinned download
+#                         failed). It never skips a check that can run. Prints a warning.
 #   OUTFIT_MINISIGN_PUBKEY  Replaces the embedded signing key(s) below. For tests.
 #   OUTFIT_BOOTSTRAP_URL    Replaces the download of the signature checker. For tests.
 #   OUTFIT_BOOTSTRAP_SHA256 Its SHA-256, when OUTFIT_BOOTSTRAP_URL is set. For tests.
@@ -33,7 +34,9 @@
 # tampering). The signature check needs a `minisign` binary. When there is none on
 # PATH, the script downloads minisign's own static build from its GitHub release and
 # runs it only after its SHA-256 matches the one written below, so nothing has to
-# be installed first. Both checks must pass, or nothing is installed.
+# be installed first. Both checks must pass, or nothing is installed; the one way
+# round it is OUTFIT_SKIP_SIGNATURE=1, which you set yourself and which only applies
+# when no checker can be had at all.
 # It never uses sudo.
 
 set -eu
@@ -141,7 +144,7 @@ sha256_of() {
 # downloaded without the GitHub token (it is a third party's file) and is refused
 # unless its SHA-256 is the pinned one, so a swapped download never runs. On failure
 # it returns 1 and says why in $boot_why; $boot_tamper is 1 when the cause is a hash
-# that does not match (which is not something to switch the check off for).
+# that does not match (the message then does not offer to skip the check).
 bootstrap_minisign() {
   boot_why=""
   boot_tamper=0
@@ -149,7 +152,12 @@ bootstrap_minisign() {
     Darwin) boot_url=$BOOT_MACOS_URL; boot_want=$BOOT_MACOS_SHA256; boot_member=minisign
             command -v unzip >/dev/null 2>&1 || { boot_why="unzip is not installed"; return 1; } ;;
     *)      boot_url=$BOOT_LINUX_URL; boot_want=$BOOT_LINUX_SHA256
-            case "$plat" in linux_arm64) boot_member=minisign-linux/aarch64/minisign ;; *) boot_member=minisign-linux/x86_64/minisign ;; esac ;;
+            # A new platform in platform() needs its own line here (and a pin above).
+            case "$plat" in
+              linux_amd64) boot_member=minisign-linux/x86_64/minisign ;;
+              linux_arm64) boot_member=minisign-linux/aarch64/minisign ;;
+              *) boot_why="there is no pinned minisign for $plat"; return 1 ;;
+            esac ;;
   esac
   if [ -n "${OUTFIT_BOOTSTRAP_URL:-}" ]; then
     boot_url=$OUTFIT_BOOTSTRAP_URL
@@ -158,7 +166,10 @@ bootstrap_minisign() {
   case "$boot_want" in
     *[!0-9a-f]* | "") boot_why="OUTFIT_BOOTSTRAP_URL needs OUTFIT_BOOTSTRAP_SHA256"; return 1 ;;
   esac
-  curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/minisign.pkg" "$boot_url" 2>/dev/null || { boot_why="could not download $boot_url"; return 1; }
+  curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/minisign.pkg" "$boot_url" 2>/dev/null || {
+    boot_why="could not download $boot_url (curl exit $?: no network, a proxy or a firewall in the way?)"
+    return 1
+  }
   if [ "$(sha256_of "$tmp/minisign.pkg")" != "$boot_want" ]; then
     boot_why="the download from $boot_url does not match the SHA-256 pinned in this script"
     boot_tamper=1
@@ -171,14 +182,16 @@ bootstrap_minisign() {
   chmod 700 "$tmp/minisign"
   # Prove it runs here before a failed run can look like a bad signature (a temp folder
   # mounted noexec, a security policy, a build for another CPU).
-  "$tmp/minisign" -v >/dev/null 2>&1 || { boot_why="the downloaded minisign cannot run here (is $tmp on a noexec mount?)"; return 1; }
+  "$tmp/minisign" -v >/dev/null 2>&1 || { boot_why="the downloaded minisign cannot run here ($tmp may be on a noexec mount: set TMPDIR to a folder you can run programs from and run this again)"; return 1; }
 }
 
 verify_signature() {
   ms=$(command -v minisign 2>/dev/null || true)
   how="minisign on this machine"
+  # One that is on PATH but does not start (a stale library, say) counts as none.
+  if [ -n "$ms" ] && ! "$ms" -v >/dev/null 2>&1; then ms=""; fi
   if [ -z "$ms" ]; then
-    say "minisign is not installed; fetching a pinned copy to check the signature"
+    say "no working minisign on this machine; fetching a pinned copy to check the signature"
     if bootstrap_minisign; then
       ms=$tmp/minisign
       how="pinned minisign download"
@@ -186,9 +199,9 @@ verify_signature() {
       say "WARNING: OUTFIT_SKIP_SIGNATURE=1 and no signature checker could be had ($boot_why), so the release signature was NOT checked; only the SHA-256 was." >&2
       return 0
     elif [ "$boot_tamper" = 1 ]; then
-      err "could not get a signature checker: $boot_why. Nothing was installed. Do not skip the check for this; install minisign yourself (brew install minisign, apt install minisign) and run this again, and tell the maintainers"
+      err "could not get a signature checker: $boot_why. Nothing was installed. Do not skip the check for this: install minisign yourself (brew install minisign, apt install minisign), run this again, and tell the maintainers at https://github.com/prosperity-solutions/outfit/issues"
     else
-      err "could not get a signature checker: there is no minisign on this machine and $boot_why. Nothing was installed. Fix: install minisign (brew install minisign, apt install minisign) and run this again; or, if you accept a SHA-256 check only, run it again with OUTFIT_SKIP_SIGNATURE=1"
+      err "could not get a signature checker: there is no minisign on this machine and $boot_why. Nothing was installed. Fix: install minisign (brew install minisign, apt install minisign) and run this again; or, if you accept a SHA-256 check only, run it again with the variable on the sh side of the pipe: curl -fsSL <the same URL> | OUTFIT_SKIP_SIGNATURE=1 sh"
     fi
   fi
   for key in ${OUTFIT_MINISIGN_PUBKEY:-$PUBKEYS}; do

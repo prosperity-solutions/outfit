@@ -50,17 +50,18 @@ With no token the script uses the public `releases/latest/download/…` URLs.
    script (the same key `outfit update` uses, kept in
    [`internal/update/keys.txt`](../internal/update/keys.txt)). A bad signature stops
    everything. This is the check that catches tampering. You do not need `minisign`
-   for it: with one on your PATH the script uses it, and without one it downloads
+   for it: with a working one on your PATH the script uses it, and without one it downloads
    minisign's own static build from
    [jedisct1/minisign](https://github.com/jedisct1/minisign/releases) (Linux amd64 and
    arm64, macOS arm64 and Intel), and runs it **only if its SHA-256 equals the one
    written in the script**. That download is sent no token and is not installed
    anywhere: it lives in the temporary folder and goes with it. It is run once to prove it
    works here. If it cannot be fetched or run (offline, a proxy, a folder you cannot
-   run programs from), the script stops, says which of those it was, and says what to
-   do: install minisign, or run again with `OUTFIT_SKIP_SIGNATURE=1` to accept a
-   SHA-256 check only (it prints a warning). If the download is there but does not
-   match the pinned hash, the script does not suggest skipping anything.
+   run programs from), the script stops, says what failed (for a folder you cannot run
+   programs from, `TMPDIR` can point elsewhere), and says what to do: install minisign, or run again with `OUTFIT_SKIP_SIGNATURE=1` to accept a
+   SHA-256 check only (it prints a warning). Put the variable on the `sh` side of the
+   pipe: `curl -fsSL … | OUTFIT_SKIP_SIGNATURE=1 sh`. If the download is there but does
+   not match the pinned hash, the script does not suggest skipping anything.
    With a token, the script also requires the archive to be the build the release is
    named for, so an old, validly signed build cannot be re-uploaded under a newer
    release; the public URL path cannot check that, because GitHub's "latest" redirect
