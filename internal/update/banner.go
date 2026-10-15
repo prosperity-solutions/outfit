@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -45,11 +46,17 @@ type cacheFile struct {
 }
 
 // cleanDir validates a cache directory taken from the environment (HOME,
-// XDG_CACHE_HOME): it must be an absolute path, and is returned cleaned. A relative
-// one would put outfit's files inside whatever repository it runs in.
+// XDG_CACHE_HOME): an absolute path, with no ".." in it, that is outfit's own
+// directory (CacheDir always names it ".../outfit"), returned cleaned. A relative one
+// would put outfit's files inside whatever repository it runs in.
 func cleanDir(dir string) (string, bool) {
-	if dir == "" || !filepath.IsAbs(dir) {
+	if dir == "" || !filepath.IsAbs(dir) || filepath.Base(dir) != "outfit" {
 		return "", false
+	}
+	for _, part := range strings.Split(filepath.ToSlash(dir), "/") {
+		if part == ".." {
+			return "", false
+		}
 	}
 	return filepath.Clean(dir), true
 }

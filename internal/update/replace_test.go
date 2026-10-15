@@ -112,7 +112,8 @@ func TestReplaceMissingExecutable(t *testing.T) {
 }
 
 func TestLockSurvivesALockFileOwnedBySomeoneElse(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "outfit")
+	_ = os.MkdirAll(dir, 0o700)
 	if err := os.WriteFile(filepath.Join(dir, "update.lock"), nil, 0o444); err != nil { // read-only, like root's after a sudo run
 		t.Fatal(err)
 	}
@@ -124,7 +125,7 @@ func TestLockSurvivesALockFileOwnedBySomeoneElse(t *testing.T) {
 }
 
 func TestLock(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "outfit")
 	unlock, err := Lock(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +154,7 @@ func TestCacheDir(t *testing.T) {
 // ---- banner ----------------------------------------------------------------
 
 func banner(t *testing.T, current string, check func(context.Context) (Version, error)) *Banner {
-	return &Banner{Current: current, Dir: t.TempDir(), Check: check, Budget: 200 * time.Millisecond}
+	return &Banner{Current: current, Dir: filepath.Join(t.TempDir(), "outfit"), Check: check, Budget: 200 * time.Millisecond}
 }
 
 func newer(v string) func(context.Context) (Version, error) {
@@ -324,6 +325,12 @@ func TestCacheFilesArePrivateAndNeedAnAbsoluteDirectory(t *testing.T) {
 		fi, err := os.Stat(path)
 		if err != nil || fi.Mode().Perm() != want {
 			t.Errorf("%s: mode %v, %v; want %v", path, fi.Mode().Perm(), err, want)
+		}
+	}
+	// Only outfit's own directory, absolute and without "..": anything else is refused.
+	for _, bad := range []string{filepath.Join(t.TempDir(), "other"), t.TempDir() + "/x/../outfit"} {
+		if _, err := Lock(bad); err == nil {
+			t.Errorf("Lock accepted %q", bad)
 		}
 	}
 	// A relative directory is refused, never created next to the cwd.
