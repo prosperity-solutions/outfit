@@ -58,7 +58,7 @@ Only `release.yml` references them, and only it runs with them (push to `main`).
 
 | Name | Kind | Used for |
 |---|---|---|
-| `MINISIGN_SECRET_KEY`, `MINISIGN_PASSWORD` | secrets | signing `checksums.txt` |
+| `MINISIGN_SECRET_KEY`, `MINISIGN_PASSWORD` | secrets | signing `checksums.txt` (read only by the `build` job, which runs in the `release` environment: [security.md](security.md)) |
 | `MINISIGN_PUBLIC_KEY` | variable | must be one of the keys in `internal/update/keys.txt` (the `.pub` file, or just its second line) |
 | `ALLOW_UNTRUSTED_PREVIOUS_KEYS` | variable | break glass for a leaked key only (below); normally absent |
 | `MACOS_SIGN_P12`, `MACOS_SIGN_PASSWORD` | secrets | Developer ID signing |
