@@ -34,7 +34,15 @@ type Client struct {
 	Dir string
 	// Env is appended to the process environment for every call.
 	Env []string
+	// OwnRepo drops the variables that point git at a particular repository (GIT_DIR,
+	// GIT_WORK_TREE, GIT_INDEX_FILE, GIT_COMMON_DIR, GIT_PREFIX) from the inherited
+	// environment: for a client that works on ANOTHER worktree than the one this process
+	// was started in (a hook exports them for its own).
+	OwnRepo bool
 }
+
+// repoEnv are the variables OwnRepo drops.
+var repoEnv = []string{"GIT_DIR=", "GIT_WORK_TREE=", "GIT_INDEX_FILE=", "GIT_COMMON_DIR=", "GIT_PREFIX="}
 
 // Result is the outcome of one git call.
 type Result struct {
@@ -87,7 +95,20 @@ func (c Client) run(ctx context.Context, stdin []byte, read bool, args []string)
 
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = c.Dir
-	cmd.Env = append(os.Environ(), c.Env...)
+	cmd.Env = os.Environ()
+	if c.OwnRepo {
+		cmd.Env = nil
+		for _, kv := range os.Environ() {
+			keep := true
+			for _, p := range repoEnv {
+				keep = keep && !strings.HasPrefix(kv, p)
+			}
+			if keep {
+				cmd.Env = append(cmd.Env, kv)
+			}
+		}
+	}
+	cmd.Env = append(cmd.Env, c.Env...)
 	if read {
 		cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0")
 	}

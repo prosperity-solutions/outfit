@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -196,5 +197,27 @@ func TestLsFilesSkipWorktreeFormat(t *testing.T) {
 	}
 	if !strings.Contains(string(res.Stdout), "H 100644 ") {
 		t.Fatalf("a normal file must be tagged H: %q", res.Stdout)
+	}
+}
+
+func TestOwnRepoDropsTheRepositoryVariablesOfThisProcess(t *testing.T) {
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "elsewhere"))
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(t.TempDir(), "idx"))
+	// Inherited, the variables send git to a repository that does not exist.
+	if _, err := (gitx.Client{Dir: dir}).Read(context.Background(), "rev-parse", "--git-dir"); err == nil {
+		t.Fatal("expected the inherited GIT_DIR to break the call")
+	}
+	// A client for another repository ignores them, and an explicit Env still wins.
+	res, err := (gitx.Client{Dir: dir, OwnRepo: true}).Read(context.Background(), "rev-parse", "--git-dir")
+	if err != nil || strings.TrimSpace(string(res.Stdout)) != ".git" {
+		t.Fatalf("%v %q", err, res.Stdout)
+	}
+	res, err = (gitx.Client{Dir: dir, OwnRepo: true, Env: []string{"GIT_DIR=" + filepath.Join(dir, ".git")}}).Read(context.Background(), "rev-parse", "--git-dir")
+	if err != nil || !strings.HasSuffix(strings.TrimSpace(string(res.Stdout)), ".git") {
+		t.Fatalf("%v %q", err, res.Stdout)
 	}
 }

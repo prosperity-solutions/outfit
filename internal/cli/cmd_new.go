@@ -224,9 +224,9 @@ func worktreesUsing(ctx context.Context, l *loaded, name string) []uninstallWork
 		if w.GitDir == l.Repo.GitDir {
 			continue
 		}
-		g := gitx.Client{Dir: w.Path}
+		g := gitx.Client{Dir: w.Path, OwnRepo: true}
 		if w.Path == "" {
-			g = gitx.Client{Env: []string{"GIT_DIR=" + w.GitDir}} // the main worktree of a separate git dir, path unknown
+			g = gitx.Client{OwnRepo: true, Env: []string{"GIT_DIR=" + w.GitDir}} // the main worktree of a separate git dir, path unknown
 		}
 		if res, err := g.Read(ctx, "config", "--get", "outfit.profile"); err == nil && strings.TrimSpace(string(res.Stdout)) == name {
 			out = append(out, w)
@@ -243,6 +243,7 @@ func resyncWorktree(ctx context.Context, e Env, w uninstallWorktree) bool {
 	}
 	other := e
 	other.Dir = w.Path
+	other.OwnRepo = true
 	other.Getenv = func(k string) string {
 		if k == "GIT_DIR" || k == "GIT_WORK_TREE" || k == "GIT_INDEX_FILE" {
 			return "" // the repository is found from the directory, not from this process's
@@ -253,8 +254,9 @@ func resyncWorktree(ctx context.Context, e Env, w uninstallWorktree) bool {
 	if err != nil || requireInstalled(l) != nil {
 		return false
 	}
-	_, _, err = converge(ctx, other, l, false)
-	return err == nil
+	res, _, err := converge(ctx, other, l, false)
+	// Settled only when sync is done: a refusal or a "needs a person" is not.
+	return err == nil && len(res.Refused) == 0 && !res.NeedsHuman
 }
 
 func worktreeLabels(ws []uninstallWorktree) []string {

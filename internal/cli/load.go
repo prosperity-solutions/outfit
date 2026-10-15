@@ -40,7 +40,7 @@ func load(ctx context.Context, e Env) (*loaded, error) {
 	if r.WorkTree == "" {
 		return nil, Errorf("this is a bare repository: outfit works on checkouts").WithFix("cd into a working tree")
 	}
-	l := &loaded{Repo: r, Git: gitx.Client{Dir: r.WorkTree}}
+	l := &loaded{Repo: r, Git: gitx.Client{Dir: r.WorkTree, OwnRepo: e.OwnRepo}}
 	if e.Getenv("GIT_DIR") != "" {
 		// Hooks export GIT_DIR (possibly relative to a cwd we have left): run git
 		// against the directory we resolved, so both agree on the repository.

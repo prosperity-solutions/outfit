@@ -38,6 +38,9 @@ type Env struct {
 	Stdin io.Reader
 	// Exe is the absolute path of the running binary, recorded in hook shims.
 	Exe string
+	// OwnRepo makes every git call of this Env ignore the repository variables this process
+	// inherited (see gitx.Client.OwnRepo): set when working on another worktree.
+	OwnRepo bool
 	// IsTTY reports whether stderr is a terminal (the update banner only shows
 	// there).
 	IsTTY bool

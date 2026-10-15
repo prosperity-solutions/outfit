@@ -223,7 +223,9 @@ outfit new shared
 exec sh -c 'echo shared > .git/outfit/profiles/shared/AGENTS.md'
 exec git worktree add -q ../repo-wt2
 outfit use shared
-outfit promote shared
+# (run with this worktree's repository variables exported, as from inside a git hook: the
+# other worktrees must be read and settled with THEIR repository, not this one's)
+exec sh -c 'GIT_DIR=$WORK/repo/.git GIT_WORK_TREE=$WORK/repo GIT_INDEX_FILE=$WORK/repo/.git/index outfit promote shared'
 stderr 'other worktrees use "shared"'
 stderr 'repo-wt2'
 # they were settled on the spot: no dangling link, they are on base
