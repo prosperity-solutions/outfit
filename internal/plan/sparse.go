@@ -3,6 +3,7 @@ package plan
 import (
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 )
 
@@ -89,7 +90,7 @@ func SparseText(o SparseOptions) string {
 	var b strings.Builder
 	b.WriteString(Marker + "\n/*\n")
 	hidden := append([]string(nil), o.Hidden...)
-	sortStrings(hidden)
+	sort.Strings(hidden)
 	for _, p := range hidden {
 		b.WriteString("!/" + escapePattern(p) + "\n")
 	}
@@ -134,13 +135,4 @@ func unescapePattern(s string) string {
 		b.WriteByte(s[i])
 	}
 	return b.String()
-}
-
-func sortStrings(s []string) {
-	// insertion sort: the lists are tiny and this keeps the package import-light
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
 }

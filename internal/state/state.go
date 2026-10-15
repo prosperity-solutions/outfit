@@ -52,7 +52,8 @@ type Swap struct {
 	// "unchanged since linking" is what lets an editor's atomic save be absorbed.
 	VariantHash string `json:"variant_hash,omitempty"`
 	// BaseBlob is the blob of the committed (base) file at link time: when HEAD's
-	// blob for the path differs, the base moved under the swap (a stale base).
+	// blob for the path differs, the base moved under the swap (a stale base). It is
+	// recorded now and read by stale-base detection (a later change).
 	BaseBlob string `json:"base_blob,omitempty"`
 }
 

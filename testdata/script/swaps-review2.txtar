@@ -1,5 +1,8 @@
-# More review findings, pinned: nothing is done through a symlinked directory, and a
-# quarantine reached while a switch converges is reported (and survives a rerun).
+# More review findings, pinned: a quarantine reached while a switch converges is
+# reported (and an interrupted one is redone); nothing is done through a symlinked
+# directory; an edit through the link is bookkeeping, and an atomic save after it a
+# conflict; a switch cut short must not delete the base file; editor junk, an
+# untracked profile and an executable-bit mismatch.
 fixture repo team
 cd repo
 outfit init

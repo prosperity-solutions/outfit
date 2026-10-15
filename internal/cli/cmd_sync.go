@@ -270,7 +270,7 @@ func cmdUse(ctx context.Context, e Env, args []string) int {
 		return fail(syncError(err))
 	} else if pre.NeedsHuman || len(pre.Refused) > 0 {
 		printNotes(e, pre)
-		return syncExitJSON(e, *asJSON, pre, "settle the current profile first, then rerun `outfit use "+name+"`")
+		return syncExitJSON(e, *asJSON, pre, "settle the current profile first, then rerun `outfit use "+name+"`", "outfit sync")
 	}
 
 	scope := "--local"
@@ -393,22 +393,24 @@ func untrackedProfileWarning(ctx context.Context, l *loaded) string {
 }
 
 // syncExitJSON prints a blocked result in the caller's format and returns exit 3.
-func syncExitJSON(e Env, asJSON bool, res *apply.Result, fix string) int {
+func syncExitJSON(e Env, asJSON bool, res *apply.Result, reason, fix string) int {
 	if asJSON {
 		j := toJSON(res)
+		j.Notes = append(j.Notes, reason)
 		j.Fixes = append(j.Fixes, fix)
 		out, _ := json.Marshal(j)
 		fmt.Fprintln(e.Stdout, string(out))
 	} else {
-		fmt.Fprintf(e.Stderr, "  fix: %s\n", fix)
+		fmt.Fprintf(e.Stderr, "outfit: %s\n  fix: %s\n", reason, fix)
 	}
 	return ExitNeedsHuman
 }
 
-// dirtyPaths lists paths under prefix with uncommitted changes (staged, unstaged
-// or untracked), from one `git status`.
+// dirtyPaths lists paths under prefix with uncommitted changes (staged or
+// unstaged; `.outfit/` is in info/exclude, so new files there are not listed), from
+// one `git status`.
 func dirtyPaths(ctx context.Context, l *loaded, prefix string) []string {
-	res, err := l.Git.Read(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", prefix)
+	res, err := l.Git.Read(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=no", "--", prefix)
 	if err != nil {
 		return nil
 	}

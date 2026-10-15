@@ -35,8 +35,10 @@ stdout '^yolo$'
 ! outfit use base
 exec git config --local --get outfit.profile
 stdout '^yolo$'
-# Committed (or stashed), the switch goes through and keeps the bytes.
-exec git add -u .outfit
+# `git add <path under .outfit>` refuses (info/exclude, docs/git-behavior.md row 34);
+# the printed fix works, and then the switch goes through and keeps the bytes.
+! exec git add .outfit/profiles/yolo/AGENTS.md
+exec git add --sparse -u .outfit
 exec git commit -qm 'docs: draft'
 outfit use lean
 ! islink AGENTS.md

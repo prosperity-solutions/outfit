@@ -52,10 +52,13 @@ exec git checkout -q main
 islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
 
 # 17. A failing sync inside post-checkout does not change git's exit code: the
-# checkout succeeds, the failure is on stderr with its fix.
+# checkout succeeds, the failure is named on stderr (`outfit status` says more).
 exec sh -c 'echo "{ not json" > .git/outfit/state.json'
 exec git checkout -q main
 stderr 'sync after post-checkout failed'
+# the broken record is only a record: sync rebuilds it.
+exec rm .git/outfit/state.json
+outfit sync
 exec git status --short
 ! stdout .
 # status says what is wrong; init rewrites the state file and sync converges.

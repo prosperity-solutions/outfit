@@ -2,6 +2,7 @@ package plan
 
 import (
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -34,7 +35,7 @@ func TestSparseRoundTrip(t *testing.T) {
 		if !ok {
 			t.Fatalf("%+v: not parsed back: %q", o, text)
 		}
-		sortStrings(o.Hidden)
+		sort.Strings(o.Hidden)
 		if !reflect.DeepEqual(got.Hidden, o.Hidden) && (len(got.Hidden) != 0 || len(o.Hidden) != 0) {
 			t.Errorf("hidden: %q != %q", got.Hidden, o.Hidden)
 		}

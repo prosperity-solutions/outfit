@@ -190,7 +190,7 @@ func Plan(w Want, f Facts) []Action {
 		case pf.Mode == "100755" && !pf.VariantExec, pf.Mode == "100644" && pf.VariantExec:
 			skips = append(skips, Action{Kind: Skip, Path: p,
 				Reason: p + " and the profile's copy differ in the executable bit, which would break running it: the base file stays",
-				Fix:    "make them agree: chmod " + map[bool]string{true: "-x", false: "+x"}[pf.Mode == "100644"] + " .outfit/profiles/<profile>/" + p + " (then commit it), and run: outfit sync"})
+				Fix:    "give the profile's copy of " + shq(p) + " the same executable bit as the base file (chmod, then commit it), and run: outfit sync"})
 			delete(want, p)
 		}
 	}

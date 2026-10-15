@@ -202,8 +202,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		}
 		facts.Paths[p] = pf
 	}
-	// A recorded path the profile no longer lists has no variant to hash; its facts
-	// only matter for the link/file kind.
+	// (A recorded path the profile no longer lists has no variant; hashFile gives "".)
 
 	// "Untouched" is decided by git, which applies .gitattributes, autocrlf and
 	// clean/smudge filters and notices a mode change: raw bytes cannot.

@@ -95,7 +95,7 @@ personal override and every profile is ignored for it.
 
 ## The pre-commit guard
 
-Once profiles swap files (a later release), `pre-commit` refuses a commit when a
+`pre-commit` refuses a commit when a
 swapped path is staged, when one is staged as a symlink (mode `120000`, never
 allowed), or when the sparse-checkout config that protects those paths is missing.
 Each refusal prints the exact fix. `OUTFIT_ALLOW=1` lets a deliberate commit of a
@@ -152,7 +152,7 @@ additions working.
 After `post-checkout`, `post-merge` and `post-rewrite` the dispatcher runs `outfit sync`
 (see [profiles.md](profiles.md)) so the swapped files follow what git just did. It runs
 after the team's own hook, and its result never changes the hook's exit code: a failing
-sync prints one line on stderr and git carries on.
+sync prints what went wrong on stderr and git carries on. If the team's own hook fails, the sync is skipped (git is already failing that command); `hook.post-checkout=off` skips the team's hook but the sync still runs.
 
 ## Environment variables
 

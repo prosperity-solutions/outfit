@@ -1,8 +1,7 @@
 # Review findings, pinned (each one was reproduced against the built binary):
-# staged-only profile files are never hidden off disk, an uncommitted variant is
-# in sync, a text-converting .gitattributes does not look like an edit, a symlinked
-# parent directory is never acted through, a poisoned state.json is not obeyed, and
-# a quarantine reached in the middle of a switch is still reported.
+# staged-only profile files are never hidden off disk, an uncommitted variant file
+# is in sync, a text-converting .gitattributes does not look like an edit, and a
+# poisoned state.json is not obeyed. (swaps-review2.txtar has the rest.)
 fixture repo team
 cd repo
 

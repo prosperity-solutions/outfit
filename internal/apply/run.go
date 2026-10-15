@@ -22,7 +22,8 @@ type Result struct {
 	// Actions are the steps that were planned, informational ones included.
 	Actions []plan.Action `json:"-"`
 	// Lasting is the part of Notes that stays true after a later pass: what was
-	// quarantined. A skip note (a file not on disk yet) does not.
+	// quarantined, and what gather noticed in the state it read (an ignored record,
+	// an oversize profile). A skip note (a file not on disk yet) does not.
 	Lasting []string `json:"-"`
 	// Done holds the steps earlier passes of one converge carried out: the last
 	// pass of a switch plans nothing, but the switch happened.
@@ -486,8 +487,8 @@ func Check(ctx context.Context, in Input) (*Result, error) {
 }
 
 // Merge folds the earlier passes of one converge into the final one, so that what
-// the first pass found (a quarantine, a skipped path) and did (the links) is still
-// reported after a quiet last pass.
+// the first pass found (its Lasting notes: a quarantine, a state it repaired) and did
+// (the links) is still reported after a quiet last pass.
 func (r *Result) Merge(earlier *Result) {
 	if earlier == nil {
 		return

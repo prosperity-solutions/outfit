@@ -65,7 +65,7 @@ such files; commit them as described above. Finder and editor leftovers (`.DS_St
 profile's copy is not (or the other way round), that path is not swapped and a note says
 how to make the two agree.
 
-The pre-commit guard refuses any commit that stages a swapped path or a symlink, and says
+The pre-commit guard refuses any commit that stages a swapped path, or a symlink at a swapped path,, and says
 how to fix it.
 
 ## `outfit sync`
@@ -84,7 +84,7 @@ What it does with each swapped path:
 | the right link | nothing (it only notes that the profile's file changed through it) |
 | nothing, or a link to somewhere else | makes the link |
 | an editor's **atomic save** replaced the link by a regular file, and the profile's file is unchanged since | **absorbs** it: copies the new bytes into the profile's file, byte for byte, and relinks |
-| the same, but the profile's file changed too | saves **both** under `.git/outfit/quarantine/<time>-<key>/{file,variant}/`, leaves everything where it is, exits **3** and prints what to compare |
+| the same, but the profile's file changed too (this includes an edit you made through the link since the last `outfit` command: nothing runs when a file is edited, so sync cannot tell it from a change made by git; run `outfit sync` after editing and before an editor saves, or take the printed fix) | saves **both** under `.git/outfit/quarantine/<time>-<key>/{file,variant}/`, leaves everything where it is, exits **3** and prints what to compare |
 | a path in the middle of a merge conflict | leaves it alone, exits 3 |
 | a swapped path git forgot to hide (`git reset -- <path>`) | tells git again |
 | a link the profile no longer wants | removes it, and git brings the committed file back |
