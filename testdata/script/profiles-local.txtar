@@ -115,13 +115,13 @@ exec cat AGENTS.md
 stdout 'saved by an editor'
 # git does not have it yet: status warns, and says how.
 outfit status
-stderr 'git clean -x'
+stderr 'git clean -xd'
 exec git add --sparse -f .outfit/profiles/mine
 exec git commit -qm 'feat: add profile mine'
 outfit ls
 stdout 'mine\*?\s+committed'
 outfit status
-! stderr 'git clean -x'
+! stderr 'git clean -xd'
 outfit use base
 ! exists .outfit/profiles/mine
 outfit use mine
@@ -152,6 +152,7 @@ outfit ls --json
 stdout '"shadowed":\[\{"name":"dup","tier":"local"'
 outfit show local:dup
 stdout 'profile  dup \(local\)'
+stdout 'dir      '
 outfit show local:dup AGENTS.md
 stdout '^mine$'
 outfit new dup-mine --from local:dup
@@ -178,9 +179,9 @@ outfit promote linky
 exists .outfit/profiles/linky/AGENTS.md
 ! exists .outfit/profiles/linky/.DS_Store
 ! exists .outfit/profiles/linky/notes.md~
-# an inactive promoted profile is warned about too: git does not have it, `git clean -x` would delete it
+# an inactive promoted profile is warned about too: git does not have it, `git clean -xd` would delete it
 outfit status
-stderr 'git clean -x'
+stderr 'git clean -xd'
 stderr 'linky'
 exec git add --sparse -f .outfit/profiles/linky
 exec git commit -qm 'feat: add profile linky'
@@ -211,10 +212,36 @@ outfit use shared
 outfit promote shared
 stderr 'other worktrees use "shared"'
 stderr 'repo-wt2'
+# they were settled on the spot: no dangling link, they are on base
+exec cat ../repo-wt2/AGENTS.md
+stdout 'base'
 outfit use base
 exec git add --sparse -f .outfit/profiles/shared
 exec git commit -qm 'feat: add profile shared'
 
+
+# --- a teammate's committed profile wins over your ACTIVE local one of the same name ---
+outfit new rival
+exec sh -c 'echo "my rival" > .git/outfit/profiles/rival/AGENTS.md'
+outfit use rival
+exec cat AGENTS.md
+stdout 'my rival'
+exec sh -c 'mkdir -p .outfit/profiles/rival && echo "their rival" > .outfit/profiles/rival/AGENTS.md'
+exec git add --sparse -f .outfit/profiles/rival
+exec git commit -qm 'feat: a teammate adds rival'
+outfit sync
+outfit status
+stdout 'profile  rival \(committed'
+stderr 'name clashes'
+exec cat AGENTS.md
+stdout 'their rival'
+islink AGENTS.md .outfit/profiles/rival/AGENTS.md
+outfit use base
+! exists .outfit/profiles/rival
+outfit use rival
+exec cat AGENTS.md
+stdout 'their rival'
+outfit use base
 
 # --- uninstall stops (and purges nothing) while a link could not be removed ---
 outfit new guarded
@@ -224,7 +251,7 @@ islink apps/web/AGENTS.md $WORK/repo/.git/outfit/profiles/guarded/apps/web/AGENT
 chmod 555 apps/web
 ! outfit uninstall --purge
 stderr 'could not undo'
-stderr 'nothing else was undone'
+stderr 'stopped in: '
 exists .git/outfit/profiles/guarded/apps/web/AGENTS.md
 exists .git/outfit/install.json
 exists .git/outfit/state.json

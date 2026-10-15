@@ -384,7 +384,7 @@ func readProfileFile(dir, p string) ([]byte, error) {
 
 // untrackedProfileWarning names the committed-profile files git does not know yet
 // (a profile made by hand, or just promoted): only the working tree holds them, so
-// `git clean -x` deletes them for good. Every profile directory is looked at, active or
+// `git clean -xd` deletes them for good. Every profile directory is looked at, active or
 // not. "" when there are none.
 func untrackedProfileWarning(ctx context.Context, l *loaded) string {
 	res, err := l.Git.Read(ctx, "--literal-pathspecs", "ls-files", "--others", "-z", "--", profiles.CommittedRoot)
@@ -413,7 +413,7 @@ func untrackedProfileWarning(ctx context.Context, l *loaded) string {
 		parts = append(parts, fmt.Sprintf("%s (%s)", n, strings.Join(first(byProfile[n], 2), ", ")))
 	}
 	n := names[0]
-	return fmt.Sprintf("profile files git does not have yet: %s. `git clean -x` would delete them for good. Commit them: git add --sparse -f %s/%s && git commit -m 'feat: add profile %s'",
+	return fmt.Sprintf("profile files git does not have yet: %s. `git clean -xd` would delete them for good. Commit them: git add --sparse -f %s/%s && git commit -m 'feat: add profile %s'",
 		strings.Join(parts, "; "), profiles.CommittedRoot, n, n)
 }
 
@@ -520,11 +520,15 @@ func cmdShow(ctx context.Context, e Env, args []string) int {
 			Tier    string   `json:"tier"`
 			Toggles []string `json:"toggles"`
 			Files   []string `json:"files"`
-		}{prof.Name, string(prof.Tier), nonNilStrings(keys), nonNilStrings(files)})
+			Dir     string   `json:"dir,omitempty"`
+		}{prof.Name, string(prof.Tier), nonNilStrings(keys), nonNilStrings(files), personalDir(*prof)})
 		fmt.Fprintln(e.Stdout, string(out))
 		return ExitOK
 	}
 	fmt.Fprintf(e.Stdout, "profile  %s (%s)\n", esc(prof.Name), prof.Tier)
+	if d := personalDir(*prof); d != "" {
+		fmt.Fprintf(e.Stdout, "dir      %s\n", d)
+	}
 	if len(keys) == 0 {
 		fmt.Fprintln(e.Stdout, "toggles  (none)")
 	} else {
@@ -541,6 +545,15 @@ func cmdShow(ctx context.Context, e Env, args []string) int {
 		fmt.Fprintf(e.Stdout, "%s%s\n", label, esc(f))
 	}
 	return ExitOK
+}
+
+// personalDir is where a local or worktree profile's files are ("" for a committed one,
+// which is in the repository).
+func personalDir(p profiles.Profile) string {
+	if p.Tier == profiles.Committed {
+		return ""
+	}
+	return p.Dir
 }
 
 func contains(s []string, v string) bool {

@@ -47,11 +47,45 @@ func (w Worktree) Name() string {
 	return "worktree " + w.Path
 }
 
+// coreWorktree reads `core.worktree` from the repository's config file ("" when it
+// has none), resolved against the common dir when relative.
+func coreWorktree(common string) string {
+	b, err := os.ReadFile(filepath.Join(common, "config"))
+	if err != nil {
+		return ""
+	}
+	inCore := false
+	for _, line := range strings.Split(string(b), "\n") {
+		t := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(t, "["):
+			inCore = strings.EqualFold(strings.TrimSpace(strings.Trim(t, "[]")), "core")
+		case inCore:
+			k, v, ok := strings.Cut(t, "=")
+			if ok && strings.EqualFold(strings.TrimSpace(k), "worktree") {
+				p := strings.Trim(strings.TrimSpace(v), `"`)
+				if p == "" {
+					return ""
+				}
+				if !filepath.IsAbs(p) {
+					p = filepath.Join(common, p)
+				}
+				return filepath.Clean(p)
+			}
+		}
+	}
+	return ""
+}
+
 // Worktrees lists the main worktree and every linked one, from the common dir.
 func Worktrees(common string) []Worktree {
 	mainPath := ""
 	if filepath.Base(common) == ".git" {
 		mainPath = filepath.Dir(common)
+	} else if p := coreWorktree(common); p != "" {
+		// A submodule or a --separate-git-dir repository: git records where its working
+		// tree is in the repository's own config.
+		mainPath = p
 	}
 	out := []Worktree{{Path: mainPath, GitDir: common, Main: true}}
 	ents, err := os.ReadDir(filepath.Join(common, "worktrees"))

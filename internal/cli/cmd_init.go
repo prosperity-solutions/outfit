@@ -198,34 +198,35 @@ const (
 	excludeRemoved      = ".git/info/exclude entry for the Claude Code settings"
 )
 
-// personalProfiles lists the directories of local profiles and of every worktree's
-// worktree profiles: outfit's own copies of what the person wrote.
-func personalProfiles(l *loaded) []string {
-	var out []string
-	add := func(tierDir string) {
-		// A tier directory (or the outfit directory above it) that is a link is left alone:
-		// reading or deleting through it would reach somewhere that is not outfit's.
-		if !profiles.RealDir(tierDir) || !profiles.RealDir(filepath.Dir(tierDir)) {
-			return
-		}
-		ents, err := os.ReadDir(tierDir)
-		if err != nil {
-			return
-		}
-		for _, en := range ents {
-			if en.IsDir() && profiles.ValidName(en.Name()) == nil {
-				out = append(out, filepath.Join(tierDir, en.Name()))
-			}
-		}
+// uninstallWorktree is a worktree to undo: its path is never empty.
+type uninstallWorktree struct {
+	hooks.Worktree
+}
+
+func (w uninstallWorktree) label() string {
+	if w.Path != "" {
+		return w.Path
 	}
-	add(filepath.Join(l.Repo.CommonDir, "outfit", "profiles"))
+	return w.GitDir
+}
+
+// uninstallWorktrees is every worktree, with the main one's path filled in from the
+// current directory's repository when git's own config does not say (and left empty,
+// which Teardown reports, when nothing does).
+func uninstallWorktrees(l *loaded) []uninstallWorktree {
+	var out []uninstallWorktree
 	for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
-		add(filepath.Join(w.GitDir, "outfit", "worktree-profiles"))
+		if w.Path == "" && w.Main && l.Repo.GitDir == l.Repo.CommonDir {
+			w.Path = l.Repo.WorkTree
+		}
+		out = append(out, uninstallWorktree{w})
 	}
 	return out
 }
 
-// personalTierDirs lists the real tier directories (local, and each worktree's).
+// personalTierDirs lists the real tier directories of the personal profiles: the local
+// one and each worktree's. A directory (or the outfit directory above it) that is a link
+// is left out: reading or deleting through it would reach somewhere that is not outfit's.
 func personalTierDirs(l *loaded) []string {
 	var out []string
 	add := func(d string) {
@@ -233,9 +234,26 @@ func personalTierDirs(l *loaded) []string {
 			out = append(out, d)
 		}
 	}
-	add(filepath.Join(l.Repo.CommonDir, "outfit", "profiles"))
+	add(profiles.TierDirIn("", l.Repo.CommonDir, l.Repo.GitDir, profiles.Local))
 	for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
-		add(filepath.Join(w.GitDir, "outfit", "worktree-profiles"))
+		add(profiles.TierDirIn(w.Path, l.Repo.CommonDir, w.GitDir, profiles.Worktree))
+	}
+	return out
+}
+
+// personalProfiles lists the directories of the personal profiles (valid names only).
+func personalProfiles(l *loaded) []string {
+	var out []string
+	for _, tierDir := range personalTierDirs(l) {
+		ents, err := os.ReadDir(tierDir)
+		if err != nil {
+			continue
+		}
+		for _, en := range ents {
+			if en.IsDir() && profiles.ValidName(en.Name()) == nil {
+				out = append(out, filepath.Join(tierDir, en.Name()))
+			}
+		}
 	}
 	return out
 }
@@ -313,10 +331,18 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 	// Links go and base files come back BEFORE anything else is undone: sparse
 	// checkout must still be on while they do, and disabled only after.
 	var undone, undoFailed []string
-	for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
+	var tornDown, stopped []string
+	for _, w := range uninstallWorktrees(l) {
 		did, failed := apply.Teardown(ctx, apply.Workspace{WorkTree: w.Path, GitDir: w.GitDir, CommonDir: l.Repo.CommonDir})
 		undone = append(undone, did...)
-		undoFailed = append(undoFailed, failed...)
+		for _, f := range failed {
+			undoFailed = append(undoFailed, w.label()+": "+f)
+		}
+		if len(failed) > 0 {
+			stopped = append(stopped, w.label())
+		} else {
+			tornDown = append(tornDown, w.label())
+		}
 	}
 	// A link that could not go (or a base file that could not come back) stops here:
 	// switching sparse checkout off over it would leave a ` T` status that `commit -a`
@@ -333,7 +359,10 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 		for _, f := range undoFailed {
 			fmt.Fprintf(e.Stderr, "outfit: could not undo %s\n", f)
 		}
-		fmt.Fprintln(e.Stderr, "fix: resolve the above, then rerun `outfit uninstall` (nothing else was undone; hooks, settings and your profiles are as they were)")
+		if len(tornDown) > 0 {
+			fmt.Fprintf(e.Stderr, "outfit: already undone in: %s; stopped in: %s\n", strings.Join(tornDown, ", "), strings.Join(stopped, ", "))
+		}
+		fmt.Fprintln(e.Stderr, "fix: resolve the above, then rerun `outfit uninstall` (the hooks, settings and your profiles are as they were; a worktree already undone is linked again by its next hook until the rerun finishes)")
 		return ExitError
 	}
 	if removed, err := apply.RemoveExclude(filepath.Join(l.Repo.CommonDir, "info", "exclude")); err != nil {
@@ -408,7 +437,11 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 	}
 	defer func() {
 		if len(kept) > 0 {
-			fmt.Fprintf(e.Stdout, "  kept %d personal profile(s) (local and worktree profiles are yours): outfit uninstall --purge deletes them\n", len(kept))
+			var names []string
+			for _, k := range kept {
+				names = append(names, filepath.Base(k))
+			}
+			fmt.Fprintf(e.Stdout, "  kept %d personal profile(s): %s (local and worktree profiles are yours; they live under %s; outfit uninstall --purge deletes them)\n", len(kept), strings.Join(names, ", "), filepath.Dir(kept[0]))
 		}
 	}()
 	if !res.Changed {

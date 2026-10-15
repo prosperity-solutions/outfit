@@ -229,7 +229,7 @@ func Plan(w Want, f Facts) []Action {
 		// any skip, or a switch could skip one file and change the tree around another.
 		switch {
 		case !pf.Tracked && !pf.Unmerged:
-			skips = append(skips, Action{Kind: Skip, Path: p, Reason: p + " is not tracked by git (a name must match the repository's exactly, case included), and outfit swaps only files the repository has"})
+			skips = append(skips, Action{Kind: Skip, Path: p, Reason: p + " is not tracked by git, and outfit swaps only files the repository has: a profile replaces tracked files, it cannot add one. Paths are relative to the repository root and must match the repository's spelling exactly, case included (apps/web/AGENTS.md, not web/AGENTS.md)"})
 			delete(want, p)
 		case pf.Unmerged:
 			inConflict[p] = true

@@ -2,6 +2,8 @@ package profiles
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -25,7 +27,7 @@ const (
 )
 
 // Template is the profile.config of a profile made from nothing.
-const Template = "# Toggles for this profile; the files next to this one replace the tracked files\n# at the same relative paths while the profile is active.\n[outfit]\n\t# biome = off\n"
+const Template = "# Toggles for this profile. The files next to this one replace the tracked files at the\n# same paths (relative to the repository root) while the profile is active.\n[outfit]\n\t# biome = off\n# Skip a git hook: a hook toggle has its own section.\n# [outfit \"hook\"]\n#\tpre-commit = off\n"
 
 // Resolve finds a profile by `name` or, to reach one a committed profile of the same
 // name shadows, `tier:name` (committed, local or worktree).
@@ -68,8 +70,14 @@ type source struct {
 	read func() ([]byte, error)
 }
 
-// sources lists what a profile holds (profile.config included when it has one): from
-// disk, or from HEAD for a committed profile that is hidden from disk.
+// sources lists what a profile holds, and separately what it could NOT copy (links and
+// special files on disk; links and submodules at HEAD): Create copies the rest and the CLI
+// says what was left out, Promote REFUSES when that list is not empty, because it deletes
+// the original afterwards. An unreadable entry is an error for both, never a smaller
+// profile. A source with perm 0 has no file permissions of its own (it comes from git).
+//
+// Files come from disk (profile.config included when it has one), or from HEAD for a
+// committed profile that is hidden from disk.
 func sources(ctx context.Context, g gitx.Client, p Profile) (out []source, skipped []string, _ error) {
 	if p.Tier == Committed && !RealDir(p.Dir) {
 		res, err := g.Read(ctx, "ls-tree", "-r", "-z", "HEAD", "--", CommittedRoot+"/"+p.Name+"/")
@@ -177,10 +185,19 @@ func create(parent, name string, srcs []source) (Copy, error) {
 		return Copy{}, err
 	}
 	defer func() { _ = root.Close() }()
+	if _, err := root.Lstat(name); err == nil {
+		return Copy{}, fmt.Errorf("%s already exists", filepath.Join(parent, name))
+	}
+	// Built beside its final place and renamed into it: a kill half way (Ctrl-C) leaves
+	// a dot-directory that `ls` reports and `uninstall --purge` removes, never a profile
+	// that looks whole and is not.
+	var salt [4]byte
+	if _, err := rand.Read(salt[:]); err != nil {
+		return Copy{}, err
+	}
+	final := name
+	name = ".new-" + final + "-" + hex.EncodeToString(salt[:])
 	if err := root.Mkdir(name, 0o750); err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return Copy{}, fmt.Errorf("%s already exists", filepath.Join(parent, name))
-		}
 		return Copy{}, err
 	}
 	fail := func(err error) (Copy, error) {
@@ -222,7 +239,10 @@ func create(parent, name string, srcs []source) (Copy, error) {
 		}
 		n++
 	}
-	return Copy{Dir: filepath.Join(parent, name), Files: n}, nil
+	if err := root.Rename(name, final); err != nil {
+		return fail(fmt.Errorf("cannot put the profile in place: %w", err))
+	}
+	return Copy{Dir: filepath.Join(parent, final), Files: n}, nil
 }
 
 func writeIn(root *os.Root, rel string, b []byte, mode os.FileMode) error {
@@ -231,7 +251,20 @@ func writeIn(root *os.Root, rel string, b []byte, mode os.FileMode) error {
 			return err
 		}
 	}
-	return root.WriteFile(rel, b, mode)
+	// O_EXCL: two files whose names collide on this filesystem (AGENTS.md and agents.md
+	// on a case-insensitive one, NFC and NFD spellings) must fail, not overwrite each other.
+	f, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("%s collides with another file of the profile on this filesystem (names that differ only in case or Unicode form)", rel)
+		}
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // Create makes a new profile in tier (Local, or Worktree) from nothing or from `from`.

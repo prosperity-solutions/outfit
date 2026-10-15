@@ -51,7 +51,7 @@ it refuse, naming the file, and leave everything as it was. Editor junk (`.DS_St
 `*.swp`, …) is never copied. Other worktrees that use the profile (clone-wide, or pinned)
 have no copy of the new directory until it is committed and they have the commit, so they
 behave as base until then: `promote` lists them. Git does not have the new profile until you
-commit it, and `git clean -x` would delete it, so `status` and `use` warn (for every
+commit it, and `git clean -xd` would delete it, so `status` and `use` warn (for every
 profile directory git does not have, active or not) and `promote` prints the command: `git add --sparse -f .outfit/profiles/<name> && git
 commit` (`--sparse` because git's patterns hide profile directories). If a profile of the
 same name is committed later by a teammate, **the committed one wins**: `ls` and `status`
@@ -87,16 +87,22 @@ out of a commit. `outfit use base` returns to the committed files.
 
 For each swapped path outfit asks git to hide the committed file (a non-cone
 `!/<path>` sparse-checkout pattern, with `sparse.expectFilesOutsideOfPatterns=true`),
-then puts a **relative symlink** at the path pointing into
-`.outfit/profiles/<profile>/`. So:
+then puts a symlink at the path pointing into the profile's directory: a **relative** one
+into `.outfit/profiles/<profile>/` for a committed profile, an **absolute** one into the git
+dir for a local or worktree profile (see the tiers above). So:
 
 - `git status` stays clean, and `git add -A`, `git commit -a`, `reset --hard`,
   `clean -fdx`, `stash -u` and `rebase` leave the link alone;
-- an edit made through the link is an edit of the profile's file, and shows in plain
-  `git status` as ` M .outfit/profiles/<profile>/AGENTS.md`: that is where your edit went.
-  `git diff AGENTS.md` and `git restore AGENTS.md` do not see it; use
-  `git diff .outfit` and `git restore .outfit/profiles/<profile>/AGENTS.md`;
-- only the **active** profile is on disk. The others are in git; look at them with
+- an edit made through the link is an edit of the profile's file. For a **committed**
+  profile it shows in plain `git status` as ` M .outfit/profiles/<profile>/AGENTS.md`: that
+  is where your edit went. `git diff AGENTS.md` and `git restore AGENTS.md` do not see it;
+  use `git diff .outfit` and `git restore .outfit/profiles/<profile>/AGENTS.md`. For a
+  **local or worktree** profile git sees nothing at all (the file is not in git): `outfit
+  status` lists it with its edit time, `outfit show <profile>` prints its directory, there
+  is no undo (no history), and what changed against the team's file is
+  `git diff --no-index <(git show :AGENTS.md) AGENTS.md`;
+- only the **active committed** profile is on disk (local and worktree profiles always are,
+  in the git dir). The other committed ones are in git; look at them with
   `outfit show`, or put them all on disk with `outfit author on`;
 - `.outfit/` is in `.git/info/exclude`, which keeps search tools like `rg` out of it.
   Side effect (a git rule, [git-behavior.md](git-behavior.md) row 34): `git add
@@ -108,7 +114,7 @@ then puts a **relative symlink** at the path pointing into
   and says to commit first.
 
 A profile directory git does not have yet (made by hand, never committed) exists only
-in your working tree: `git clean -x` deletes it. `outfit use`/`status` warn while there are
+in your working tree: `git clean -xd` deletes it. `outfit use`/`status` warn while there are
 such files; commit them as described above. Finder and editor leftovers (`.DS_Store`,
 `*~`, `*.swp`, `*.orig`, …) are never profile files. If the base file is executable and the
 profile's copy is not (or the other way round), that path is not swapped and a note says

@@ -10,6 +10,7 @@ import (
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 	"github.com/prosperity-solutions/outfit/internal/profiles"
 	"github.com/prosperity-solutions/outfit/internal/repo"
+	"github.com/prosperity-solutions/outfit/internal/state"
 )
 
 // loaded is the resolved configuration of the repository around Env.Dir.
@@ -72,7 +73,20 @@ func load(ctx context.Context, e Env) (*loaded, error) {
 	choice, _ := config.ChooseProfile(l.Cfg)
 	var pcfg *config.File
 	if choice.Name != config.Base {
-		if p, ok := profiles.Locate(r, choice.Name); ok {
+		p, ok := profiles.Locate(r, choice.Name)
+		var hp profiles.Profile
+		var hc *config.File
+		hok := false
+		if ok && p.Tier != profiles.Committed && committedMayExist(r) {
+			// A committed profile of the same name WINS (names are unique across tiers; `ls`
+			// says so), even while it is hidden from disk: the disk-only lookup above would
+			// pick the personal one. One git call, only for personal profiles in a repository
+			// that has committed ones.
+			hp, hc, hok = profiles.LocateHead(ctx, l.Git, r, choice.Name)
+		}
+		if hok {
+			l.Profile, pcfg = &hp, hc
+		} else if ok {
 			l.Profile = &p
 			if pcfg, err = profiles.ReadConfig(p); err != nil {
 				return nil, Errorf("cannot read the profile config of %q: %v", choice.Name, err)
@@ -90,6 +104,16 @@ func load(ctx context.Context, e Env) (*loaded, error) {
 	l.Result = config.Resolve(config.Input{Git: l.Cfg, Team: team, Profile: pcfg})
 	l.Result.Warnings = append(l.Result.Warnings, warns...)
 	return l, nil
+}
+
+// committedMayExist reports that the repository has (or may have) committed profiles:
+// the directory is on disk, or the last sync recorded that some are hidden.
+func committedMayExist(r repo.Repo) bool {
+	if profiles.RealDir(profiles.TierDir(r, profiles.Committed)) {
+		return true
+	}
+	st, err := state.Read(r.GitDir)
+	return err == nil && st.CommittedProfiles
 }
 
 // exists reports whether path exists.

@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 	"github.com/prosperity-solutions/outfit/internal/hooks"
@@ -98,7 +101,12 @@ func cmdNew(ctx context.Context, e Env, args []string) int {
 // name ("" when none does).
 func worktreeProfileOwner(l *loaded, name string) string {
 	for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
-		if profiles.RealDir(filepath.Join(w.GitDir, "outfit", "worktree-profiles", name)) {
+		// A worktree whose directory is gone (prunable) has dead profiles: they do not
+		// hold a name.
+		if w.Path != "" && !profiles.RealDir(w.Path) {
+			continue
+		}
+		if profiles.RealDir(filepath.Join(profiles.TierDirIn(w.Path, l.Repo.CommonDir, w.GitDir, profiles.Worktree), name)) {
 			if w.Path != "" {
 				return w.Path
 			}
@@ -181,7 +189,7 @@ func cmdPromote(ctx context.Context, e Env, args []string) int {
 			Others []string  `json:"other_worktrees_using_it"`
 			Sync   *syncJSON `json:"sync,omitempty"`
 			Error  string    `json:"sync_error,omitempty"`
-		}{name, c.Dir, c.Files, next, nonNilStrings(others), res, errString(syncErr)})
+		}{name, c.Dir, c.Files, next, worktreeLabels(others), res, errString(syncErr)})
 		fmt.Fprintln(e.Stdout, string(out))
 		if syncErr != nil {
 			return ExitNeedsHuman
@@ -189,9 +197,18 @@ func cmdPromote(ctx context.Context, e Env, args []string) int {
 		return ExitOK
 	}
 	fmt.Fprintf(e.Stdout, "promoted %s to %s (%d file(s)); the local copy is gone\n", name, rel, c.Files)
-	fmt.Fprintf(e.Stdout, "  git does not have it yet: commit it so teammates get it (until then `git clean -x` deletes it):\n  %s\n", next)
+	fmt.Fprintf(e.Stdout, "  git does not have it yet: commit it so teammates get it (until then `git clean -xd` deletes it):\n  %s\n", next)
 	if len(others) > 0 {
-		fmt.Fprintf(e.Stderr, "warning: other worktrees use %q (%s): the committed copy exists only here until it is committed and they have that commit, so there they behave as base until then (outfit use base --here, in each, is the explicit way)\n", name, strings.Join(others, ", "))
+		// Their links pointed into the local copy that is gone: settle each now (they
+		// fall back to base, since the committed copy exists only here until it is
+		// committed and they have that commit) instead of leaving a dangling link until
+		// their next hook.
+		var labels []string
+		for _, w := range others {
+			labels = append(labels, w.label())
+			resyncWorktree(ctx, e, w)
+		}
+		fmt.Fprintf(e.Stderr, "warning: other worktrees use %q (%s): they are on base now and switch to the committed profile once it is committed and they have the commit\n", name, strings.Join(labels, ", "))
 	}
 	if syncErr != nil {
 		fmt.Fprintf(e.Stderr, "outfit: the files could not be re-linked: %v\n  fix: outfit sync\n", syncErr)
@@ -202,16 +219,44 @@ func cmdPromote(ctx context.Context, e Env, args []string) int {
 
 // worktreesUsing lists the OTHER worktrees whose effective profile is name (their own
 // pin, else the clone's default): promote removes the only copy they can see.
-func worktreesUsing(ctx context.Context, l *loaded, name string) []string {
-	var out []string
-	for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
-		if w.Path == "" || w.GitDir == l.Repo.GitDir {
+func worktreesUsing(ctx context.Context, l *loaded, name string) []uninstallWorktree {
+	var out []uninstallWorktree
+	for _, w := range uninstallWorktrees(l) {
+		if w.GitDir == l.Repo.GitDir {
 			continue
 		}
 		g := gitx.Client{Dir: w.Path}
-		if res, err := g.Read(ctx, "config", "--get", "outfit.profile"); err == nil && strings.TrimSpace(string(res.Stdout)) == name {
-			out = append(out, w.Path)
+		if w.Path == "" {
+			g = gitx.Client{Env: []string{"GIT_DIR=" + w.GitDir}} // the main worktree of a separate git dir, path unknown
 		}
+		if res, err := g.Read(ctx, "config", "--get", "outfit.profile"); err == nil && strings.TrimSpace(string(res.Stdout)) == name {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// resyncWorktree runs `outfit sync` in another worktree, best effort and bounded.
+func resyncWorktree(ctx context.Context, e Env, w uninstallWorktree) {
+	if w.Path == "" || e.Exe == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, e.Exe, "sync")
+	cmd.Dir = w.Path
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_DIR=") && !strings.HasPrefix(kv, "GIT_WORK_TREE=") && !strings.HasPrefix(kv, "GIT_INDEX_FILE=") {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
+	_ = cmd.Run()
+}
+
+func worktreeLabels(ws []uninstallWorktree) []string {
+	out := []string{}
+	for _, w := range ws {
+		out = append(out, w.label())
 	}
 	return out
 }

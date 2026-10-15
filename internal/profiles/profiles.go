@@ -71,13 +71,19 @@ type Profile struct {
 
 // TierDir returns the directory that holds a tier's profiles.
 func TierDir(r repo.Repo, t Tier) string {
+	return TierDirIn(r.WorkTree, r.CommonDir, r.GitDir, t)
+}
+
+// TierDirIn is TierDir for any worktree (its path, the common dir, its git dir): the one
+// place that knows where each tier lives, for code that looks at OTHER worktrees.
+func TierDirIn(workTree, commonDir, gitDir string, t Tier) string {
 	switch t {
 	case Committed:
-		return filepath.Join(r.WorkTree, filepath.FromSlash(CommittedRoot))
+		return filepath.Join(workTree, filepath.FromSlash(CommittedRoot))
 	case Local:
-		return filepath.Join(r.CommonDir, "outfit", "profiles")
+		return filepath.Join(commonDir, "outfit", "profiles")
 	default:
-		return filepath.Join(r.GitDir, "outfit", "worktree-profiles")
+		return filepath.Join(gitDir, "outfit", "worktree-profiles")
 	}
 }
 

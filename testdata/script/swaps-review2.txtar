@@ -122,7 +122,7 @@ outfit status
 # --- a profile git does not have yet is flagged, not silently at risk ---
 exec sh -c 'mkdir -p .outfit/profiles/mine && echo mine > .outfit/profiles/mine/AGENTS.md'
 outfit use mine
-stderr 'git clean -x'
+stderr 'git clean -xd'
 outfit use base
 exec rm -r .outfit/profiles/mine
 
