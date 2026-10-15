@@ -1,0 +1,44 @@
+# uninstall and the profile's own files: a link of somebody's at an untracked path is not in its
+# way; an editor's save that was never absorbed stops it (its bytes are the person's); a team
+# .gitignore spelled in another case still blocks ours.
+fixture repo team
+cd repo
+exec mkdir -p skills
+exec sh -c 'echo team-a > skills/a.md; echo "*.log" > skills/.GitIgnore'
+exec git add skills
+exec git commit -qm 'docs: team skills'
+exec mkdir -p .outfit/profiles/mine/skills/deep .outfit/profiles/two/skills
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = skills\n" > .outfit/profiles/mine/profile.config; cp .outfit/profiles/mine/profile.config .outfit/profiles/two/'
+exec sh -c 'echo my-a > .outfit/profiles/mine/skills/a.md; echo my-deep > .outfit/profiles/mine/skills/deep/x.md; echo two-new > .outfit/profiles/two/skills/new.md'
+exec git add --sparse -f .outfit
+exec git commit -qm 'feat: profiles that replace skills and add files'
+outfit init
+
+# the team's .GitIgnore (another case) blocks ours: nothing of the profile's own is linked
+outfit use mine
+stderr 'skills/deep/x.md is the profile.s own file in skills, which the profile replaces, but it is not linked'
+! exists skills/.gitignore
+outfit use base
+
+# a profile with an extra and no clash
+exec git rm -q --sparse -f skills/.GitIgnore
+exec git commit -qm 'docs: no more team ignore file'
+outfit use two
+exec sh -c 'test -L skills/new.md'
+# a link of somebody's: not ours, and not in the way
+symlink skills/mine.md -> /somewhere/notes.md
+# an editor's save that was never absorbed stops the uninstall, and nothing is lost
+atomicsave skills/new.md 'saved, not synced\n'
+! outfit uninstall
+stderr 'skills/new.md is a regular file where outfit.s link was'
+exec cat skills/new.md
+stdout 'saved, not synced'
+outfit sync
+exec cat .outfit/profiles/two/skills/new.md
+stdout 'saved, not synced'
+exec git add --sparse -f -A .outfit
+exec git commit -qm 'feat: my edit'
+outfit uninstall
+exec sh -c 'test "$(readlink skills/mine.md)" = /somewhere/notes.md'
+! exists skills/new.md
+! exists skills/.gitignore

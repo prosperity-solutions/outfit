@@ -19,6 +19,9 @@ func TestIsExtraLinkIsTheLinkOutfitMakesForThatPathOnly(t *testing.T) {
 		{"skills/new.md", "/g/wt/outfit/worktree-profiles/w/skills/new.md", true},  // a worktree profile
 		{"skills/new.md", "/g/common/outfit/profiles/yolo/skills/other.md", false}, // another file of it
 		{"skills/new.md", "/somewhere/else.md", false},
+		{"skills/new.md", "../.outfit/profiles/../skills/new.md", false},           // ".." is no profile name
+		{"skills/new.md", "/g/common/outfit/profiles/yolo/x/skills/new.md", false}, // not one directory deep
+		{"skills/new.md", "/g/common/outfit/profiles/../../skills/new.md", false},
 	} {
 		if got := isExtraLink(tc.rel, tc.text, personal); got != tc.want {
 			t.Errorf("isExtraLink(%q, %q) = %v, want %v", tc.rel, tc.text, got, tc.want)

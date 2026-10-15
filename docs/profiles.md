@@ -200,7 +200,7 @@ team's git hooks (a hook the team locked on would stop running unseen), nor `.gi
 A profile file is **not linked** (with a note) when something is in the way: a regular file of yours already
 at that path (a copy is saved, the file stays, exit 3), a symlink that is not outfit's, the team tracking a
 file where a folder would have to stand (or files below the path), a name that differs from a tracked file only
-in case, the name `.gitignore` in the replaced directory itself, or a `.gitignore` there that the team tracks
+in case, a name git reads itself and refuses as a symlink (`.gitignore`, `.gitattributes`, `.gitmodules`, in any folder, any case), or a `.gitignore` in the replaced directory that the team tracks
 or that is not outfit's (the profile's own files could not be hidden from git).
 
 Limits: `git add -A` fails while an untracked file stands in a hidden directory (git's own rule: use `git add

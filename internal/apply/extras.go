@@ -17,6 +17,7 @@ import (
 	"github.com/prosperity-solutions/outfit/internal/fault"
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 	"github.com/prosperity-solutions/outfit/internal/plan"
+	"github.com/prosperity-solutions/outfit/internal/profiles"
 	"github.com/prosperity-solutions/outfit/internal/state"
 )
 
@@ -40,7 +41,15 @@ func personalLinkDirs(w Workspace) []string {
 // config) is theirs.
 func isExtraLink(rel, text string, personal []string) bool {
 	if strings.HasPrefix(text, "/") {
-		return isOurLinkText(text, personal) && strings.HasSuffix(text, "/"+rel)
+		for _, p := range personal {
+			if rest, ok := strings.CutPrefix(text, p); ok {
+				name, tail, ok := strings.Cut(rest, "/")
+				return ok && profiles.ValidName(name) == nil && tail == rel
+			}
+		}
+		// (the spelling of the directory may differ from the one the link was made with: a
+		// symlinked path; compare resolved, but never a path with a ".." in it)
+		return !strings.Contains(text, "/../") && isOurLinkText(text, personal) && strings.HasSuffix(text, "/"+rel)
 	}
 	head := strings.Repeat("../", strings.Count(rel, "/")) + ".outfit/profiles/"
 	mid, ok := strings.CutPrefix(text, head)
@@ -48,7 +57,7 @@ func isExtraLink(rel, text string, personal []string) bool {
 		return false
 	}
 	name, tail, ok := strings.Cut(mid, "/")
-	return ok && name != "" && tail == rel
+	return ok && profiles.ValidName(name) == nil && tail == rel
 }
 
 // isOurIgnoreFile reports that the file at rel is an ignore file outfit wrote.
@@ -195,7 +204,13 @@ func (t trackedIdx) clash(p string) string {
 // ignoreFacts reads `<d>/.gitignore`: what it holds, and whether outfit may write it.
 func (in Input) ignoreFacts(d string, idx map[string]indexEntry) plan.IgnoreFacts {
 	rel := d + "/.gitignore"
-	if idx[rel].tracked || idx[rel].unmerged {
+	trackedHere := idx[rel].tracked || idx[rel].unmerged
+	for k, e := range idx { // (a file system that folds case: .GitIgnore is the same path)
+		if !trackedHere && e.tracked && strings.EqualFold(k, rel) {
+			trackedHere = true
+		}
+	}
+	if trackedHere {
 		// (a file of ours that is still there, from before the team tracked the path, is told apart
 		// so that it can go: it would otherwise stand at a tracked path for good)
 		f := plan.IgnoreFacts{Blocked: "the team tracks " + rel + ", and outfit will not write into it"}
@@ -285,9 +300,11 @@ func pruneEmptyDirs(worktree, rel, under string) {
 func teardownExtras(ctx context.Context, g gitx.Client, w Workspace, st *state.State) (did, failed []string) {
 	dirs := extraScanDirs(w, st, nil)
 	recorded := map[string]plan.Record{}
+	inRecord := map[string]bool{}
 	for _, s := range st.Extras {
 		if plan.ValidSwapPath(s.Path) == nil {
 			recorded[s.Path] = plan.Record{Target: s.Target, Extra: true}
+			inRecord[s.Path] = true
 		}
 	}
 	in := Input{W: w}
@@ -315,12 +332,19 @@ func teardownExtras(ctx context.Context, g gitx.Client, w Workspace, st *state.S
 		}
 		abs := filepath.Join(w.WorkTree, filepath.FromSlash(p))
 		fi, err := os.Lstat(abs)
-		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		if err != nil {
+			continue
+		}
+		if fi.Mode().IsRegular() && inRecord[p] {
+			// An editor's save over the link that `outfit sync` has not copied into the profile yet.
+			failed = append(failed, p+" is a regular file where outfit's link was: left alone (its bytes are yours; `outfit sync` absorbs an editor's save into the profile, then rerun)")
+			continue
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
 			continue
 		}
 		if t, _ := os.Readlink(abs); t != recorded[p].Target && !isExtraLink(p, t, personal) {
-			failed = append(failed, p+" is a link, but not the one outfit made: left alone")
-			continue
+			continue // a link of somebody's, at a path git does not track: not ours, and in nobody's way
 		}
 		fault.Point("teardown: before an extra link goes")
 		if err := os.Remove(abs); err != nil {
