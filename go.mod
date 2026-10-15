@@ -7,6 +7,7 @@ toolchain go1.27.2
 require (
 	aead.dev/minisign v0.3.0
 	github.com/rogpeppe/go-internal v1.16.0
+	pgregory.net/rapid v1.3.0
 )
 
 require (

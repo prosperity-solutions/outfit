@@ -62,11 +62,16 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 				failed = append(failed, s.Path+" is a link, but not the one outfit made: left alone")
 				continue
 			}
+			fault("teardown: before a link goes")
 			if err := os.Remove(p); err != nil {
 				failed = append(failed, "link "+s.Path+": "+err.Error())
 				continue
 			}
 			did = append(did, "link "+s.Path)
+			restore = append(restore, s.Path)
+		case err == nil && cleanBaseFile(ctx, g, s.Path):
+			// The base file is back, untouched: an earlier run (killed after it switched
+			// sparse checkout off) already did this one. Nothing to remove, nothing to lose.
 			restore = append(restore, s.Path)
 		case err == nil:
 			failed = append(failed, s.Path+" is a regular file where outfit's link was: left alone (its bytes are yours; `outfit sync` absorbs an editor's save into the profile, or saves both copies when the profile changed too, then rerun)")
@@ -83,6 +88,7 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 		return did, failed
 	}
 
+	fault("teardown: links are off")
 	sparseText, _ := readInside(w.GitDir, "info/sparse-checkout")
 	managed := strings.HasPrefix(string(sparseText), plan.Marker)
 	if managed || st.SparseSet {
@@ -90,6 +96,7 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 			if _, err := g.Write(ctx, "sparse-checkout", "disable"); err != nil {
 				failed = append(failed, "git sparse-checkout disable: "+err.Error())
 			} else {
+				fault("teardown: sparse checkout is off")
 				did = append(did, "sparse checkout")
 			}
 			_ = os.Remove(filepath.Join(w.GitDir, "info", "sparse-checkout"))
@@ -136,6 +143,17 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 		}
 	}
 	return did, failed
+}
+
+// cleanBaseFile reports that path is the committed base file, back on disk and not
+// hidden by sparse checkout, and unchanged against the index.
+func cleanBaseFile(ctx context.Context, g gitx.Client, rel string) bool {
+	res, err := g.Read(ctx, "--literal-pathspecs", "ls-files", "-t", "-z", "--", rel)
+	if err != nil || !strings.HasPrefix(string(res.Stdout), "H ") {
+		return false
+	}
+	st, err := g.Read(ctx, "--literal-pathspecs", "status", "--porcelain=v1", "-z", "--untracked-files=no", "--", rel)
+	return err == nil && len(st.Stdout) == 0
 }
 
 func dirExists(p string) bool {

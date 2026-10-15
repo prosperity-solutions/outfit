@@ -149,6 +149,7 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 
 	stepErr := func() error {
 		for _, a := range acts {
+			fault("before " + string(a.Kind))
 			switch a.Kind {
 			case plan.Skip, plan.Conflict, plan.RecordHash, plan.Stale:
 				// (plan.ActionKind.Informational / Bookkeeping: nothing to run; RecordHash only changes the state written below.
@@ -273,6 +274,7 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 	}
 	next.Author = in.Author
 	next.CommittedProfiles = in.CommittedProfiles
+	fault("before the state is written")
 	changed, werr := state.Write(in.W.GitDir, &next)
 	if werr == nil && changed {
 		res.Changed = true
@@ -289,6 +291,7 @@ func (in Input) writeSparse(ctx context.Context, text string) error {
 	if err != nil {
 		return fmt.Errorf("git sparse-checkout set failed: %w", err)
 	}
+	fault("sparse patterns written")
 	if strings.Contains(string(res.Stderr), "not up to date") || strings.Contains(string(res.Stderr), "left despite sparse patterns") {
 		return fmt.Errorf("git left files in place because they have uncommitted changes, so the switch is half done: %s\n  fix: commit those changes, or put them in the profile's copy, then: outfit sync", strings.TrimSpace(string(res.Stderr)))
 	}
@@ -350,6 +353,13 @@ func mkdirAllLike(root, rel string) error {
 	return r.MkdirAll(dir, mode)
 }
 
+// tmpLinkPath is the temporary name a link at path is made under (relative, same
+// directory, so the rename into place is atomic).
+func tmpLinkPath(path string) string {
+	dir, base := pathpkg.Split(path)
+	return dir + ".outfit-link~" + base
+}
+
 // link puts the symlink for path in place: parent directories first (sparse
 // checkout removes a directory whose only file was hidden, verified), the link
 // made under a temporary name and renamed over the target so there is never a
@@ -371,10 +381,17 @@ func (in Input) link(path, target string, replaces bool) error {
 			return fmt.Errorf("%s exists and is not outfit's to replace", path)
 		}
 	}
-	tmp := filepath.Join(filepath.Dir(abs), fmt.Sprintf(".outfit-link-%d-%d", os.Getpid(), time.Now().UnixNano()))
+	// A fixed name per path (syncs are serialised by the lock): a kill between the
+	// symlink and the rename leaves exactly one leftover that the next sync recognises and
+	// removes (plan: stray links), never a pile of them.
+	tmp := in.abs(tmpLinkPath(path))
+	if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
 	if err := os.Symlink(target, tmp); err != nil {
 		return err
 	}
+	fault("link made under a temporary name")
 	if err := os.Rename(tmp, abs); err != nil {
 		_ = os.Remove(tmp)
 		return err
@@ -408,6 +425,7 @@ func (in Input) absorb(path, target string) error {
 	if err := state.WriteFileAtomic(in.variantPath(path), b, mode); err != nil {
 		return fmt.Errorf("cannot save %s into the profile: %w", path, err)
 	}
+	fault("absorbed into the profile, not yet relinked")
 	return in.link(path, target, true)
 }
 
@@ -469,6 +487,7 @@ func (in Input) quarantine(res *Result, path string, file, withVariant bool) (cr
 			return false, err
 		}
 	}
+	fault("quarantine copies saved")
 	return true, nil
 }
 

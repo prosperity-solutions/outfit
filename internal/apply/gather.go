@@ -170,12 +170,18 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	// A `<path>~cruft` symlink might be our own link, moved aside by older git during a
 	// merge. Ask the index about it too (the same call): one that git tracks is the
 	// repository's own file and is never ours to remove.
-	cruft := map[string]string{}
+	strays := map[string]map[string]string{} // path -> stray link (relative) -> its text
 	for _, p := range all {
-		if realParents(in.W.WorkTree, p) {
-			if t, err := os.Readlink(in.abs(p) + "~cruft"); err == nil && t != "" {
-				cruft[p] = t
-				ask = append(ask, p+"~cruft")
+		if !realParents(in.W.WorkTree, p) {
+			continue
+		}
+		for _, stray := range []string{p + "~cruft", tmpLinkPath(p)} {
+			if t, err := os.Readlink(in.abs(stray)); err == nil && t != "" {
+				if strays[p] == nil {
+					strays[p] = map[string]string{}
+				}
+				strays[p][stray] = t
+				ask = append(ask, stray)
 			}
 		}
 	}
@@ -220,9 +226,12 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		default:
 			pf.FS = plan.Other
 		}
-		if t, ok := cruft[p]; ok && !idx[p+"~cruft"].tracked && !idx[p+"~cruft"].unmerged {
-			pf.CruftLink = t == facts.Recorded[p].Target || (in.Profile != nil && t == in.Target(p))
+		for stray, t := range strays[p] {
+			if !idx[stray].tracked && !idx[stray].unmerged && (t == facts.Recorded[p].Target || (in.Profile != nil && t == in.Target(p))) {
+				pf.StrayLinks = append(pf.StrayLinks, stray)
+			}
 		}
+		sort.Strings(pf.StrayLinks)
 		if in.Profile != nil {
 			pf.VariantHash = hashFile(in.variantPath(p))
 			if v, ok := variantRel[p]; ok {

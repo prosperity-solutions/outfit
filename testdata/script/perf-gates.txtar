@@ -1,0 +1,36 @@
+# The hard performance gates (docs/HANDOVER.md §7.6): how many git processes a command
+# spawns, counted through gitx on every OS. `get` costs one (the config list); a no-op
+# `sync` costs two (the config list and one `ls-files`) and writes nothing. The soft gate
+# (hyperfine, Linux) is scripts/ci/perf-soft.sh.
+fixture repo team
+cd repo
+
+# Not installed, base: nothing to sync, a toggle to read.
+gitcalls reset
+outfit get biome
+gitcalls ==1
+
+outfit init
+gitcalls reset
+outfit get biome
+gitcalls ==1
+gitcalls reset
+! outfit get hook.pre-commit
+gitcalls ==1
+
+# A committed profile in use: a no-op sync is two git processes.
+outfit use yolo
+outfit sync
+gitcalls reset
+outfit sync
+gitcalls ==2
+gitcalls reset
+outfit sync
+gitcalls ==2
+
+# Back on base (hidden committed profiles, nothing swapped): still no more than two.
+outfit use base
+outfit sync
+gitcalls reset
+outfit sync
+gitcalls 2

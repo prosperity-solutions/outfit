@@ -44,10 +44,12 @@ type PathFacts struct {
 	VariantHash  string // SHA-256 of the variant file; "" when it is missing
 	// VariantExec says the variant file has an executable bit.
 	VariantExec bool
-	// CruftLink says `<path>~cruft` is OUR link, moved aside: older git renames what
-	// stands in the way of a conflict's markers file (the link) to that name, and it
-	// would show up as an untracked symlink that `git add -A` could commit.
-	CruftLink bool
+	// StrayLinks are OUR links standing where they do not belong, untracked: `<path>~cruft`
+	// (older git renames what stands in the way of a conflict's markers file, the link,
+	// to that name) and the temporary name a link is made under before it is renamed into
+	// place (a kill between the two leaves it). Either would show up as an untracked
+	// symlink that `git add -A` could commit.
+	StrayLinks []string
 	// VariantBlob is the blob id the index holds for the variant ("" when the profile
 	// is not committed or the file is not tracked yet).
 	VariantBlob string
@@ -275,8 +277,8 @@ func Plan(w Want, f Facts) []Action {
 	// Our own link, moved aside by git for a merge's markers file: remove it at once (it
 	// is untracked, and `git add -A` mid-resolution would commit a symlink).
 	for _, p := range sortedKeys(f.Paths) {
-		if f.Paths[p].CruftLink {
-			out = append(out, Action{Kind: RemoveLink, Path: p + "~cruft"})
+		for _, stray := range f.Paths[p].StrayLinks {
+			out = append(out, Action{Kind: RemoveLink, Path: stray})
 		}
 	}
 
@@ -284,7 +286,7 @@ func Plan(w Want, f Facts) []Action {
 	// can bring the base file back.
 	var obsolete []string
 	for p := range f.Recorded {
-		if _, still := want[p]; !still && !inConflict[p] {
+		if _, still := want[p]; !still && !inConflict[p] && !f.Paths[p].Unmerged {
 			obsolete = append(obsolete, p)
 		}
 	}

@@ -67,3 +67,20 @@ stderr 'fix: git stash push -- apps/web/AGENTS.md'
 exec cat apps/web/AGENTS.md
 stdout 'my local notes'
 ! exec git config --local --get outfit.profile
+
+# Found by the property test (internal/e2e/property_test.go): an editor's atomic save of a
+# swapped file is absorbed by the settle that `use` does first, which makes the profile's
+# file differ from git; the refusal to switch over uncommitted edits must see THAT edit too
+# (it used to look before the settle, and git then half-switched the tree).
+exec git reset -q --hard
+outfit use base
+outfit use lean
+atomicsave apps/web/AGENTS.md 'saved by an editor\n'
+! outfit use yolo
+stderr 'has uncommitted edits'
+stderr 'fix: git add --sparse -u .outfit'
+islink apps/web/AGENTS.md ../../.outfit/profiles/lean/apps/web/AGENTS.md
+exec cat apps/web/AGENTS.md
+stdout 'saved by an editor'
+exec git config --local --get outfit.profile
+stdout '^lean$'

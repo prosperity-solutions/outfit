@@ -279,13 +279,46 @@ jobs:
           go install aead.dev/minisign/cmd/minisign@v0.3.0
       - run: scripts/ci/signing-smoke.sh
 
+  # Every fuzz target for 20 s (docs/testing.md). The seed corpora already run in `unit`;
+  # this looks for new inputs. A failure leaves the input under testdata/fuzz/.
+  fuzz:
+    name: Fuzz (20 s per target)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - run: scripts/dev/fuzz.sh 20
+
+  # The SOFT performance gate (docs/HANDOVER.md §7.6): `outfit sync` within 10 ms of
+  # `git rev-parse --git-dir`, by hyperfine, Linux only. Not in all-green's needs and
+  # continue-on-error: a noisy runner is a reason to look, never a reason to block. The
+  # hard gate (git processes per command) is in the scenarios, on every OS.
+  perf:
+    name: Performance (soft)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    continue-on-error: true
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Install hyperfine
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq hyperfine jq
+      - run: scripts/ci/perf-soft.sh
+
   # The single required check. Fails unless every needed job SUCCEEDED. The
   # `commits` and `ship` jobs only exist on pull requests, so on a push to main
   # they are expected to be skipped; nothing else may be.
   all-green:
     name: all-green
     runs-on: ubuntu-24.04
-    needs: [commits, ship, lint, unit, plan, integration, install, demo, signing]
+    needs: [commits, ship, lint, unit, plan, integration, install, demo, signing, fuzz]
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always()
     steps:
       - name: Every needed job must have succeeded

@@ -3,7 +3,9 @@
 `outfit` is a small, very fast Go CLI that lets each developer, and each coding
 agent, run any git repository under a **profile**: which hook checks run, and a
 few swapped files. The full spec is [docs/HANDOVER.md](docs/HANDOVER.md); how git
-actually behaves, as pinned by tests, is [docs/git-behavior.md](docs/git-behavior.md).
+actually behaves, as pinned by tests, is [docs/git-behavior.md](docs/git-behavior.md);
+what is tested where (scenarios, properties, fault injection, fuzzing, performance gates)
+is [docs/testing.md](docs/testing.md).
 
 ## Before you change anything
 

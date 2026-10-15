@@ -414,3 +414,18 @@ func TestInformationalAndBookkeepingKinds(t *testing.T) {
 		t.Fatal("kinds misclassified")
 	}
 }
+
+func TestPlanNeverTouchesARecordedPathThatIsMidMerge(t *testing.T) {
+	// Found by FuzzPlan: the profile no longer lists a recorded path, and the path is a
+	// conflict-markers file. The "obsolete regular file" step would have saved and removed it.
+	w := Want{}
+	f := Facts{
+		Paths:    map[string]PathFacts{"AGENTS.md": {FS: File, Unmerged: true}},
+		Recorded: map[string]Record{"AGENTS.md": {Target: tgt}},
+	}
+	for _, a := range Plan(w, f) {
+		if a.Path == "AGENTS.md" {
+			t.Fatalf("planned %s on a path in the middle of a merge", a.Kind)
+		}
+	}
+}

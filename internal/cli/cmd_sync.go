@@ -260,15 +260,6 @@ func cmdUse(ctx context.Context, e Env, args []string) int {
 		}
 	}
 
-	// Never switch over uncommitted edits in the committed variant that is about to
-	// go: git would leave those files in place and the tree half-switched.
-	if l.Profile != nil && l.Profile.Tier == profiles.Committed && l.Profile.Name != name {
-		if dirty := dirtyPaths(ctx, l, profiles.CommittedRoot+"/"+l.Profile.Name+"/"); len(dirty) > 0 {
-			return fail((&Error{Code: ExitNeedsHuman, Msg: fmt.Sprintf("the active profile %q has uncommitted edits (%s): switching would leave the tree half-switched", l.Profile.Name, strings.Join(first(dirty, 3), ", "))}).
-				WithFix("git add --sparse -u .outfit && git commit -m 'update profile'"))
-		}
-	}
-
 	// Settle the current profile first (absorb an editor's atomic save, say) so the
 	// switch starts from a clean state.
 	if pre, _, err := converge(ctx, e, l, false); err != nil {
@@ -276,6 +267,17 @@ func cmdUse(ctx context.Context, e Env, args []string) int {
 	} else if pre.NeedsHuman || len(pre.Refused) > 0 {
 		printNotes(e, pre)
 		return syncExitJSON(e, *asJSON, pre, "settle the current profile first, then rerun `outfit use "+name+"`", "outfit sync")
+	}
+
+	// Never switch over uncommitted edits in the committed variant that is about to
+	// go: git would leave those files in place and the tree half-switched. (After the
+	// settle above, not before: absorbing an editor's save is what makes the variant
+	// differ from git, and that edit must stop the switch too.)
+	if l.Profile != nil && l.Profile.Tier == profiles.Committed && l.Profile.Name != name {
+		if dirty := dirtyPaths(ctx, l, profiles.CommittedRoot+"/"+l.Profile.Name+"/"); len(dirty) > 0 {
+			return fail((&Error{Code: ExitNeedsHuman, Msg: fmt.Sprintf("the active profile %q has uncommitted edits (%s): switching would leave the tree half-switched", l.Profile.Name, strings.Join(first(dirty, 3), ", "))}).
+				WithFix("git add --sparse -u .outfit && git commit -m 'update profile'"))
+		}
 	}
 
 	scope := "--local"
