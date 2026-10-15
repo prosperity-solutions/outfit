@@ -49,8 +49,12 @@ then puts a **relative symlink** at the path pointing into
   `outfit show`, or put them all on disk with `outfit author on`;
 - `.outfit/` is in `.git/info/exclude`, which keeps search tools like `rg` out of it.
   Side effect (a git rule, [git-behavior.md](git-behavior.md) row 34): `git add
-  .outfit/…` by path refuses; use `git add -u .outfit` (modified files) or `git add -f`
-  (new ones), or `git commit -a`.
+  .outfit/…` by path refuses; use `git add -u .outfit` (modified files), `git add -f` (a
+  new file in a profile that is on disk), or `git commit -a`. A **new profile directory**
+  is not on disk as far as git's sparse patterns go: run `outfit author on` first, then
+  `git add -f .outfit/profiles/<name>/…`, commit, and `outfit author off`. Files you
+  staged but have not committed are never taken off disk: `outfit` refuses to hide them
+  and says to commit first.
 
 The pre-commit guard refuses any commit that stages a swapped path or a symlink, and says
 how to fix it.
@@ -85,8 +89,8 @@ turn author mode off over uncommitted edits in the hidden profiles.
 Linked worktrees each have their own links and sparse patterns, so a sync runs per
 worktree; `use` syncs the worktree it runs in, the others follow on their next trigger or
 `outfit sync`. Syncs are serialised by a lock in the worktree's git dir (`sync.lock`); a
-second one waits for the first rather than skipping, and a lock whose owner died is taken
-over.
+second one waits for the first rather than skipping. It is an `flock`, so the system
+frees it when its owner dies; there is never a stale lock to clean up.
 
 ## Environment
 

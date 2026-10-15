@@ -85,7 +85,17 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 	}
 	if l.Profile != nil {
 		st.Tier = string(l.Profile.Tier)
-		for _, f := range profiles.Files(*l.Profile) {
+		files := profiles.Files(*l.Profile)
+		// Where outfit has swapped files, list the swaps that really happened: a path
+		// it skipped (not tracked, a case clash, no base file) is not one.
+		if rec, err := state.Read(l.Repo.GitDir); err == nil && len(rec.Swaps) > 0 {
+			files = files[:0:0]
+			for _, s := range rec.Swaps {
+				files = append(files, s.Path)
+			}
+			sort.Strings(files)
+		}
+		for _, f := range files {
 			st.Files = append(st.Files, statusFile{Path: f, Profile: l.Profile.Name, Tier: st.Tier})
 		}
 	}

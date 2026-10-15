@@ -39,7 +39,8 @@ type PathFacts struct {
 	Unmerged     bool   // the index has conflict stages for the path
 	Mode         string // index mode, e.g. 100644
 
-	MatchesIndex bool   // when FS == File: the content equals the committed blob
+	MatchesIndex bool   // when FS == File: git says the file is clean (not modified against the index)
+	FileHash     string // when FS == File and skip-worktree: SHA-256 of the file's content
 	VariantHash  string // SHA-256 of the variant file; "" when it is missing
 }
 
@@ -57,6 +58,10 @@ type Facts struct {
 	ExcludeHas  bool   // .git/info/exclude already carries outfit's entry
 	Paths       map[string]PathFacts
 	Recorded    map[string]Record
+	// StagedProfiles lists paths under .outfit/profiles that are staged but not
+	// committed. Hiding a profile removes its files from disk; a staged-only file
+	// has no other copy, and the next `git reset` would lose it.
+	StagedProfiles []string
 }
 
 // Want is the desired state, derived from the active profile.
@@ -66,6 +71,8 @@ type Want struct {
 	// needed (nothing swapped, nothing to hide).
 	Sparse  string
 	Exclude bool // .git/info/exclude should carry outfit's entry
+	// HidesProfiles says Sparse hides the inactive committed profiles.
+	HidesProfiles bool
 }
 
 // ActionKind names a step.
@@ -145,12 +152,17 @@ func Plan(w Want, f Facts) []Action {
 		refuse = append(refuse, Action{Kind: Refuse, Reason: "sparse checkout is already on and was not set up by outfit; outfit will not take over a sparse checkout it did not make",
 			Fix: "git sparse-checkout disable   (then rerun outfit)"})
 	}
+	if w.HidesProfiles && len(f.StagedProfiles) > 0 && w.Sparse != f.SparseText {
+		refuse = append(refuse, Action{Kind: Refuse,
+			Reason: "profile files are staged but not committed (" + strings.Join(firstN(f.StagedProfiles, 3), ", ") + "): hiding the inactive profiles would take them off disk, and the staged copy is the only one",
+			Fix:    "git commit -m 'feat: add profile'   (or: outfit author on, which keeps every profile on disk)"})
+	}
 	var skips, conflicts []Action
 	for _, p := range paths {
 		pf := f.Paths[p]
 		switch {
 		case !pf.Tracked && !pf.Unmerged:
-			skips = append(skips, Action{Kind: Skip, Path: p, Reason: p + " is not tracked by git, and outfit swaps only files the repository has"})
+			skips = append(skips, Action{Kind: Skip, Path: p, Reason: p + " is not tracked by git (a name must match the repository's exactly, case included), and outfit swaps only files the repository has"})
 			delete(want, p)
 		case pf.Unmerged:
 			conflicts = append(conflicts, Action{Kind: Conflict, Path: p,
@@ -161,13 +173,15 @@ func Plan(w Want, f Facts) []Action {
 			refuse = append(refuse, Action{Kind: Refuse, Path: p, Reason: p + " is a symlink in the repository itself; outfit swaps regular files only"})
 		case pf.FS == Dir || pf.FS == Other:
 			refuse = append(refuse, Action{Kind: Refuse, Path: p, Reason: p + " is a directory or something that is not a file or link, where the profile wants a file"})
-		case pf.VariantHash == "":
-			skips = append(skips, Action{Kind: Skip, Path: p, Reason: "the profile's file for " + p + " is missing, so the base file stays"})
-			delete(want, p)
 		case pf.FS == File && !pf.SkipWorktree && !pf.MatchesIndex:
+			// Before the missing-variant skip: right after a switch the new profile's
+			// files are not on disk yet, and a refusal must come before anything changes.
 			refuse = append(refuse, Action{Kind: Refuse, Path: p,
 				Reason: p + " has uncommitted changes, and swapping it would hide them",
 				Fix:    "git stash push -- " + shq(p) + "   (or commit it), then rerun"})
+		case pf.VariantHash == "":
+			skips = append(skips, Action{Kind: Skip, Path: p, Reason: "the profile's file for " + p + " is missing, so the base file stays"})
+			delete(want, p)
 		}
 	}
 	if len(refuse) > 0 {
@@ -251,6 +265,10 @@ func Plan(w Want, f Facts) []Action {
 				// An untouched base file (the Refuse above caught a modified one): the
 				// sparse change removes it, and where git did not, linking may.
 				out = append(out, Action{Kind: LinkPath, Path: p, Target: s.Target, Replaces: true})
+			case pf.FileHash != "" && pf.FileHash == pf.VariantHash:
+				// The file and the profile's copy are the same bytes (a person resolved a
+				// quarantine by making them equal): nothing to choose, just relink.
+				out = append(out, Action{Kind: Absorb, Path: p, Target: s.Target})
 			case had && rec.VariantHash == pf.VariantHash:
 				// An editor's atomic save replaced the link. The variant is unchanged since
 				// linking, so the file is the newer copy: absorb it, byte for byte.
@@ -258,7 +276,7 @@ func Plan(w Want, f Facts) []Action {
 			default:
 				out = append(out, Action{Kind: QuarantineBoth, Path: p,
 					Reason: p + " was replaced by a regular file AND the profile's copy changed since outfit linked it: both are saved, the file is left where it is",
-					Fix:    "compare them, keep what you want in " + shq(p) + " or in the profile, then: outfit sync"})
+					Fix:    "compare them; put what you want to keep into the profile's copy, then remove " + shq(p) + " (or make the two identical) and run: outfit sync"})
 			}
 		}
 	}
@@ -316,4 +334,11 @@ func (a Action) Describe() string {
 		return fmt.Sprintf("%s %s", a.Kind, a.Path)
 	}
 	return string(a.Kind)
+}
+
+func firstN(s []string, n int) []string {
+	if len(s) > n {
+		return append(append([]string(nil), s[:n]...), "…and more")
+	}
+	return s
 }

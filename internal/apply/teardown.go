@@ -42,10 +42,21 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 
 	var restore []string
 	for _, s := range st.Swaps {
+		// state.json is local, but a removal it names must stay inside the worktree
+		// and take away only OUR link: never a path through a symlinked directory, and
+		// never a link that is not the one sync made.
+		if err := plan.ValidSwapPath(s.Path); err != nil || !realParents(w.WorkTree, s.Path) {
+			failed = append(failed, "recorded path "+s.Path+" is not a plain path inside the worktree: left alone")
+			continue
+		}
 		p := filepath.Join(w.WorkTree, filepath.FromSlash(s.Path))
 		fi, err := os.Lstat(p)
 		switch {
 		case err == nil && fi.Mode()&os.ModeSymlink != 0:
+			if t, _ := os.Readlink(p); s.Target != "" && t != s.Target {
+				failed = append(failed, s.Path+" is a link, but not the one outfit made: left alone")
+				continue
+			}
 			if err := os.Remove(p); err != nil {
 				failed = append(failed, "link "+s.Path+": "+err.Error())
 				continue
@@ -72,7 +83,10 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 		}
 		cfgFile := filepath.Join(w.GitDir, "config.worktree")
 		keys := []string{"core.sparseCheckout", "core.sparseCheckoutCone"}
-		if st.ExpectFilesSet {
+		// `git worktree add` copies the main worktree's config.worktree, this key
+		// included, so a linked worktree never recorded setting it: with outfit's own
+		// sparse patterns in place there it is outfit's to take away.
+		if st.ExpectFilesSet || (managed && w.GitDir != w.CommonDir) {
 			keys = append(keys, "sparse.expectFilesOutsideOfPatterns")
 		}
 		for _, k := range keys {

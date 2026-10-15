@@ -60,18 +60,26 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 	if *asJSON {
 		out := struct {
 			*hooks.InstallResult
-			Sync *syncJSON `json:"sync,omitempty"`
+			Sync      *syncJSON `json:"sync,omitempty"`
+			SyncError string    `json:"sync_error,omitempty"`
+			Fix       string    `json:"fix,omitempty"`
 		}{InstallResult: res}
 		if syncRes != nil {
 			j := toJSON(syncRes)
 			out.Sync = &j
 		}
+		if syncErr != nil {
+			out.SyncError = syncErr.Error()
+			out.Fix = "outfit sync"
+		} else if syncRes != nil && (syncRes.NeedsHuman || len(syncRes.Refused) > 0) {
+			out.Fix = "outfit status"
+		}
 		b, _ := json.Marshal(out)
 		fmt.Fprintln(e.Stdout, string(b))
-		return ExitOK
+		return initExit(syncRes, syncErr)
 	}
 	if syncErr != nil {
-		fmt.Fprintf(e.Stderr, "warning: profile hiding was not set up: %v\n", syncErr)
+		fmt.Fprintf(e.Stderr, "outfit: profile files were not set up: %v\n  fix: outfit sync\n", syncErr)
 	} else if syncRes != nil {
 		printNotes(e, syncRes)
 	}
@@ -98,6 +106,17 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 		if len(res.MissingWorktrees) > 0 {
 			fmt.Fprintf(e.Stdout, "  worktrees whose directory is gone (configured anyway; `git worktree prune` removes them): %s\n", strings.Join(res.MissingWorktrees, ", "))
 		}
+	}
+	return initExit(syncRes, syncErr)
+}
+
+// initExit is 0 when the dispatcher is in and the profile files are in order, and
+// 3 when the dispatcher is installed but a person has to look at the profile files
+// (a sparse checkout that is not ours, a refusal, an error): init's own job is done
+// either way, and rerunning it is harmless.
+func initExit(syncRes *apply.Result, syncErr error) int {
+	if syncErr != nil || (syncRes != nil && syncExit(syncRes) != ExitOK) {
+		return ExitNeedsHuman
 	}
 	return ExitOK
 }

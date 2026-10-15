@@ -8,7 +8,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha1" //nolint:gosec // git's own object id, not a security use
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -58,6 +57,31 @@ type Input struct {
 // maxFile bounds what absorb and quarantine will read into memory.
 const maxFile = 32 << 20
 
+// maxSwaps bounds how many files one profile may swap. Every one becomes a git
+// pathspec and a lstat on every sync, and sync runs after every checkout: a
+// committed profile with a million files must not be able to stall them.
+const maxSwaps = 2000
+
+// realParents reports whether every directory above rel (below root) is a real
+// directory: not a symlink, not a file. lstat follows symlinks in parent
+// components, so without this a link, a removal or a copy aimed at "d/f" would land
+// wherever a committed "d -> /elsewhere" points.
+func realParents(root, rel string) bool {
+	parts := strings.Split(rel, "/")
+	cur := root
+	for _, part := range parts[:len(parts)-1] {
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return true // not there yet: MkdirAll will make real directories
+		}
+		if err != nil || !fi.IsDir() {
+			return false
+		}
+	}
+	return true
+}
+
 // gathered is what gather learned beyond the planner's Facts.
 type gathered struct {
 	blobs    map[string]string // path -> committed blob id
@@ -103,8 +127,18 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			}
 		}
 		sort.Strings(candidates)
+		if len(candidates) > maxSwaps {
+			g.messages = append(g.messages, fmt.Sprintf("profile %q lists %d files to swap; outfit swaps at most %d, so none were swapped", in.Profile.Name, len(candidates), maxSwaps))
+			candidates = nil
+		}
 	}
 	for _, s := range st.Swaps {
+		// state.json is local, but what it names is acted on (links removed, files
+		// quarantined): hold it to the same rules as a profile's own paths.
+		if err := plan.ValidSwapPath(s.Path); err != nil {
+			g.messages = append(g.messages, "ignored a recorded swap: "+err.Error())
+			continue
+		}
 		facts.Recorded[s.Path] = plan.Record{Target: s.Target, VariantHash: s.VariantHash}
 	}
 
@@ -126,6 +160,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		idx = parseLsFiles(res.Stdout)
 	}
 
+	var toCheck []string // regular files git has not hidden: is each one untouched?
 	for _, p := range all {
 		pf := plan.PathFacts{}
 		ie := idx[p]
@@ -134,6 +169,8 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 
 		fi, err := os.Lstat(in.abs(p))
 		switch {
+		case !realParents(in.W.WorkTree, p):
+			pf.FS = plan.Other // a directory above it is a link: never act through it
 		case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscallENOTDIR):
 			pf.FS = plan.Missing
 		case err != nil:
@@ -143,8 +180,10 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			pf.LinkTarget, _ = os.Readlink(in.abs(p))
 		case fi.Mode().IsRegular():
 			pf.FS = plan.File
-			if !ie.skip && ie.tracked {
-				pf.MatchesIndex = matchesBlob(in.abs(p), ie.blob)
+			if ie.skip {
+				pf.FileHash = hashFile(in.abs(p))
+			} else if ie.tracked {
+				toCheck = append(toCheck, p)
 			}
 		case fi.IsDir():
 			pf.FS = plan.Dir
@@ -158,6 +197,20 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	}
 	// A recorded path the profile no longer lists has no variant to hash; its facts
 	// only matter for the link/file kind.
+
+	// "Untouched" is decided by git, which applies .gitattributes, autocrlf and
+	// clean/smudge filters and notices a mode change: raw bytes cannot.
+	if len(toCheck) > 0 {
+		dirty, err := in.dirty(ctx, toCheck)
+		if err != nil {
+			return want, facts, g, err
+		}
+		for _, p := range toCheck {
+			pf := facts.Paths[p]
+			pf.MatchesIndex = !dirty[p]
+			facts.Paths[p] = pf
+		}
+	}
 
 	var hidden []string
 	for _, p := range candidates {
@@ -174,16 +227,54 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			active = in.Profile.Name
 		}
 		want.Sparse = plan.SparseText(plan.SparseOptions{Hidden: hidden, HideProfiles: hide, Active: active})
+		want.HidesProfiles = hide
+		if hide && want.Sparse != sparseNow(in.W.GitDir) {
+			// Only when the patterns are about to change. Compared with nothing but the index: a staged-only profile file is about
+			// to be taken off disk, and nothing else holds a copy.
+			res, err := in.Git.Read(ctx, "--literal-pathspecs", "diff", "--cached", "--name-only", "-z", "--", profiles.CommittedRoot)
+			if err != nil {
+				return want, facts, g, fmt.Errorf("cannot list staged profile files: %w", err)
+			}
+			for _, p := range strings.Split(string(res.Stdout), "\x00") {
+				if p != "" {
+					facts.StagedProfiles = append(facts.StagedProfiles, p)
+				}
+			}
+		}
 	}
 	want.Exclude = true
 
 	facts.SparseOn = in.Cfg.SparseCheckout
 	facts.ExpectFiles = in.Cfg.ExpectFiles
-	if b, err := os.ReadFile(filepath.Join(in.W.GitDir, "info", "sparse-checkout")); err == nil {
-		facts.SparseText = string(b)
-	}
+	facts.SparseText = sparseNow(in.W.GitDir)
 	facts.ExcludeHas = excludeHas(filepath.Join(in.W.CommonDir, "info", "exclude"))
 	return want, facts, g, nil
+}
+
+// sparseNow is the current info/sparse-checkout text ("" when absent).
+func sparseNow(gitDir string) string {
+	b, err := os.ReadFile(filepath.Join(gitDir, "info", "sparse-checkout"))
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// dirty asks git which of paths differ from the index (content after filters,
+// or mode). Paths git does not list are clean.
+func (in Input) dirty(ctx context.Context, paths []string) (map[string]bool, error) {
+	args := append([]string{"--literal-pathspecs", "status", "--porcelain=v1", "-z", "--untracked-files=no", "--no-renames", "--"}, paths...)
+	res, err := in.Git.Read(ctx, args...)
+	if err != nil {
+		return nil, fmt.Errorf("cannot ask git whether %d file(s) have uncommitted changes: %w", len(paths), err)
+	}
+	out := map[string]bool{}
+	for _, rec := range strings.Split(string(res.Stdout), "\x00") {
+		if len(rec) > 3 {
+			out[rec[3:]] = true
+		}
+	}
+	return out, nil
 }
 
 func contains(s []string, v string) bool {
@@ -225,40 +316,6 @@ func parseLsFiles(b []byte) map[string]indexEntry {
 		out[path] = e
 	}
 	return out
-}
-
-// matchesBlob reports whether the file's content hashes to the committed blob id:
-// an untouched copy of the base file. A repository that uses another object
-// format than git's own (a blob id of an unknown length) reports false, which
-// errs toward refusing.
-func matchesBlob(path, blob string) bool {
-	fi, err := os.Lstat(path)
-	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxFile {
-		return false
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	return blobID(b, len(blob)) == blob
-}
-
-// blobID is git's object id of a blob: hash("blob <len>\0" + content).
-func blobID(content []byte, hexLen int) string {
-	header := fmt.Sprintf("blob %d\x00", len(content))
-	switch hexLen {
-	case 40:
-		h := sha1.New() //nolint:gosec // git's object id
-		h.Write([]byte(header))
-		h.Write(content)
-		return hex.EncodeToString(h.Sum(nil))
-	case 64:
-		h := sha256.New()
-		h.Write([]byte(header))
-		h.Write(content)
-		return hex.EncodeToString(h.Sum(nil))
-	}
-	return ""
 }
 
 // hashFile is the SHA-256 of a regular file's content, "" when it is missing, a

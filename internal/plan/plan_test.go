@@ -165,6 +165,40 @@ func TestPlanRestoresALostSkipWorktreeBit(t *testing.T) {
 	}
 }
 
+func TestPlanQuarantineClearsWhenFileAndVariantBecomeIdentical(t *testing.T) {
+	w, f := inSync()
+	f.Paths["AGENTS.md"] = PathFacts{FS: File, Tracked: true, SkipWorktree: true, Mode: "100644", FileHash: "same", VariantHash: "same"}
+	f.Recorded["AGENTS.md"] = Record{Target: tgt, VariantHash: "older"}
+	got := Plan(w, f)
+	if !has(got, Absorb, "AGENTS.md") || NeedsHuman(got) {
+		t.Fatalf("an identical file and variant must relink, got %v", kinds(got))
+	}
+}
+
+func TestPlanDirtyBaseFileIsRefusedEvenWhileTheVariantIsStillHidden(t *testing.T) {
+	// Right after a switch the new profile's file is not on disk (VariantHash ""):
+	// the refusal must still come first, so nothing is applied.
+	w := Want{Swaps: []Swap{{Path: "a.md", Target: "t"}}}
+	f := Facts{Paths: map[string]PathFacts{"a.md": {FS: File, Tracked: true, Mode: "100644", MatchesIndex: false, VariantHash: ""}}}
+	if got := Plan(w, f); len(got) != 1 || got[0].Kind != Refuse {
+		t.Fatalf("%v", kinds(got))
+	}
+}
+
+func TestPlanRefusesToHideProfilesWhileProfileFilesAreOnlyStaged(t *testing.T) {
+	w := Want{Sparse: SparseText(SparseOptions{HideProfiles: true}), HidesProfiles: true, Exclude: true}
+	f := Facts{ExpectFiles: true, ExcludeHas: true, StagedProfiles: []string{".outfit/profiles/new/AGENTS.md"}}
+	got := Plan(w, f)
+	if len(got) != 1 || got[0].Kind != Refuse || !strings.Contains(got[0].Fix, "git commit") {
+		t.Fatalf("%v %+v", kinds(got), got)
+	}
+	// Patterns that already hide them change nothing, so nothing to refuse.
+	f.SparseText, f.SparseOn = w.Sparse, true
+	if got := Plan(w, f); len(got) != 0 {
+		t.Fatalf("%v", kinds(got))
+	}
+}
+
 func TestPlanRecordsAVariantEditedThroughTheLink(t *testing.T) {
 	w, f := inSync()
 	f.Paths["AGENTS.md"] = PathFacts{FS: Link, LinkTarget: tgt, Tracked: true, SkipWorktree: true, Mode: "100644", VariantHash: "h-edited"}

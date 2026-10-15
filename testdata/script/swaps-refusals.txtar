@@ -8,7 +8,7 @@ cd repo
 # A foreign sparse checkout (cone mode, somebody's own) is refused.
 exec git sparse-checkout init --cone
 exec git sparse-checkout set apps/web
-outfit init
+! outfit init
 stderr 'sparse checkout is already on and was not set up by outfit'
 stderr 'fix: git sparse-checkout disable'
 ! outfit use yolo

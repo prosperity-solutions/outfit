@@ -1,0 +1,59 @@
+# More review findings, pinned: nothing is done through a symlinked directory, and a
+# quarantine reached while a switch converges is reported (and survives a rerun).
+fixture repo team
+cd repo
+outfit init
+
+# --- a quarantine in the middle of a switch is reported ---
+outfit use lean
+islink apps/web/AGENTS.md ../../.outfit/profiles/lean/apps/web/AGENTS.md
+rm apps/web/AGENTS.md
+exec sh -c 'echo "an editor wrote this" > apps/web/AGENTS.md'
+exec git config outfit.profile yolo
+! outfit sync
+stderr 'regular file where outfit.s link used to be'
+stderr 'copies saved in'
+exec git config outfit.profile
+outfit sync --json
+stdout '"in_sync":true'
+exec sh -c 'cat .git/outfit/quarantine/*/file/apps/web/AGENTS.md'
+stdout 'an editor wrote this'
+exec cat apps/web/AGENTS.md
+stdout 'web'
+outfit use base
+
+# --- a second quarantine of the same path is kept next to the first ---
+outfit use lean
+rm apps/web/AGENTS.md
+exec sh -c 'echo "second edit" > apps/web/AGENTS.md'
+exec git config outfit.profile yolo
+! outfit sync
+exec git config outfit.profile
+exec sh -c 'cat .git/outfit/quarantine/*/file/apps/web/AGENTS.md'
+stdout 'second edit'
+outfit use base
+
+# --- an interrupted quarantine (directory made, copy missing) is redone, not trusted ---
+outfit use lean
+rm apps/web/AGENTS.md
+exec sh -c 'echo "second edit" > apps/web/AGENTS.md'
+exec sh -c 'rm -r .git/outfit/quarantine/*/file'
+exec git config outfit.profile yolo
+! outfit sync
+exec git config outfit.profile
+exec sh -c 'cat .git/outfit/quarantine/*/file/apps/web/AGENTS.md'
+stdout 'second edit'
+outfit use base
+
+# --- nothing is done through a symlinked directory ---
+exec sh -c 'mkdir $WORK/elsewhere && echo "outside" > $WORK/elsewhere/AGENTS.md'
+exec mv apps/web $WORK/web-real
+symlink apps/web -> $WORK/elsewhere
+! outfit use lean
+stderr 'not applied'
+stderr 'not a file or link'
+exec cat $WORK/elsewhere/AGENTS.md
+stdout 'outside'
+exec ls $WORK/elsewhere
+stdout '^AGENTS.md$'
+! stdout 'outfit'

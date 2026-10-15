@@ -28,13 +28,9 @@ outfit sync --json
 stdout '"in_sync":true'
 exec git -C ../repo-wt2 ls-files -t -- AGENTS.md
 stdout '^S AGENTS.md$'
-# No lock is left behind.
-! exists .git/outfit/sync.lock
-! exists .git/worktrees/repo-wt1/outfit/sync.lock
-
-# A stale lock (its owner was killed) is taken over, not waited on.
+# The lock file stays (it is an flock: the kernel frees it when its owner dies, so a
+# killed sync leaves nothing to clean up), and a leftover file never blocks a sync.
 exec sh -c 'echo 99999999 > .git/outfit/sync.lock'
 exec rm AGENTS.md
 outfit sync
 islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
-! exists .git/outfit/sync.lock

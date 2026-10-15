@@ -21,6 +21,12 @@ import (
 type Result struct {
 	// Actions are the steps that were planned, informational ones included.
 	Actions []plan.Action `json:"-"`
+	// Lasting is the part of Notes that stays true after a later pass: what was
+	// quarantined. A skip note (a file not on disk yet) does not.
+	Lasting []string `json:"-"`
+	// Done holds the steps earlier passes of one converge carried out: the last
+	// pass of a switch plans nothing, but the switch happened.
+	Done []plan.Action `json:"-"`
 	// Changed reports that something was written.
 	Changed bool
 	// Refused holds the reasons nothing was applied (exit 3 with fixes).
@@ -59,7 +65,11 @@ func Run(ctx context.Context, in Input) (*Result, error) {
 	if err != nil || len(res.Refused) > 0 || !actionable(acts) {
 		return res, err
 	}
-	return in.execute(ctx, st, acts, res)
+	res, err = in.execute(ctx, st, acts, res)
+	if res != nil && res.Changed {
+		res.Done = append(res.Done, acts...)
+	}
+	return res, err
 }
 
 func readState(in Input) (*state.State, error) {
@@ -77,7 +87,9 @@ func (in Input) planOnce(ctx context.Context, st *state.State) (*Result, []plan.
 		return nil, nil, err
 	}
 	acts := plan.Plan(want, facts)
-	res := &Result{Actions: acts, Notes: append([]string(nil), g.messages...)}
+	// What gather itself noticed (an ignored record, an oversize profile) is true of
+	// the state it read, which a later pass will have already repaired: keep it.
+	res := &Result{Actions: acts, Notes: append([]string(nil), g.messages...), Lasting: append([]string(nil), g.messages...)}
 	res.Refused = plan.Refused(acts)
 	res.NeedsHuman = plan.NeedsHuman(acts)
 	for _, a := range acts {
@@ -88,6 +100,9 @@ func (in Input) planOnce(ctx context.Context, st *state.State) (*Result, []plan.
 				line += "\n  fix: " + a.Fix
 			}
 			res.Notes = append(res.Notes, line)
+			if a.Kind == plan.QuarantineBoth || a.Kind == plan.QuarantineFile {
+				res.Lasting = append(res.Lasting, line)
+			}
 		}
 	}
 	return res, acts, nil
@@ -131,6 +146,9 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 			res.Changed = true
 		case plan.RemoveLink:
 			p := in.abs(a.Path)
+			if !realParents(in.W.WorkTree, a.Path) {
+				return res, fmt.Errorf("%s is below a symlinked directory: refusing to act through it", a.Path)
+			}
 			if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 				if err := os.Remove(p); err != nil {
 					return res, err
@@ -138,6 +156,9 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 				res.Changed = true
 			}
 		case plan.QuarantineFile:
+			if !realParents(in.W.WorkTree, a.Path) {
+				return res, fmt.Errorf("%s is below a symlinked directory: refusing to act through it", a.Path)
+			}
 			if _, err := in.quarantine(res, a.Path, true, false); err != nil {
 				return res, err
 			}
@@ -282,6 +303,9 @@ func unsetWorktree(ctx context.Context, in Input, keys ...string) {
 // moment with neither a file nor a link. An existing regular file is removed only
 // when the plan proved it an untouched copy of the committed file.
 func (in Input) link(path, target string, replaces bool) error {
+	if !realParents(in.W.WorkTree, path) {
+		return fmt.Errorf("%s is below a symlinked directory: refusing to link through it", path)
+	}
 	abs := in.abs(path)
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return err
@@ -309,6 +333,9 @@ func (in Input) link(path, target string, replaces bool) error {
 // byte and atomically, then relinks. The caller proved the variant unchanged since
 // linking, so nothing of the variant's is lost.
 func (in Input) absorb(path, target string) error {
+	if !realParents(in.Profile.Dir, filepath.ToSlash(path)) {
+		return fmt.Errorf("the profile's directory for %s contains a symlink: not copying bytes through it", path)
+	}
 	abs := in.abs(path)
 	fi, err := os.Lstat(abs)
 	if err != nil || !fi.Mode().IsRegular() {
@@ -348,11 +375,23 @@ func (in Input) quarantine(res *Result, path string, file, withVariant bool) (cr
 	sum := sha256.Sum256([]byte(path + "\x00" + fileHash + "\x00" + variantHash))
 	key := hex.EncodeToString(sum[:])[:12]
 	root := filepath.Join(in.W.GitDir, "outfit", "quarantine")
-	if prev, _ := filepath.Glob(filepath.Join(root, "*-"+key)); len(prev) > 0 {
-		res.Quarantine = prev[0]
-		return false, nil
-	}
 	res.Quarantine = filepath.Join(root, in.now().UTC().Format("20060102T150405.000000Z")+"-"+key)
+	if prev, _ := filepath.Glob(filepath.Join(root, "*-"+key)); len(prev) > 0 {
+		// An earlier run made this directory. It counts as "already saved" only if the
+		// copies are really in it and are what is about to be removed or kept: a run
+		// killed half way leaves a directory with nothing (or half a copy) inside.
+		res.Quarantine = prev[0]
+		complete := true
+		if file && hashFile(filepath.Join(prev[0], "file", filepath.FromSlash(path))) != fileHash {
+			complete = false
+		}
+		if withVariant && in.Profile != nil && hashFile(filepath.Join(prev[0], "variant", filepath.FromSlash(path))) != variantHash {
+			complete = false
+		}
+		if complete {
+			return false, nil
+		}
+	}
 	copyTo := func(src, kind string) error {
 		fi, err := os.Lstat(src)
 		if err != nil || !fi.Mode().IsRegular() {
@@ -405,14 +444,20 @@ func RemoveExclude(path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// Only the entry outfit wrote: its comment line and the line right after it. A
+	// "/.outfit/" the person wrote themselves, before or without outfit, stays.
 	var kept []string
 	removed := false
-	for _, l := range strings.Split(string(b), "\n") {
-		if l == excludeComment || l == excludeLine {
+	lines := strings.Split(string(b), "\n")
+	for i := 0; i < len(lines); i++ {
+		if lines[i] == excludeComment {
 			removed = true
+			if i+1 < len(lines) && lines[i+1] == excludeLine {
+				i++
+			}
 			continue
 		}
-		kept = append(kept, l)
+		kept = append(kept, lines[i])
 	}
 	if !removed {
 		return false, nil
@@ -430,6 +475,31 @@ func Check(ctx context.Context, in Input) (*Result, error) {
 	}
 	res, _, err := in.planOnce(ctx, st)
 	return res, err
+}
+
+// Merge folds the earlier passes of one converge into the final one, so that what
+// the first pass found (a quarantine, a skipped path) and did (the links) is still
+// reported after a quiet last pass.
+func (r *Result) Merge(earlier *Result) {
+	if earlier == nil {
+		return
+	}
+	seen := map[string]bool{}
+	var notes []string
+	for _, n := range append(append([]string(nil), earlier.Lasting...), r.Notes...) {
+		if !seen[n] {
+			seen[n] = true
+			notes = append(notes, n)
+		}
+	}
+	r.Notes = notes
+	r.Lasting = append(append([]string(nil), earlier.Lasting...), r.Lasting...)
+	r.Done = append(append([]plan.Action(nil), earlier.Done...), r.Done...)
+	if r.Quarantine == "" {
+		r.Quarantine = earlier.Quarantine
+	}
+	r.Changed = r.Changed || earlier.Changed
+	r.NeedsHuman = r.NeedsHuman || earlier.NeedsHuman
 }
 
 // Pending reports whether the result still has work to do (the worktree is out of

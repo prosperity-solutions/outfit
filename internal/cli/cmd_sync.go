@@ -12,6 +12,7 @@ import (
 
 	"github.com/prosperity-solutions/outfit/internal/apply"
 	"github.com/prosperity-solutions/outfit/internal/config"
+	"github.com/prosperity-solutions/outfit/internal/plan"
 	"github.com/prosperity-solutions/outfit/internal/profiles"
 	"github.com/prosperity-solutions/outfit/internal/state"
 )
@@ -44,7 +45,9 @@ func syncInput(ctx context.Context, e Env, l *loaded, useHead bool) apply.Input 
 		Cfg:     l.Cfg,
 		Profile: l.Profile,
 	}
-	in.Git.Env = append(append([]string(nil), l.Git.Env...), syncActiveEnv+"=1")
+	// LC_ALL=C: sync recognises one git failure ("not up to date", a half-done
+	// checkout) by its text, which a translated git would not print.
+	in.Git.Env = append(append([]string(nil), l.Git.Env...), syncActiveEnv+"=1", "LC_ALL=C", "LANGUAGE=")
 	if st != nil {
 		in.Author = st.Author
 		in.CommittedProfiles = st.CommittedProfiles
@@ -53,7 +56,9 @@ func syncInput(ctx context.Context, e Env, l *loaded, useHead bool) apply.Input 
 		in.CommittedProfiles = committedProfilesOnDisk(r.WorkTree)
 	}
 	if l.Profile != nil {
-		if l.Profile.Tier == profiles.Committed && (useHead || !profiles.RealDir(l.Profile.Dir)) {
+		// HEAD only while the profile's files are not on disk yet (right after a
+		// switch). Once they are, the disk is the truth, uncommitted files included.
+		if l.Profile.Tier == profiles.Committed && !profiles.RealDir(l.Profile.Dir) {
 			in.Files = profiles.HeadFiles(ctx, l.Git, l.Profile.Name)
 		} else {
 			in.Files = profiles.Files(*l.Profile)
@@ -94,8 +99,7 @@ func committedProfilesOnDisk(worktree string) bool {
 // since sync itself changes some of it. The last pass's result is returned, with
 // "needs a person" remembered from any pass.
 func converge(ctx context.Context, e Env, l *loaded, useHead bool) (*apply.Result, *loaded, error) {
-	var res *apply.Result
-	needs := false
+	var res, earlier *apply.Result
 	var err error
 	for pass := 0; pass < 3; pass++ {
 		in := syncInput(ctx, e, l, useHead)
@@ -103,7 +107,8 @@ func converge(ctx context.Context, e Env, l *loaded, useHead bool) (*apply.Resul
 		if err != nil {
 			return res, l, err
 		}
-		needs = needs || res.NeedsHuman
+		res.Merge(earlier)
+		earlier = res
 		if len(res.Refused) > 0 || !res.Changed {
 			break
 		}
@@ -111,7 +116,6 @@ func converge(ctx context.Context, e Env, l *loaded, useHead bool) (*apply.Resul
 			return res, l, err
 		}
 	}
-	res.NeedsHuman = needs
 	return res, l, nil
 }
 
@@ -133,8 +137,8 @@ func toJSON(res *apply.Result) syncJSON {
 	}
 	// Every fix an agent could run, whether the finding refused the sync or left
 	// something for a person.
-	for _, a := range res.Actions {
-		if a.Fix != "" {
+	for _, a := range append(append([]plan.Action(nil), res.Done...), res.Actions...) {
+		if a.Fix != "" && !contains(j.Fixes, a.Fix) {
 			j.Fixes = append(j.Fixes, a.Fix)
 		}
 	}
@@ -311,11 +315,6 @@ func cmdUse(ctx context.Context, e Env, args []string) int {
 		revert()
 		return fail(err)
 	}
-	if l.Profile == nil && chosen != nil {
-		// A committed profile that is hidden from disk is not found by the
-		// disk-only lookup `load` does; the first pass brings its files back.
-		l.Profile = chosen
-	}
 	res, _, err := converge(ctx, e, l, true)
 	if err != nil {
 		revert()
@@ -348,8 +347,8 @@ func cmdUse(ctx context.Context, e Env, args []string) int {
 			where = "this worktree"
 		}
 		files := 0
-		for _, a := range res.Actions {
-			if a.Kind == "link" || a.Kind == "absorb" {
+		for _, a := range res.Done {
+			if a.Kind == plan.LinkPath || a.Kind == plan.Absorb {
 				files++
 			}
 		}

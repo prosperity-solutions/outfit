@@ -1,0 +1,79 @@
+# Review findings, pinned (each one was reproduced against the built binary):
+# staged-only profile files are never hidden off disk, an uncommitted variant is
+# in sync, a text-converting .gitattributes does not look like an edit, a symlinked
+# parent directory is never acted through, a poisoned state.json is not obeyed, and
+# a quarantine reached in the middle of a switch is still reported.
+fixture repo team
+cd repo
+
+# --- staged-but-uncommitted profile files are never taken off disk ---
+# (init would hide every inactive profile; a staged-only file has no other copy,
+# and the next `git reset` would lose it.)
+exec sh -c 'mkdir -p .outfit/profiles/staged && echo "mine" > .outfit/profiles/staged/AGENTS.md'
+exec git add -f .outfit/profiles/staged/AGENTS.md
+! outfit init
+stderr 'staged but not committed'
+stderr 'fix: git commit'
+exists .outfit/profiles/staged/AGENTS.md
+exec git commit -qm 'feat: staged profile'
+outfit sync
+! exists .outfit/profiles/staged
+outfit use staged
+islink AGENTS.md .outfit/profiles/staged/AGENTS.md
+outfit use base
+outfit author on
+exec sh -c 'echo more >> .outfit/profiles/staged/AGENTS.md'
+exec git add -f .outfit/profiles/staged/AGENTS.md
+! outfit author off
+stderr 'uncommitted edits'
+exists .outfit/profiles/staged/AGENTS.md
+exec git commit -qm 'feat: more'
+outfit author off
+exec git config core.autocrlf false
+
+# --- an uncommitted file in the active profile ---
+outfit use yolo
+exec sh -c 'echo "new rules" > .outfit/profiles/yolo/README.md'
+# a new file in the ACTIVE profile adds with plain `git add -f` (its directory is on disk)
+exec git add -f .outfit/profiles/yolo/README.md
+exec git reset -q .outfit/profiles/yolo/README.md
+outfit sync
+islink README.md .outfit/profiles/yolo/README.md
+outfit status
+stdout 'state    in sync'
+outfit init
+islink README.md .outfit/profiles/yolo/README.md
+outfit author on
+outfit author off
+islink README.md .outfit/profiles/yolo/README.md
+rm .outfit/profiles/yolo/README.md
+outfit sync
+! islink README.md .outfit/profiles/yolo/README.md
+exists README.md
+outfit use base
+
+# --- a clean-filter file is untouched, not "uncommitted changes" ---
+exec sh -c 'printf "AGENTS.md text eol=crlf\n" > .gitattributes'
+exec git add .gitattributes
+exec git commit -qm 'chore: crlf'
+rm AGENTS.md
+exec git checkout -- AGENTS.md
+exec git status --short
+! stdout .
+outfit use yolo
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+outfit use base
+exec git status --short
+! stdout .
+
+# --- a state.json that names paths outside the worktree is not obeyed ---
+outfit use yolo
+exec sh -c 'echo "keep" > $WORK/outside.txt'
+cp $WORK/poison.json .git/outfit/state.json
+outfit sync
+stderr 'ignored a recorded swap'
+exists $WORK/outside.txt
+outfit uninstall
+exists $WORK/outside.txt
+-- poison.json --
+{"schema": 1, "git_version": "", "binary": "", "version": "", "worktree_config_was_set": false, "swaps": [{"path": "../outside.txt"}, {"path": "/etc/hosts"}]}

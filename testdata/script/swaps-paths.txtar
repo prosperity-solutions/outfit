@@ -1,0 +1,79 @@
+# Scenario 15 (docs/HANDOVER.md §7.4): paths git quotes or a shell would split. A
+# directory whose ONLY file is hidden is removed and recreated; spaces, non-ASCII and
+# a leading dash all swap and restore; status stays clean. Also: the commit guard in
+# a linked worktree, and the clone-versus-worktree shadow warning.
+fixture repo team
+cd repo
+exec mkdir -p 'solo/deep' 'my dir' '.outfit/profiles/odd/solo/deep' '.outfit/profiles/odd/my dir'
+exec sh -c 'echo base > solo/deep/only.md; echo base > "my dir/café.md"; echo base > ./-dash.md'
+exec sh -c 'echo odd > .outfit/profiles/odd/solo/deep/only.md; echo odd > ".outfit/profiles/odd/my dir/café.md"; echo odd > ./.outfit/profiles/odd/-dash.md'
+exec git add -A
+exec git add -f .outfit/profiles/odd
+exec git commit -qm 'feat: odd paths'
+outfit init
+
+outfit use odd
+exec cat solo/deep/only.md
+stdout odd
+exec cat 'my dir/café.md'
+stdout odd
+exec cat ./-dash.md
+stdout odd
+exec readlink solo/deep/only.md
+stdout '^\.\./\.\./\.outfit/profiles/odd/solo/deep/only\.md$'
+exec git status --short
+! stdout .
+outfit status
+stdout 'state    in sync'
+
+outfit use base
+exec cat solo/deep/only.md
+stdout base
+exec cat 'my dir/café.md'
+stdout base
+! islink ./-dash.md .outfit/profiles/odd/-dash.md
+exec git status --short
+! stdout .
+
+# --- the guard in a linked worktree ---
+outfit use odd
+exec git worktree add -q ../repo-wt
+cd ../repo-wt
+outfit sync
+exec cat solo/deep/only.md
+stdout odd
+exec sh -c 'h=$(printf "x" | git hash-object -w --stdin) && git update-index --add --cacheinfo 120000,$h,solo/deep/only.md'
+! exec git commit -qm 'feat: swapped in a worktree'
+stderr 'solo/deep/only.md is staged as a symlink'
+exec git reset -q
+outfit sync
+exec git status --short
+! stdout .
+
+# --- a worktree that pins a profile of its own is not swapped by a clone-wide `use` ---
+# (and says so: the clone's choice does not reach it)
+outfit use base --here
+outfit use lean
+stderr 'this worktree still uses'
+! islink apps/web/AGENTS.md ../../.outfit/profiles/lean/apps/web/AGENTS.md
+exec git status --short
+! stdout .
+cd ../repo
+# `use` syncs the worktree it ran in; the others follow on their next sync.
+outfit sync
+islink apps/web/AGENTS.md ../../.outfit/profiles/lean/apps/web/AGENTS.md
+
+# --- uninstall in a worktree farm leaves no outfit key in the linked worktree ---
+# (`git worktree add` copies config.worktree, the expectFiles key included)
+outfit use odd
+exec git -C ../repo-wt config --worktree --unset outfit.profile
+cd ../repo-wt
+outfit sync
+exec git config --worktree --get sparse.expectFilesOutsideOfPatterns
+stdout '^true$'
+cd ../repo
+outfit uninstall
+exec sh -c 'cat "$(git -C ../repo-wt rev-parse --absolute-git-dir)/config.worktree" 2>/dev/null; true'
+! stdout 'sparse|outfit|hooksPath'
+exec git -C ../repo-wt status --short
+! stdout .
