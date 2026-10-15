@@ -339,6 +339,16 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 			next.Extras = append(next.Extras, state.Swap{Path: sw.Path, Target: sw.Target, VariantHash: pf.VariantHash, VariantBlob: pf.VariantBlob})
 		}
 	}
+	// A regular file where an extra's link was (an editor's save not absorbed yet, the profile
+	// missing from the tree for now) keeps its record, so the save is absorbed when it can be.
+	for _, old := range st.Extras {
+		if hasSwap(next.Extras, old.Path) || plan.ValidSwapPath(old.Path) != nil || !realParents(in.W.WorkTree, old.Path) {
+			continue
+		}
+		if fi, err := os.Lstat(in.abs(old.Path)); err == nil && fi.Mode().IsRegular() {
+			next.Extras = append(next.Extras, old)
+		}
+	}
 	sort.Slice(next.Extras, func(i, j int) bool { return next.Extras[i].Path < next.Extras[j].Path })
 	next.Profile = ""
 	if in.Profile != nil {
@@ -745,4 +755,13 @@ func (r *Result) Stale() []plan.Action {
 		}
 	}
 	return out
+}
+
+func hasSwap(list []state.Swap, path string) bool {
+	for _, s := range list {
+		if s.Path == path {
+			return true
+		}
+	}
+	return false
 }

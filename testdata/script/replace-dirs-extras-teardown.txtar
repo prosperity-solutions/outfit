@@ -1,0 +1,26 @@
+# uninstall with a link it cannot remove keeps the ignore file that hides the links from git,
+# and a rerun finishes the job.
+fixture repo team
+cd repo
+exec mkdir -p skills
+exec sh -c 'echo team-a > skills/a.md'
+exec git add skills
+exec git commit -qm 'docs: team skills'
+exec mkdir -p .outfit/profiles/mine/skills/deep
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = skills\n" > .outfit/profiles/mine/profile.config'
+exec sh -c 'echo my-a > .outfit/profiles/mine/skills/a.md; echo my-deep > .outfit/profiles/mine/skills/deep/x.md'
+exec git add --sparse -f .outfit
+exec git commit -qm 'feat: a profile that replaces skills and adds files'
+outfit init
+outfit use mine
+exec chmod a-w skills/deep
+! outfit uninstall
+exists skills/.gitignore
+exec git status --short
+! stdout 'skills'
+exec chmod u+w skills/deep
+outfit uninstall
+! exists skills/.gitignore
+! exists skills/deep
+exec cat skills/a.md
+stdout 'team-a'

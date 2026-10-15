@@ -34,6 +34,45 @@ func personalLinkDirs(w Workspace) []string {
 	}
 }
 
+// isExtraLink reports that text is the link outfit makes for the profile's file rel (relative path
+// from the worktree root): to rel inside some profile, not to anything else there. A link a person
+// made by hand into a profile directory (an alias for another profile file, a link to its
+// config) is theirs.
+func isExtraLink(rel, text string, personal []string) bool {
+	if strings.HasPrefix(text, "/") {
+		return isOurLinkText(text, personal) && strings.HasSuffix(text, "/"+rel)
+	}
+	head := strings.Repeat("../", strings.Count(rel, "/")) + ".outfit/profiles/"
+	mid, ok := strings.CutPrefix(text, head)
+	if !ok {
+		return false
+	}
+	name, tail, ok := strings.Cut(mid, "/")
+	return ok && name != "" && tail == rel
+}
+
+// isOurIgnoreFile reports that the file at rel is an ignore file outfit wrote.
+func isOurIgnoreFile(worktree, rel string) bool {
+	if !realParents(worktree, rel) {
+		return false
+	}
+	abs := filepath.Join(worktree, filepath.FromSlash(rel))
+	if fi, err := os.Lstat(abs); err != nil || !fi.Mode().IsRegular() || fi.Size() > 1<<20 {
+		return false
+	}
+	b, err := os.ReadFile(abs)
+	return err == nil && plan.OurIgnore(string(b))
+}
+
+// reservedExtraName says why git itself must read a file of this name as a plain file, never a link.
+func reservedExtraName(p string) bool {
+	switch strings.ToLower(pathpkg.Base(p)) {
+	case ".gitignore", ".gitattributes", ".gitmodules":
+		return true
+	}
+	return false
+}
+
 // extraScanDirs are the directories that may hold links of the profile's own files: the ones the
 // profile replaces now, the ones the state says it replaced, and the ones the patterns hide.
 func extraScanDirs(w Workspace, st *state.State, declared []string) []string {
@@ -96,7 +135,7 @@ func (in Input) orphanExtras(dirs []string, recorded map[string]plan.Record) {
 	n := 0
 	for _, d := range dirs {
 		walkLinks(in.W.WorkTree, d, func(rel, text string) {
-			if _, ok := recorded[rel]; ok || n >= maxSwaps || !isOurLinkText(text, personal) || plan.ValidSwapPath(rel) != nil {
+			if _, ok := recorded[rel]; ok || n >= maxSwaps || !isExtraLink(rel, text, personal) || plan.ValidSwapPath(rel) != nil {
 				return
 			}
 			n++
@@ -157,7 +196,15 @@ func (t trackedIdx) clash(p string) string {
 func (in Input) ignoreFacts(d string, idx map[string]indexEntry) plan.IgnoreFacts {
 	rel := d + "/.gitignore"
 	if idx[rel].tracked || idx[rel].unmerged {
-		return plan.IgnoreFacts{Blocked: "the team tracks " + rel + ", and outfit will not write into it"}
+		// (a file of ours that is still there, from before the team tracked the path, is told apart
+		// so that it can go: it would otherwise stand at a tracked path for good)
+		f := plan.IgnoreFacts{Blocked: "the team tracks " + rel + ", and outfit will not write into it"}
+		if isOurIgnoreFile(in.W.WorkTree, rel) {
+			if b, err := os.ReadFile(in.abs(rel)); err == nil {
+				f.Text = string(b)
+			}
+		}
+		return f
 	}
 	if !realParents(in.W.WorkTree, rel) {
 		return plan.IgnoreFacts{Blocked: d + " is below a symlinked directory"}
@@ -206,10 +253,10 @@ func (in Input) writeIgnore(d, text string) error {
 	if err := os.WriteFile(tmp, []byte(text), 0o644); err != nil {
 		return err
 	}
-	fault.Point("a file is written under a temporary name, not yet renamed")
+	fault.Point("the ignore file is written under a temporary name, not yet renamed")
 	if err := os.Rename(tmp, abs); err != nil {
 		_ = os.Remove(tmp)
-		if errors.Is(err, syscall.EXDEV) { // the git dir is on another filesystem
+		if errors.Is(err, syscall.EXDEV) { // the git dir is on another filesystem: the temporary file must sit beside the target
 			return state.WriteFileAtomic(abs, []byte(text), 0o644)
 		}
 		return err
@@ -271,7 +318,7 @@ func teardownExtras(ctx context.Context, g gitx.Client, w Workspace, st *state.S
 		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
 			continue
 		}
-		if t, _ := os.Readlink(abs); t != recorded[p].Target && !isOurLinkText(t, personal) {
+		if t, _ := os.Readlink(abs); t != recorded[p].Target && !isExtraLink(p, t, personal) {
 			failed = append(failed, p+" is a link, but not the one outfit made: left alone")
 			continue
 		}
@@ -290,6 +337,10 @@ func teardownExtras(ctx context.Context, g gitx.Client, w Workspace, st *state.S
 	}
 	for _, d := range dirs {
 		rel := d + "/.gitignore"
+		if len(failed) > 0 {
+			// A link is still there: the file that keeps git from seeing it stays too.
+			break
+		}
 		if !realParents(w.WorkTree, rel) {
 			continue
 		}

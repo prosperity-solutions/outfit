@@ -435,7 +435,7 @@ func Plan(w Want, f Facts) []Action {
 			case Link:
 				out = append(out, Action{Kind: RemoveLink, Path: p, Extra: true, Under: underDir(p, ignoreDirs)})
 			case File:
-				out = append(out, Action{Kind: Skip, Path: p, Reason: p + " is a regular file where the profile's own file was linked, and the profile no longer has it: left where it is"})
+				out = append(out, Action{Kind: Skip, Path: p, Reason: p + " is a regular file where the profile's own file was linked, and the profile has no file for it now: left where it is"})
 			}
 			continue
 		}
@@ -494,7 +494,7 @@ func Plan(w Want, f Facts) []Action {
 		pf, rec := f.Paths[p], f.Recorded[p]
 		_, had := f.Recorded[p]
 		if extra[p] {
-			out = append(out, planExtra(p, s, pf, rec, had, keep)...)
+			out = append(out, planExtra(p, s, pf, rec, had, f.GitBusy, keep)...)
 			continue
 		}
 		switch pf.FS {
@@ -573,7 +573,7 @@ func Plan(w Want, f Facts) []Action {
 // where nothing is, the record when the link stands, the editor's save absorbed into the profile
 // when the profile's copy is unchanged since linking. A regular file outfit did not put there is
 // never replaced: a copy is saved and the file stays. keep gets the paths the ignore file lists.
-func planExtra(p string, s Swap, pf PathFacts, rec Record, had bool, keep map[string]bool) []Action {
+func planExtra(p string, s Swap, pf PathFacts, rec Record, had bool, gitBusy string, keep map[string]bool) []Action {
 	switch pf.FS {
 	case Missing:
 		keep[p] = true
@@ -588,6 +588,13 @@ func planExtra(p string, s Swap, pf PathFacts, rec Record, had bool, keep map[st
 		}
 	case File:
 		switch {
+		case gitBusy != "" && had && rec.Extra && rec.VariantHash == pf.VariantHash:
+			// The profile's copy is tracked and git is in the middle of a rebase or merge: a
+			// `--abort` resets it and would take the saved bytes with it (the same rule as a swap).
+			keep[p] = true
+			return []Action{{Kind: Skip, Path: p,
+				Reason: p + " was replaced by a regular file (an editor's save), and git is in the middle of a " + gitBusy + ": the new bytes stay in that file and are copied into the profile once the " + gitBusy + " is over",
+				Fix:    "finish or abort the " + gitBusy + ", then: outfit sync"}}
 		case pf.FileHash != "" && pf.FileHash == pf.VariantHash, had && rec.Extra && rec.VariantHash == pf.VariantHash:
 			// The same bytes, or an editor's atomic save over the link with the profile's copy
 			// untouched since: the file is the newer copy.
@@ -615,6 +622,11 @@ func ignoreActions(w Want, f Facts, paths []string, keep map[string]bool) []Acti
 	for _, d := range sortedIgnoreKeys(f.Ignore) {
 		cur := f.Ignore[d]
 		if cur.Blocked != "" {
+			if cur.Text != "" && OurIgnore(cur.Text) {
+				// The team tracks a .gitignore here now, and ours is still standing at that path:
+				// it goes (no file of the profile's is linked below this directory meanwhile).
+				out = append(out, Action{Kind: WriteIgnore, Path: d})
+			}
 			continue
 		}
 		var files []string

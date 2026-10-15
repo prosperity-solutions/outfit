@@ -192,7 +192,7 @@ it is hidden) is a trap: git treats such a path as "expected outside the pattern
 file without a word** on a checkout, reset or pull. So every sync saves a copy under
 `.git/outfit/quarantine/` and says so (exit 3) until the file is moved. `outfit show <profile>` and
 `outfit ls --json` list a profile's `replace` directories, `outfit use` names them, `outfit status --json`
-has `replaced_dirs`, and `outfit diff <dir> --json` says `{"path", "replaced": true, "note"}`. A directory
+has `replaced_dirs` and `extra_files` (the profile's own files linked in below them), and `outfit diff <dir> --json` says `{"path", "replaced": true, "note"}`. A directory
 the repository tracks nothing in (a typo, or the wrong case: git matches patterns case-insensitively on
 some systems) is not replaced, with a note. A profile may not replace the directory that holds the
 team's git hooks (a hook the team locked on would stop running unseen), nor `.git` or `.outfit`.
@@ -206,7 +206,9 @@ or that is not outfit's (the profile's own files could not be hidden from git).
 Limits: `git add -A` fails while an untracked file stands in a hidden directory (git's own rule: use `git add
 --sparse`); `git stash -u` leaves the directory as it is. `git clean -fdx` (and `-X`) deletes the profile's own
 files' links, because git ignores them: the next sync makes them again, but an editor's save made over a link
-and not yet absorbed (`outfit sync` after saving) is lost with it.
+and not yet absorbed (`outfit sync` after saving) is lost with it. `git stash -a` takes the links and the
+`.gitignore` too, and `git stash pop` then fails ("already exists") because the next sync made them again:
+drop the links first (`outfit use base`), or use `git stash -u`.
 
 ## `outfit sync`
 

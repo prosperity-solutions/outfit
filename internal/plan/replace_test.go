@@ -262,3 +262,31 @@ func indexOf(s []string, x string) int {
 	}
 	return -1
 }
+
+func TestAnEditorsSaveOverAnExtraWaitsForAGitOperationToEnd(t *testing.T) {
+	w, f := extraIn("skills/new.md", PathFacts{FS: File, VariantHash: "v1"})
+	f.Recorded["skills/new.md"] = Record{Target: "../.outfit/profiles/mine/skills/new.md", VariantHash: "v1", Extra: true}
+	f.Ignore["skills"] = IgnoreFacts{Text: IgnoreText("skills", []string{"skills/new.md"})}
+	f.GitBusy = "rebase"
+	got := Plan(w, f)
+	if hasKind(got, Absorb) || !hasKind(got, Skip) || NeedsHuman(got) {
+		t.Fatalf("an abort resets the tracked profile file: hold the save back, quietly: %v", kinds(got))
+	}
+}
+
+func TestOursIgnoreFileAtATrackedPathIsRemoved(t *testing.T) {
+	w, f := replacing()
+	f.Ignore = map[string]IgnoreFacts{"skills": {
+		Text:    IgnoreText("skills", []string{"skills/new.md"}),
+		Blocked: "the team tracks skills/.gitignore",
+	}}
+	got := Plan(w, f)
+	if len(got) != 1 || got[0].Kind != WriteIgnore || got[0].Text != "" || got[0].Path != "skills" {
+		t.Fatalf("%+v", got)
+	}
+	// A blocked directory whose file is somebody's is left alone.
+	f.Ignore["skills"] = IgnoreFacts{Text: "*.log\n", Blocked: "x"}
+	if got := Plan(w, f); len(got) != 0 {
+		t.Fatalf("%v", kinds(got))
+	}
+}

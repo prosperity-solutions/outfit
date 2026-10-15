@@ -73,7 +73,7 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 		}
 		var own []string
 		for _, f := range strayFilesIn(w.WorkTree, d) {
-			if !isRecordedSwap(st, f) { // an editor's save over a swapped path is handled with the links
+			if !isRecordedSwap(st, f) && !isOurIgnoreFile(w.WorkTree, f) { // an editor's save over a swapped path is handled with the links; our ignore file goes with them
 				own = append(own, f)
 			}
 		}

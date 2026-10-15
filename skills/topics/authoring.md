@@ -35,8 +35,9 @@ outfit promote mine             # move it into .outfit/profiles/mine/ so git ver
 git add --sparse -f .outfit/profiles/mine && git commit
 ```
 
-`new` and `promote` never overwrite: an existing name is refused. A profile can only swap files
-the repository tracks. `.DS_Store`, `*~`, `*.swp` are never profile files.
+`new` and `promote` never overwrite: an existing name is refused. Outside a directory it replaces
+(`replace = <dir>`, see `outfit skills profiles`), a profile can only swap files the repository tracks.
+`.DS_Store`, `*~`, `*.swp` are never profile files.
 
 ## Editing the active profile's files
 

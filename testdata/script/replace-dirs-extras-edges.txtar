@@ -56,3 +56,46 @@ outfit use base
 ! exists skills/new.md
 ! exists skills/deep
 ! exists skills/.gitignore
+
+# ---- what is in the way of a profile's own file is never touched ----
+# (the lost-record sequence above left us on base)
+outfit use mine
+# a symlink of yours at an extra's path stays yours; so do hand-made links into the profile
+exec rm skills/new.md
+symlink skills/new.md -> /somewhere/else.md
+symlink skills/my-alias.md -> ../.outfit/profiles/mine/skills/new.md
+exec mkdir -p skills/user
+symlink skills/user/link -> ../../.outfit/profiles/mine/skills/a.md
+outfit sync
+stderr 'skills/new.md is the profile.s own file in skills, which the profile replaces, but it is not linked: a symlink that is not outfit.s'
+exec sh -c 'test "$(readlink skills/new.md)" = /somewhere/else.md'
+exec sh -c 'test -L skills/my-alias.md && test -L skills/user/link'
+exec cat skills/.gitignore
+! stdout 'new.md'
+outfit use base
+exec sh -c 'test "$(readlink skills/new.md)" = /somewhere/else.md'
+exec sh -c 'test -L skills/my-alias.md && test -L skills/user/link'
+exec rm skills/new.md skills/my-alias.md skills/user/link
+exec rmdir skills/user
+
+# the team starts to track skills/.gitignore while extras stand: ours goes, nothing sticks
+outfit use mine
+exec cat skills/.gitignore
+stdout 'outfit-managed'
+cd ../other
+exec git pull -q --rebase origin main
+exec sh -c 'echo "*.log" > skills/.gitignore'
+exec git add skills/.gitignore
+exec git commit -qm 'docs: the team ignores logs in skills'
+exec git push -q origin HEAD:main
+cd ../repo
+exec git pull -q --rebase origin main
+outfit sync
+! stderr 'is a file at a path the team tracks'
+! outfit status
+! stdout 'only the profile has'
+exec sh -c 'test -L skills/a.md'
+! exists skills/new.md
+outfit use base
+exec cat skills/.gitignore
+stdout '[*]\.log'

@@ -317,16 +317,22 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			}
 		}
 		sort.Strings(pf.StrayLinks)
+		if rec, ok := facts.Recorded[p]; ok && rec.Extra && !pf.Tracked && pf.FS == plan.Link && pf.LinkTarget != rec.Target && !isExtraLink(p, pf.LinkTarget, personal) {
+			// A person replaced our link with a symlink of their own: it is not ours to remove.
+			delete(facts.Recorded, p)
+		}
 		if d := underDirOf(p, dirs); d != "" && candSet[p] && !pf.Tracked && !pf.Unmerged {
 			// The profile's own file below a directory it replaces: linked unless something is in the way.
 			switch {
 			case facts.Ignore[d].Blocked != "":
 				pf.ExtraWhy = facts.Ignore[d].Blocked
-			case p == d+"/.gitignore":
+			case strings.EqualFold(p, d+"/.gitignore"):
 				pf.ExtraWhy = "the name " + p + " is outfit's here (it lists the profile's own files, which git must not see)"
+			case reservedExtraName(p):
+				pf.ExtraWhy = "git reads a file of the name " + pathpkg.Base(p) + " itself and refuses a symlink there"
 			case tracked.clash(p) != "":
 				pf.ExtraWhy = tracked.clash(p)
-			case pf.FS == plan.Link && !isOurLinkText(pf.LinkTarget, personal):
+			case pf.FS == plan.Link && pf.LinkTarget != in.Target(p) && !isExtraLink(p, pf.LinkTarget, personal):
 				pf.ExtraWhy = "a symlink that is not outfit's stands there"
 			default:
 				pf.Extra = true
@@ -661,7 +667,7 @@ func (in Input) dirFacts(ctx context.Context, d string, idx map[string]indexEntr
 			if len(strays) >= 50 {
 				break
 			}
-			if e.tracked && e.skip && e.mode != "160000" && strings.HasPrefix(p, d+"/") && !isSwap[p] {
+			if e.tracked && e.skip && e.mode != "160000" && strings.HasPrefix(p, d+"/") && !isSwap[p] && !isOurIgnoreFile(in.W.WorkTree, p) {
 				if fi, err := os.Lstat(in.abs(p)); err == nil && fi.Mode().IsRegular() {
 					strays = append(strays, p)
 				}
