@@ -286,7 +286,9 @@ jobs:
           path: ~/.cache/outfit-git
           key: ${{ steps.gitcache.outputs.cache-primary-key }}
       - name: go test (integration and e2e)
-        run: go test -race -count=1 ./...
+        # go test's own limit is 10 minutes per package; the e2e package (scripts, properties, fault
+        # injection at every step) needs longer on the slower runners (Intel macOS took more).
+        run: go test -race -count=1 -timeout 30m ./...
 
   # install.sh against a fake local release (the public and the API layout, a
   # pinned version, a bad checksum, an unsupported platform, a hostile archive,
