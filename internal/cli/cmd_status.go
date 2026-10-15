@@ -121,8 +121,8 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 	}
 	st.Dispatcher = dispatcherHealth(ctx, l, e.Getenv("HOME"))
 	st.AgentsSessionStart = agents.Installed(l.Repo.WorkTree)
-	if as, aerr := state.Read(l.Repo.GitDir); aerr == nil && as != nil {
-		st.Author, st.AuthorProfiles = as.Author, as.AuthorProfiles
+	if av := authorFor(ctx, l); av.Author || len(av.Profiles) > 0 {
+		st.Author, st.AuthorProfiles = av.Author, av.Profiles
 	}
 	var outOfSync, stale bool
 	if st.Dispatcher.Installed && !st.Dispatcher.OK {

@@ -14,8 +14,10 @@ outfit show yolo             # without switching and without showing it: toggles
 outfit show yolo AGENTS.md   # one file's content
 ```
 
-`author off` refuses while a profile it would hide holds uncommitted edits (commit them with
-`git add --sparse -u .outfit && git commit`, or stash). The active profile is always on disk.
+`author off` refuses while a profile it would hide holds uncommitted edits or new files. To keep them:
+`git add --sparse -u .outfit` (edited files) or `git add --sparse -f .outfit/profiles/<name>` (new
+ones; a plain `git add <path>` refuses because `.outfit/` is excluded), then `git commit` (a committed
+profile is the team's: ask the person first); or remove them. The active profile is always on disk.
 `outfit ls --json` says per profile whether it is `on_disk`. Edits made there are ordinary git
 edits of `.outfit/profiles/<name>/…`; local and worktree profiles are never hidden (they live in
 the git directory: `outfit show <profile>` prints where).

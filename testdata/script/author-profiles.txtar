@@ -10,7 +10,7 @@ exists .outfit/profiles/yolo/profile.config
 
 # Bare: the state. Default hidden.
 outfit author
-stdout 'author mode off: only the active committed profile is on disk'
+stdout 'author mode off: only the active committed profile \(yolo\) is on disk; hidden: lean'
 outfit author --json
 stdout '"author":false'
 stdout '"hidden":\["lean"\]'
@@ -38,7 +38,7 @@ stderr 'fix: outfit ls'
 # Edit it in place (that is the point), then hiding it refuses until the edit is committed.
 exec sh -c 'echo "# edited by an agent" >> .outfit/profiles/lean/profile.config'
 ! outfit author off lean
-stderr 'uncommitted edits'
+stderr 'uncommitted edits or untracked files'
 exists .outfit/profiles/lean/profile.config
 exec git add --sparse -u .outfit
 exec git commit -qm 'docs: edit the lean profile'
@@ -67,6 +67,40 @@ exists .outfit/profiles/lean/profile.config
 ! exists .outfit/profiles/yolo
 outfit author off
 ! exists .outfit/profiles/lean
+
+# Naming the active profile asks for nothing (and says so); it is never pinned in the list.
+outfit use yolo
+outfit author on yolo
+stdout 'yolo is the active profile'
+outfit author --json
+stdout '"author":false'
+stdout '"profiles":\[\]'
+# A staged file of the ACTIVE profile does not stop showing another one (nothing is hidden).
+exec sh -c 'echo new > .outfit/profiles/yolo/NEW.md'
+exec git add --sparse -f .outfit/profiles/yolo/NEW.md
+outfit author on lean
+exists .outfit/profiles/lean/profile.config
+exec git reset -q -- .outfit/profiles/yolo/NEW.md
+exec rm .outfit/profiles/yolo/NEW.md
+# A new, untracked file in a shown profile counts as work: hiding it is refused (git status
+# cannot see it, .outfit/ is excluded), and the fix is to add it or remove it.
+exec sh -c 'echo agent > .outfit/profiles/lean/NEW.md'
+! outfit author off lean
+stderr 'NEW.md \(untracked\)'
+exists .outfit/profiles/lean/NEW.md
+exec rm .outfit/profiles/lean/NEW.md
+# Leaving a shown, edited profile is not refused: it stays on disk.
+outfit use lean
+exec sh -c 'echo edit >> .outfit/profiles/lean/profile.config'
+outfit use yolo
+exists .outfit/profiles/lean/profile.config
+exec git checkout -q -- .outfit/profiles/lean/profile.config
+# A shown profile that a commit deleted can still be named to hide it.
+exec git rm -rq .outfit/profiles/lean
+exec git commit -qm 'chore: drop lean'
+outfit author off lean
+outfit author --json
+stdout '"profiles":\[\]'
 outfit uninstall
 exec git status --short
 ! stdout .

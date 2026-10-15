@@ -321,7 +321,10 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 				return want, facts, g, fmt.Errorf("cannot list staged profile files: %w", err)
 			}
 			for _, p := range strings.Split(string(res.Stdout), "\x00") {
-				if p != "" {
+				// A shown profile (the active one, or kept by `outfit author on`) stays on disk:
+				// only a staged file under a profile that is about to go is at risk.
+				rest, _ := strings.CutPrefix(p, profiles.CommittedRoot+"/")
+				if name, _, _ := strings.Cut(rest, "/"); p != "" && !contains(show, name) {
 					facts.StagedProfiles = append(facts.StagedProfiles, p)
 				}
 			}

@@ -136,10 +136,13 @@ outfit author on lean web    # just these (names must be committed profiles: out
 outfit author off lean       # hide one again   (outfit author off: hide all the inactive ones)
 ```
 
-The choice is per worktree and lives in the sparse patterns (`state.json` records it), so a sync
-keeps it, `git status` stays clean, and edits made there are ordinary git edits of
-`.outfit/profiles/<name>/…`. The active profile is always on disk, whatever is asked. Hiding a
-profile that has uncommitted edits is refused (exit 3, with the fix: commit them). `outfit status`
+The choice is per worktree. `state.json` holds it and the sparse patterns are rebuilt from it on
+every sync (so a sync keeps it, a hand edit of the patterns is undone), `git status` stays clean, and
+edits made there are ordinary git edits of `.outfit/profiles/<name>/…`. New files an agent adds there
+are untracked and, with `.outfit/` excluded, invisible to `git status`: stage them with
+`git add --sparse -f <path>` (or remove them), or hiding the profile is refused. The active profile is always on disk, whatever is asked. Hiding a
+profile that has uncommitted edits or untracked files is refused (exit 3, with the fix: commit them).
+Leaving a shown profile with `outfit use` is not refused over its edits, because it stays on disk. `outfit status`
 has an `author` line while anything extra is shown (`author`/`author_profiles` in `--json`), and
 `outfit ls --json` says per profile whether it is `on_disk`. Local and worktree profiles are never
 hidden (they live in the git directory, outside the tree: `outfit show <profile>` prints where).

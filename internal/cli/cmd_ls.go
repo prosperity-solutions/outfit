@@ -41,12 +41,13 @@ func cmdLs(ctx context.Context, e Env, args []string) int {
 		return report(e.Stdout, e.Stderr, *asJSON, err)
 	}
 	listing := profiles.List(ctx, l.Git, l.Repo)
+	av := authorFor(ctx, l)
 
 	// base is built in and always first: "no swaps", what a non-user gets.
 	entries := []lsEntry{{Name: config.Base, Tier: "builtin", OnDisk: true, Active: l.Result.Profile.Name == config.Base || l.Profile == nil, Keys: []string{}, Files: []string{}}}
 	var inactiveWarnings []config.Warning
 	for _, p := range listing.Profiles {
-		ent := lsEntry{Name: p.Name, Tier: string(p.Tier), Active: p.Name == l.Result.Profile.Name, OnDisk: p.Tier != profiles.Committed || profiles.RealDir(p.Dir), Keys: []string{}, Files: []string{}, Dir: personalDir(p)}
+		ent := lsEntry{Name: p.Name, Tier: string(p.Tier), Active: p.Name == l.Result.Profile.Name, OnDisk: p.Tier != profiles.Committed || contains(av.OnDisk, p.Name), Keys: []string{}, Files: []string{}, Dir: personalDir(p)}
 		var cfg *config.File
 		if p.Tier == profiles.Committed && !profiles.RealDir(p.Dir) {
 			// Hidden from disk (inactive): read it as committed at HEAD.
