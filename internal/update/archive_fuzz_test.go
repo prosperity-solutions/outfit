@@ -57,41 +57,39 @@ func FuzzExtractBinaryEntries(f *testing.F) {
 
 func checkExtract(t *testing.T, archive []byte) {
 	t.Helper()
-	{
-		bin, err := ExtractBinary(archive)
-		if err != nil {
-			return
+	bin, err := ExtractBinary(archive)
+	if err != nil {
+		return
+	}
+	if len(bin) == 0 {
+		t.Fatal("an empty binary was returned without an error")
+	}
+	zr, zerr := gzip.NewReader(bytes.NewReader(archive))
+	if zerr != nil {
+		t.Fatalf("accepted something that is not gzip: %v", zerr)
+	}
+	tr := tar.NewReader(zr)
+	found := 0
+	for {
+		h, herr := tr.Next()
+		if errors.Is(herr, io.EOF) {
+			break
 		}
-		if len(bin) == 0 {
-			t.Fatal("an empty binary was returned without an error")
+		if herr != nil {
+			t.Fatalf("accepted an archive an independent reader cannot read: %v", herr)
 		}
-		zr, zerr := gzip.NewReader(bytes.NewReader(archive))
-		if zerr != nil {
-			t.Fatalf("accepted something that is not gzip: %v", zerr)
+		if h.Typeflag != tar.TypeReg {
+			t.Fatalf("accepted an archive with a non-regular entry %q (type %v)", h.Name, h.Typeflag)
 		}
-		tr := tar.NewReader(zr)
-		found := 0
-		for {
-			h, herr := tr.Next()
-			if errors.Is(herr, io.EOF) {
-				break
-			}
-			if herr != nil {
-				t.Fatalf("accepted an archive an independent reader cannot read: %v", herr)
-			}
-			if h.Typeflag != tar.TypeReg {
-				t.Fatalf("accepted an archive with a non-regular entry %q (type %v)", h.Name, h.Typeflag)
-			}
-			if h.Name == "outfit" {
-				found++
-				body, _ := io.ReadAll(tr)
-				if !bytes.Equal(body, bin) {
-					t.Fatal("the returned binary is not the content of the `outfit` entry")
-				}
+		if h.Name == "outfit" {
+			found++
+			body, _ := io.ReadAll(tr)
+			if !bytes.Equal(body, bin) {
+				t.Fatal("the returned binary is not the content of the `outfit` entry")
 			}
 		}
-		if found != 1 {
-			t.Fatalf("accepted an archive with %d `outfit` entries", found)
-		}
+	}
+	if found != 1 {
+		t.Fatalf("accepted an archive with %d `outfit` entries", found)
 	}
 }

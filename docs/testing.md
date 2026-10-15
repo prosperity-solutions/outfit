@@ -39,7 +39,7 @@ Data loss first. Every row names where it is pinned.
 | 12 | A malicious committed `.outfit/config` is ignored with a warning, nothing executes | `malicious-config.txtar`, `FuzzParseFile` |
 | 13 | A `locked` key cannot be overridden from any scope or profile | `toggles.txtar` |
 | 14 | A foreign sparse checkout is refused; a commit in a linked worktree is still guarded | `swaps-refusals.txtar`, `swaps-paths.txtar` |
-| 15 | Spaces, NFD Unicode, case-insensitive APFS, a subdirectory whose only file was swapped | `swaps-paths.txtar` (spaces, NFC and, off macOS, NFD names, a profile file of the wrong case, the single-file subdirectory; the macOS CI legs run the same script on case-insensitive APFS) |
+| 15 | Spaces, NFD Unicode, case-insensitive APFS, a subdirectory whose only file was swapped | `swaps-paths.txtar` (spaces, NFC names, NFD names on Linux only (macOS normalises them), a profile file of the wrong case on case-insensitive APFS and elsewhere, the single-file subdirectory; the macOS CI legs run the script on APFS) |
 | 16 | A variant missing at HEAD is unswapped: no dangling link, no loop | `swaps-missing-variant.txtar` |
 | 17 | A failing sync inside `post-checkout` does not change git's exit code | `swaps-hooks.txtar` |
 | 18 | Inactive profiles are not on disk, `rg --hidden` finds nothing under `.outfit/`, `author on/off` round-trips | `swaps-uninstall.txtar`, `swaps-basic.txtar` |
@@ -99,12 +99,14 @@ left behind, the profile on disk is the profile in config, and an uninstall (or 
 killed `init`) restores `git config --list` exactly. In a normal build `fault.Point` is an
 empty function.
 
-It found four bugs in its first runs, all fixed with a test that pins them: settings nothing
-remembered (the intent is now written before sparse checkout is turned on), links nothing
-remembered (uninstall finds them by their skip-worktree bit and target), a temporary link
-beside the target (it now lives in the git dir; `swaps-stray.txtar` covers the fallback for a
-git dir on another filesystem), and temporary files of a killed write in outfit's hooks
-directory.
+It found five bugs in its first runs, all fixed with a test that pins them: an `uninstall`
+that could never finish after a kill past the point where sparse checkout was switched off
+(a clean base file is now recognised as already restored), settings nothing remembered (the
+intent is now written before sparse checkout is turned on), links nothing remembered
+(uninstall finds them by their skip-worktree bit and target), a temporary link beside the
+target (it now lives in the git dir; `swaps-stray.txtar` covers sweeping the leftover of the
+fallback used for a git dir on another filesystem, `TestLinkBesideFallback` the fallback
+itself), and temporary files of a killed write in outfit's hooks directory.
 
 A failing kill names its point and prints how to rerun just that one, for example
 `go test -count=1 ./internal/e2e -run '^TestFaultInjection$/^uninstall$/^kill-at-04-teardown-sparse-checkout-is-off$'`,
@@ -118,7 +120,7 @@ config writes of `use`, `set` and `author`, the agents' settings file), and torn
 
 - **A new place that changes the worktree, the git dir or the config** (a rename, a remove,
   a symlink, a config write): put a `fault.Point("<what has happened when it is reached>")`
-  right before it, with a name of its own. Points are counted per process in the order they
+  right before it, with a name of its own (for the state of the tree when it is reached, or what comes next). Points are counted per process in the order they
   are reached (a point in a loop counts once per round), so inserting one renumbers the later
   ones: the failing test's name carries the point's name, not just its number. An existing
   operation picks a new point up by itself.
@@ -143,6 +145,7 @@ quarantined and removed.
 
 `all-green` needs every job except two, which are deliberately outside it (a deviation from
 §8.1's "every job"): `fuzz` (it looks for NEW inputs, so it can fail on old code in an
-unrelated pull request) and `perf` (soft, Linux only, `continue-on-error`). A failing one is a
-red job and a red workflow run, and the merge policy reads every job, but the branch ruleset
-PR 11 adds requires only `ship`, `commits` and `all-green`.
+unrelated pull request) and `perf` (soft, Linux only, `continue-on-error`). A failing `fuzz` is a
+red job and a red workflow run; a failing `perf` only raises a `::warning::` annotation
+(`continue-on-error`). The merge policy reads every job, but the branch ruleset PR 11 adds
+requires only `ship`, `commits` and `all-green`.

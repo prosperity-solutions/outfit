@@ -27,8 +27,8 @@ exists .outfit-link~CLAUDE.md
 islink .outfit-link~AGENTS.md somewhere/else
 exec rm .outfit-link~AGENTS.md .outfit-link~CLAUDE.md
 
-# the same leftover when the record never got written (killed before the state write),
-# and uninstall: the strays go, so do the links, and nothing is left in the tree
+# the strays are removed by uninstall too, with the links, and nothing is left in the tree
+# (links nothing recorded are covered by the fault scenarios)
 symlink .outfit-link~AGENTS.md -> .outfit/profiles/yolo/AGENTS.md
 symlink AGENTS.md~cruft -> .outfit/profiles/yolo/AGENTS.md
 outfit uninstall

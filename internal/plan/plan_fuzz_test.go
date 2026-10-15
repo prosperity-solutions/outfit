@@ -2,7 +2,6 @@ package plan
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 )
 
@@ -29,6 +28,7 @@ func FuzzPlan(f *testing.F) {
 		f := Facts{
 			SparseOn: flag(), ExpectFiles: flag(), ExcludeHas: flag(), SameProfile: flag(),
 			Paths: map[string]PathFacts{}, Recorded: map[string]Record{},
+			GitBusy: []string{"", "rebase", "merge"}[int(next())%3],
 		}
 		if flag() {
 			f.SparseText = SparseText(SparseOptions{Hidden: []string{"AGENTS.md"}, HideProfiles: true, Active: "p"})
@@ -54,8 +54,13 @@ func FuzzPlan(f *testing.F) {
 			if fsk == Link {
 				pf.LinkTarget = []string{target, "elsewhere"}[int(next())%2]
 			}
-			if flag() {
+			switch next() % 4 { // both spellings of a stray link
+			case 1:
 				pf.StrayLinks = []string{n + "~cruft"}
+			case 2:
+				pf.StrayLinks = []string{".outfit-link~" + n}
+			case 3:
+				pf.StrayLinks = []string{n + "~cruft", ".outfit-link~" + n}
 			}
 			f.Paths[n] = pf
 			if flag() {
@@ -78,14 +83,16 @@ func FuzzPlan(f *testing.F) {
 			pf, known := f.Paths[act.Path]
 			switch act.Kind {
 			case RemoveLink:
-				stray := strings.HasSuffix(act.Path, "~cruft")
-				if known && !stray && pf.FS != Link {
+				if known && pf.FS != Link {
 					t.Fatalf("RemoveLink on %s which is not a link (%v)", act.Path, pf.FS)
 				}
 				if known && pf.Unmerged {
 					t.Fatalf("RemoveLink on an unmerged path %s", act.Path)
 				}
 			case QuarantineFile, QuarantineBoth, Absorb:
+				if act.Kind == Absorb && f.GitBusy != "" && f.Recorded[act.Path].VariantHash != "" && f.Recorded[act.Path].VariantHash == pf.VariantHash && pf.FileHash != pf.VariantHash {
+					t.Fatalf("Absorb of an editor's save while git is in the middle of a %s", f.GitBusy)
+				}
 				if !known || pf.FS != File {
 					t.Fatalf("%s on %s which is not a regular file", act.Kind, act.Path)
 				}
@@ -106,8 +113,8 @@ func FuzzPlan(f *testing.F) {
 	})
 }
 
-func TestPlanFuzzSeedsAreMeaningful(t *testing.T) {
-	// A guard for the fuzz body itself: the fixed seed must reach a state that plans something.
+func TestPlanFuzzFixtureIsMeaningful(t *testing.T) {
+	// A guard for the fuzz body's idea of a state: a plain missing link plans something.
 	if kinds(Plan(Want{Swaps: []Swap{{Path: "A", Target: "t"}}}, Facts{Paths: map[string]PathFacts{"A": {FS: Missing, Tracked: true, VariantHash: "a", Mode: "100644"}}})) == nil {
 		t.Fatal("the fixture plans nothing")
 	}

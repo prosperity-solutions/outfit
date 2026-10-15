@@ -280,8 +280,8 @@ func Plan(w Want, f Facts) []Action {
 		out = append(out, Action{Kind: SetExpectFiles})
 	}
 
-	// Our own link, moved aside by git for a merge's markers file: remove it at once (it
-	// is untracked, and `git add -A` mid-resolution would commit a symlink).
+	// Our stray links (`~cruft` after a merge, the temporary name of a link whose rename a kill
+	// cut short): remove them at once (they are untracked, and `git add -A` would commit a symlink).
 	for _, p := range sortedKeys(f.Paths) {
 		for _, stray := range f.Paths[p].StrayLinks {
 			out = append(out, Action{Kind: RemoveLink, Path: stray})

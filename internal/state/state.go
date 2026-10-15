@@ -8,10 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/prosperity-solutions/outfit/internal/fault"
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/prosperity-solutions/outfit/internal/fault"
 )
 
 // Schema is the current state.json version. Bump it with a migration in Read.

@@ -106,7 +106,6 @@ exec git commit --allow-empty -qm 'chore: a'
 exec git commit --allow-empty -qm 'chore: b'
 atomicsave AGENTS.md 'saved just before a rebase\n'
 exec sh -c 'GIT_SEQUENCE_EDITOR="sed -i.bak s/^pick/edit/" git -c core.editor=true rebase -i HEAD~2'
-exec ls .git
 exec sh -c 'ls -d .git/rebase-merge'
 outfit sync
 stderr 'in the middle of a rebase'

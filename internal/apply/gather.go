@@ -168,9 +168,10 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			}
 		}
 	}
-	// A `<path>~cruft` symlink might be our own link, moved aside by older git during a
-	// merge. Ask the index about it too (the same call): one that git tracks is the
-	// repository's own file and is never ours to remove.
+	// A `<path>~cruft` symlink (older git, mid-merge) or a temporary link beside the path (the
+	// cross-filesystem fallback of a link that a kill cut short) might be ours. Ask the index
+	// about them too (the same call): one that git tracks is the repository's own file and is
+	// never ours to remove.
 	strays := map[string]map[string]string{} // path -> stray link (relative) -> its text
 	for _, p := range all {
 		if !realParents(in.W.WorkTree, p) {

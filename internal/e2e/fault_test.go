@@ -16,8 +16,8 @@ import (
 // Scenario 7 (docs/HANDOVER.md §7.4): "Killed at every injected fault point and rerun,
 // sync converges with nothing lost." A binary built with -tags faultinject is killed
 // (SIGKILL, like power loss) at the Nth fault point of one operation, for every N the
-// operation has; then a plain `outfit sync` runs and the tree must be consistent with no
-// user byte gone.
+// operation has; then a rerun (a plain `outfit sync`, or `outfit uninstall` for the
+// scenarios that end by undoing everything) must converge, with no user byte gone.
 
 type faultScenario struct {
 	name string
@@ -25,7 +25,7 @@ type faultScenario struct {
 	setup func(t *testing.T, r *testkit.Repo, bin string, tokens *[]string)
 	// op is the operation that gets killed.
 	op []string
-	// recover is what runs afterwards (twice); a plain sync, or a second uninstall/init.
+	// recover is what runs afterwards (twice): a plain sync, or `uninstall`.
 	recover []string
 	// uninstall scenarios must leave `git config --list` exactly as it was before init.
 	uninstalls bool

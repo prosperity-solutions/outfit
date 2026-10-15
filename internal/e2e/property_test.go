@@ -41,7 +41,7 @@ type model struct {
 	nProf    int
 	locals   []string
 	steps    []string
-	executed map[string]int // steps that really did something (not skipped), by name
+	executed map[string]int // the edit steps that really ran (not skipped), by name
 	// pending: a user edit exists that sync has not absorbed or the tree has not shown.
 	pending bool
 }
@@ -237,8 +237,8 @@ func steps() []step {
 				m.rt.Fatalf("sync: %+v", o)
 			}
 		}},
-		{"pull-docs", true, func(m *model) { m.upstreamChange("docs/guide.md", true) }},
-		{"pull-base", false, func(m *model) { m.upstreamChange("AGENTS.md", true) }},
+		{"pull-docs", true, func(m *model) { m.upstreamChange("docs/guide.md") }},
+		{"pull-base", false, func(m *model) { m.upstreamChange("AGENTS.md") }},
 		{"merge", false, func(m *model) {
 			_, err := m.git("merge", "-q", "--no-edit", "conflict")
 			if err != nil {
@@ -287,8 +287,9 @@ func steps() []step {
 	}
 }
 
-// upstreamChange pushes a commit from a second clone and pulls it (fast-forward only).
-func (m *model) upstreamChange(file string, pull bool) {
+// upstreamChange pushes a commit from a second clone and pulls it: a fast-forward when it
+// can, else a rebase onto it (a local commit rules the fast-forward out).
+func (m *model) upstreamChange(file string) {
 	if m.other == "" {
 		m.other = filepath.Join(filepath.Dir(m.r.Dir), "other")
 		if out, err := testkit.RunGit(filepath.Dir(m.r.Dir), m.r.Env, "clone", "-q", m.r.Upstream, m.other); err != nil {
@@ -310,13 +311,11 @@ func (m *model) upstreamChange(file string, pull bool) {
 			return
 		}
 	}
-	if pull {
-		// A local commit (the rebase step, commit-everything) makes a fast-forward
-		// impossible: then rebase onto the upstream, like `git pull --rebase`.
-		if _, err := m.git("pull", "-q", "--ff-only", "origin", "main"); err != nil {
-			if _, rerr := m.git("pull", "-q", "--rebase", "origin", "main"); rerr != nil {
-				_, _ = m.git("rebase", "--abort")
-			}
+	// A local commit (the rebase step, commit-everything) makes a fast-forward impossible:
+	// then rebase onto the upstream, like `git pull --rebase`.
+	if _, err := m.git("pull", "-q", "--ff-only", "origin", "main"); err != nil {
+		if _, rerr := m.git("pull", "-q", "--rebase", "origin", "main"); rerr != nil {
+			_, _ = m.git("rebase", "--abort")
 		}
 	}
 }
@@ -451,8 +450,11 @@ func TestProperties(t *testing.T) {
 	if v := os.Getenv("OUTFIT_PROPERTY_CHECKS"); v != "" {
 		checks = v
 	}
-	if f := flag.Lookup("rapid.checks"); f != nil && f.Value.String() == f.DefValue {
-		_ = flag.Set("rapid.checks", checks)
+	if f := flag.Lookup("rapid.checks"); f != nil {
+		if f.Value.String() == f.DefValue {
+			_ = flag.Set("rapid.checks", checks)
+		}
+		checks = f.Value.String() // whichever way it was set: the env var or -rapid.checks
 	}
 	all := steps()
 	totals := map[string]int{} // how often each user-edit step really ran, over every sequence

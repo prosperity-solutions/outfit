@@ -240,7 +240,8 @@ func unrecordedLinks(ctx context.Context, g gitx.Client, w Workspace, st *state.
 }
 
 // removeStrays takes away OUR leftover links next to a swapped path: the temporary name a
-// link is made under (a kill between creating it and renaming it leaves it) and
+// link is made under when the git dir is on another filesystem (a kill between creating it
+// and renaming it leaves it; normally it is in the git dir, see linkVia) and
 // `<path>~cruft` (older git, mid-merge). Only a symlink with the text outfit wrote, and
 // only one git does not track: nothing of the repository's own.
 func removeStrays(ctx context.Context, g gitx.Client, worktree, rel, target string) {
