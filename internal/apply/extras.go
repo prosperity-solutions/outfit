@@ -35,6 +35,16 @@ func personalLinkDirs(w Workspace) []string {
 	}
 }
 
+// removeInside removes the file at rel below dir, staying inside dir whatever symlinks stand on the way.
+func removeInside(dir, rel string) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.Remove(rel)
+}
+
 // isExtraLink reports that text is the link outfit makes for the profile's file rel (relative path
 // from the worktree root): to rel inside some profile, not to anything else there. A link a person
 // made by hand into a profile directory (an alias for another profile file, a link to its
@@ -65,11 +75,10 @@ func isOurIgnoreFile(worktree, rel string) bool {
 	if !realParents(worktree, rel) {
 		return false
 	}
-	abs := filepath.Join(worktree, filepath.FromSlash(rel))
-	if fi, err := os.Lstat(abs); err != nil || !fi.Mode().IsRegular() || fi.Size() > 1<<20 {
+	if fi, err := os.Lstat(filepath.Join(worktree, filepath.FromSlash(rel))); err != nil || !fi.Mode().IsRegular() || fi.Size() > 1<<20 {
 		return false
 	}
-	b, err := os.ReadFile(abs)
+	b, err := readInside(worktree, rel)
 	return err == nil && plan.OurIgnore(string(b))
 }
 
@@ -215,7 +224,7 @@ func (in Input) ignoreFacts(d string, idx map[string]indexEntry) plan.IgnoreFact
 		// so that it can go: it would otherwise stand at a tracked path for good)
 		f := plan.IgnoreFacts{Blocked: "the team tracks " + rel + ", and outfit will not write into it"}
 		if isOurIgnoreFile(in.W.WorkTree, rel) {
-			if b, err := os.ReadFile(in.abs(rel)); err == nil {
+			if b, err := readInside(in.W.WorkTree, rel); err == nil {
 				f.Text = string(b)
 			}
 		}
@@ -231,7 +240,7 @@ func (in Input) ignoreFacts(d string, idx map[string]indexEntry) plan.IgnoreFact
 	case err != nil || !fi.Mode().IsRegular() || fi.Size() > 1<<20:
 		return plan.IgnoreFacts{Blocked: rel + " is not a regular file of outfit's"}
 	}
-	b, err := os.ReadFile(in.abs(rel))
+	b, err := readInside(in.W.WorkTree, rel)
 	if err != nil || !plan.OurIgnore(string(b)) {
 		return plan.IgnoreFacts{Blocked: rel + " exists and is not outfit's: it stays as it is (outfit will not link files below " + d + " that it cannot hide from git)"}
 	}
@@ -246,11 +255,11 @@ func (in Input) writeIgnore(d, text string) error {
 		return fmt.Errorf("%s is below a symlinked directory: refusing to write through it", d)
 	}
 	abs := in.abs(rel)
-	if b, err := os.ReadFile(abs); err == nil && !plan.OurIgnore(string(b)) {
+	if b, err := readInside(in.W.WorkTree, rel); err == nil && !plan.OurIgnore(string(b)) {
 		return fmt.Errorf("%s exists and is not outfit's: left as it is", rel)
 	}
 	if text == "" {
-		if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := removeInside(in.W.WorkTree, rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		return nil
@@ -265,14 +274,14 @@ func (in Input) writeIgnore(d, text string) error {
 		return err
 	}
 	tmp := filepath.Join(dir, "ignore-"+hex.EncodeToString(sha256Sum(rel)))
-	if err := os.WriteFile(tmp, []byte(text), 0o644); err != nil {
+	if err := os.WriteFile(tmp, []byte(text), 0o600); err != nil {
 		return err
 	}
 	fault.Point("the ignore file is written under a temporary name, not yet renamed")
 	if err := os.Rename(tmp, abs); err != nil {
 		_ = os.Remove(tmp)
 		if errors.Is(err, syscall.EXDEV) { // the git dir is on another filesystem: the temporary file must sit beside the target
-			return state.WriteFileAtomic(abs, []byte(text), 0o644)
+			return state.WriteFileAtomic(abs, []byte(text), 0o600)
 		}
 		return err
 	}
@@ -288,7 +297,7 @@ func sha256Sum(s string) []byte {
 // (not including) under. An empty directory holds nothing of anybody's, and git does not track it.
 func pruneEmptyDirs(worktree, rel, under string) {
 	for d := pathpkg.Dir(rel); d != "." && d != "/" && d != under && strings.HasPrefix(d, under+"/"); d = pathpkg.Dir(d) {
-		if err := os.Remove(filepath.Join(worktree, filepath.FromSlash(d))); err != nil {
+		if err := removeInside(worktree, d); err != nil {
 			return
 		}
 	}
@@ -347,7 +356,7 @@ func teardownExtras(ctx context.Context, g gitx.Client, w Workspace, st *state.S
 			continue // a link of somebody's, at a path git does not track: not ours, and in nobody's way
 		}
 		fault.Point("teardown: before an extra link goes")
-		if err := os.Remove(abs); err != nil {
+		if err := removeInside(w.WorkTree, p); err != nil {
 			failed = append(failed, "link "+p+": "+err.Error())
 			continue
 		}
@@ -368,9 +377,8 @@ func teardownExtras(ctx context.Context, g gitx.Client, w Workspace, st *state.S
 		if !realParents(w.WorkTree, rel) {
 			continue
 		}
-		abs := filepath.Join(w.WorkTree, filepath.FromSlash(rel))
-		if b, err := os.ReadFile(abs); err == nil && plan.OurIgnore(string(b)) {
-			if err := os.Remove(abs); err != nil {
+		if b, err := readInside(w.WorkTree, rel); err == nil && plan.OurIgnore(string(b)) {
+			if err := removeInside(w.WorkTree, rel); err != nil {
 				failed = append(failed, rel+": "+err.Error())
 			}
 		}
