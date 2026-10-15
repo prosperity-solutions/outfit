@@ -16,6 +16,7 @@ person must look) or 4 (out of sync, stale, or the hook dispatcher is broken).
 | a profile of a teammate has the same name as your local one | the committed one wins; `outfit new <other> --from local:<name>` keeps yours |
 
 | exit 3, `is a file at a path the team tracks inside <dir>` | the profile replaces `<dir>` and a file of yours stands at a hidden team path: git may delete it. A copy is saved under `.git/outfit/quarantine/`. Move the file out of `<dir>`, then `outfit sync` |
+| `is the profile's own file in <dir>, which the profile replaces, but it is not linked: …` | something is in the way of a file only the profile has (the note says what): a file of yours at that path, a `.gitignore` there that is not outfit's or the team tracks, a name that clashes with a tracked path. Remove or rename what is in the way, then `outfit sync` |
 | `<dir>: the team changed files below it` | a pull changed the team's files in a directory your profile replaces. `outfit ack <dir>` once you are fine with it (`git log --stat -- <dir>` shows what changed) |
 | commit refused: `is below <dir>, which your active profile replaces` | something below a replaced directory is staged: `git reset -q -- <path>`; on purpose, `OUTFIT_ALLOW=1 git commit` or `outfit use base` first |
 | `use` refused: files below `<dir>` are staged / have uncommitted changes | replacing the directory would take them off disk: commit or stash them first |

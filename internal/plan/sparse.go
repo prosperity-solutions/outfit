@@ -170,3 +170,35 @@ func UnderAny(path string, dirs []string) bool {
 	}
 	return false
 }
+
+// IgnoreMarker is the first line of the `.gitignore` outfit keeps in a replaced directory: the
+// profile's own files there (paths the repository does not track) are links, and git must neither
+// list nor stage them. The file is untracked and ignores itself; only a file that starts with this
+// line is ever rewritten or removed.
+const IgnoreMarker = "# outfit-managed: the profile's own files in this directory (do not edit; run `outfit sync`)"
+
+// IgnoreText renders that file for dir: one anchored line per file, relative to dir, in sorted
+// order, so the text is a pure function of its inputs. No files gives "": there is no file.
+func IgnoreText(dir string, files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	rel := make([]string, 0, len(files))
+	for _, f := range files {
+		if r, ok := strings.CutPrefix(f, dir+"/"); ok && r != "" {
+			rel = append(rel, r)
+		}
+	}
+	sort.Strings(rel)
+	var b strings.Builder
+	b.WriteString(IgnoreMarker + "\n/.gitignore\n")
+	for i, r := range rel {
+		if i == 0 || r != rel[i-1] {
+			b.WriteString("/" + escapePattern(r) + "\n")
+		}
+	}
+	return b.String()
+}
+
+// OurIgnore reports that text is a file IgnoreText wrote.
+func OurIgnore(text string) bool { return strings.HasPrefix(text, IgnoreMarker+"\n") }

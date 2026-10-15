@@ -124,7 +124,8 @@ func (m *model) swapped() []string {
 		return nil // no record yet
 	}
 	var st struct {
-		Swaps []struct{ Path string } `json:"swaps"`
+		Swaps  []struct{ Path string } `json:"swaps"`
+		Extras []struct{ Path string } `json:"extras"` // the profile's own files below a replaced directory
 	}
 	if err := json.Unmarshal(b, &st); err != nil {
 		// A model that cannot read the record would silently stop editing anything and
@@ -133,6 +134,9 @@ func (m *model) swapped() []string {
 	}
 	var out []string
 	for _, s := range st.Swaps {
+		out = append(out, s.Path)
+	}
+	for _, s := range st.Extras {
 		out = append(out, s.Path)
 	}
 	sort.Strings(out)
@@ -540,6 +544,8 @@ func TestProperties(t *testing.T) {
 		m.r.Write("skills/b.md", "team b\n")
 		m.r.Write(".outfit/profiles/repl/profile.config", "[outfit \"profile\"]\n    replace = skills\n")
 		m.r.Write(".outfit/profiles/repl/skills/a.md", "my a\n")
+		m.r.Write(".outfit/profiles/repl/skills/new.md", "my new\n")         // a file only the profile has
+		m.r.Write(".outfit/profiles/repl/skills/deep/x.md", "my deep one\n") // and one in a directory only it has
 		m.r.Git("add", "skills")
 		m.r.Git("add", "--sparse", "-f", ".outfit/profiles/repl")
 		m.r.Git("commit", "-qm", "feat: replace skills")

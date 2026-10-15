@@ -126,16 +126,13 @@ func faultScenarios() []faultScenario {
 			}
 			writeToken(t, r, tokens, "AGENTS.md", true) // an editor replaces the link
 		}, op: []string{"sync"}, recover: []string{"sync"}},
-		{name: "replace-a-directory", setup: func(t *testing.T, r *testkit.Repo, bin string, tokens *[]string) {
-			// The team has skills/a.md and skills/b.md; the profile `repl` replaces the directory and brings its own a.md.
-			r.Write("skills/a.md", "team a\n")
-			r.Write("skills/b.md", "team b\n")
-			r.Write(".outfit/profiles/repl/profile.config", "[outfit \"profile\"]\n    replace = skills\n")
-			r.Write(".outfit/profiles/repl/skills/a.md", "my a\n")
-			r.Git("add", "skills")
-			r.Git("add", "--sparse", "-f", ".outfit/profiles/repl")
-			r.Git("commit", "-qm", "feat: replace skills")
-		}, op: []string{"use", "repl"}, recover: []string{"sync"}},
+		{name: "replace-a-directory", setup: replaceSetup, op: []string{"use", "repl"}, recover: []string{"sync"}},
+		{name: "uninstall-with-a-replaced-directory", uninstalls: true, setup: func(t *testing.T, r *testkit.Repo, bin string, tokens *[]string) {
+			replaceSetup(t, r, bin, tokens)
+			if o := r.RunOutfit(bin, nil, "use", "repl"); o.Code != 0 {
+				t.Fatalf("setup use repl: %+v", o)
+			}
+		}, op: []string{"uninstall"}, recover: []string{"uninstall"}},
 		{name: "author-on", setup: use("yolo"), op: []string{"author", "on"}, recover: []string{"sync"}},
 		{name: "author-on-one", setup: use("yolo"), op: []string{"author", "on", "lean"}, recover: []string{"sync"}},
 		{name: "author-off", setup: func(t *testing.T, r *testkit.Repo, bin string, tokens *[]string) {
@@ -342,4 +339,18 @@ func assertConverges(t *testing.T, r *testkit.Repo, bin string, fc faultCtx, tok
 	if aj.Changed {
 		fc.fatalf(t, "a further sync still changed something: %s", again.Stdout)
 	}
+}
+
+// replaceSetup: the team has skills/a.md and skills/b.md; the profile `repl` replaces the directory, brings its own a.md and files the team lacks.
+var replaceSetup = func(t *testing.T, r *testkit.Repo, bin string, tokens *[]string) {
+	// The team has skills/a.md and skills/b.md; the profile `repl` replaces the directory and brings its own a.md.
+	r.Write("skills/a.md", "team a\n")
+	r.Write("skills/b.md", "team b\n")
+	r.Write(".outfit/profiles/repl/profile.config", "[outfit \"profile\"]\n    replace = skills\n")
+	r.Write(".outfit/profiles/repl/skills/a.md", "my a\n")
+	r.Write(".outfit/profiles/repl/skills/new.md", "my new\n")         // only the profile has it
+	r.Write(".outfit/profiles/repl/skills/deep/x.md", "my deep one\n") // nor the directory
+	r.Git("add", "skills")
+	r.Git("add", "--sparse", "-f", ".outfit/profiles/repl")
+	r.Git("commit", "-qm", "feat: replace skills")
 }

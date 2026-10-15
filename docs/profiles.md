@@ -150,9 +150,8 @@ hidden (they live in the git directory, outside the tree: `outfit show <profile>
 ## Replacing a whole directory
 
 A profile can say that a directory is **its own**: the team's files below it disappear for you, and the
-profile's files stand in **at the paths the repository already tracks** (files that exist only in the
-profile are not shown yet: they are skipped with a note, and an untracked file you create there is
-neither linked nor hidden, it is simply an untracked file). In the profile's `profile.config`:
+profile's files stand in, **the ones the repository tracks and the ones only the profile has**. In the
+profile's `profile.config`:
 
 ```ini
 [outfit "profile"]
@@ -166,8 +165,14 @@ While the profile is active:
   file the team adds there later stays hidden too, with nothing to sync), whether the profile has a
   counterpart or not.
 - **The profile's files at paths the repository tracks are linked in** like any swapped file (editing
-  through the link edits the profile, an editor's atomic save is absorbed, and so on). A file the profile has
-  that the repository does not track is skipped with a note, as always: adding files is not part of this yet.
+  through the link edits the profile, an editor's atomic save is absorbed, and so on).
+- **So are the profile's own files**, the ones the repository does not track (`skills/new.md`,
+  `skills/deep/x.md`): linked in, folders made as needed, and kept out of `git status` and `git add` by an
+  untracked `.gitignore` in the replaced directory that lists them and ignores itself (outfit writes and
+  removes it; only a file that starts with outfit's marker line is ever touched). It is per worktree: nothing is
+  added to the shared `.git/info/exclude`, which would hide a same-named file in another worktree. When the
+  profile drops the file, or you leave the profile, the link goes and the folders it leaves empty go with
+  it. When the team starts to track the path, the link stays and is a swap from then on.
 - `git status` stays clean; the **pre-commit guard** refuses to commit anything staged below the
   directory (to do it on purpose: `OUTFIT_ALLOW=1`, or `outfit use base` first).
 - **What the team changes below it is told once**: a pull that adds or edits files there prints one note
@@ -192,8 +197,16 @@ the repository tracks nothing in (a typo, or the wrong case: git matches pattern
 some systems) is not replaced, with a note. A profile may not replace the directory that holds the
 team's git hooks (a hook the team locked on would stop running unseen), nor `.git` or `.outfit`.
 
+A profile file is **not linked** (with a note) when something is in the way: a regular file of yours already
+at that path (a copy is saved, the file stays, exit 3), a symlink that is not outfit's, the team tracking a
+file where a folder would have to stand (or files below the path), a name that differs from a tracked file only
+in case, the name `.gitignore` in the replaced directory itself, or a `.gitignore` there that the team tracks
+or that is not outfit's (the profile's own files could not be hidden from git).
+
 Limits: `git add -A` fails while an untracked file stands in a hidden directory (git's own rule: use `git add
---sparse`); `git clean -fdx` and `git stash -u` leave the directory as it is (the links are tracked paths).
+--sparse`); `git stash -u` leaves the directory as it is. `git clean -fdx` (and `-X`) deletes the profile's own
+files' links, because git ignores them: the next sync makes them again, but an editor's save made over a link
+and not yet absorbed (`outfit sync` after saving) is lost with it.
 
 ## `outfit sync`
 

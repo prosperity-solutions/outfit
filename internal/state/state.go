@@ -45,6 +45,11 @@ type State struct {
 	// (path and blob) when the replacement was made or last acknowledged: a pull that changes
 	// them is told once, not once per file (`outfit ack <dir>` clears it).
 	ReplaceSeen map[string]string `json:"replace_seen,omitempty"`
+	// Extras are the profile's own files below a replaced directory (paths the repository
+	// does not track), linked in by sync. A record, not the truth: sync and uninstall also
+	// find links of outfit's by walking the replaced directories, so a lost record leaves
+	// nothing behind.
+	Extras []Swap `json:"extras,omitempty"`
 	// CommittedProfiles remembers that the repository has committed profiles, so
 	// the no-op sync path can keep inactive ones hidden without asking git.
 	CommittedProfiles bool `json:"committed_profiles,omitempty"`

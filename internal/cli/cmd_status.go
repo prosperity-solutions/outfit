@@ -50,7 +50,10 @@ type statusJSON struct {
 	Author bool `json:"author,omitempty"`
 	// ReplacedDirs are the directories the active profile replaces as a whole: the team's files
 	// below them are hidden here and the profile's stand in.
-	ReplacedDirs   []string     `json:"replaced_dirs,omitempty"`
+	ReplacedDirs []string `json:"replaced_dirs,omitempty"`
+	// ExtraFiles are the profile's own files linked in below the replaced directories (paths the
+	// repository does not track).
+	ExtraFiles     []string     `json:"extra_files,omitempty"`
 	AuthorProfiles []string     `json:"author_profiles,omitempty"`
 	Locked         []string     `json:"locked"`
 	Files          []statusFile `json:"files"`
@@ -126,6 +129,9 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 	st.AgentsSessionStart = agents.Installed(l.Repo.WorkTree)
 	if rs, rerr := state.Read(l.Repo.GitDir); rerr == nil && rs != nil {
 		st.ReplacedDirs = rs.ReplaceDirs
+		for _, x := range rs.Extras {
+			st.ExtraFiles = append(st.ExtraFiles, x.Path)
+		}
 	}
 	if av := authorFor(ctx, l); av.Author || len(av.Profiles) > 0 {
 		st.Author, st.AuthorProfiles = av.Author, av.Profiles
@@ -239,6 +245,9 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 	}
 	if len(st.ReplacedDirs) > 0 {
 		fmt.Fprintln(w, "dirs     replaced by the profile (the team's files below are hidden): "+strings.Join(st.ReplacedDirs, ", "))
+		if len(st.ExtraFiles) > 0 {
+			fmt.Fprintf(w, "         and %d file(s) only the profile has, linked in there (an untracked .gitignore in the directory hides them from git)\n", len(st.ExtraFiles))
+		}
 	}
 	switch {
 	case st.Author:

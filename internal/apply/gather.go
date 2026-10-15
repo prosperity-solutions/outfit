@@ -162,6 +162,21 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		facts.Recorded[s.Path] = plan.Record{Target: s.Target, VariantHash: s.VariantHash, VariantBlob: s.VariantBlob, BaseBlob: s.BaseBlob, SeenBase: s.SeenBase, KnownBases: s.KnownBases}
 	}
 
+	// The profile's own files below the replaced directories: what the state lists, and every link
+	// of outfit's found by walking those directories (the record is only a cache).
+	for _, s := range st.Extras {
+		if err := plan.ValidSwapPath(s.Path); err != nil {
+			g.messages = append(g.messages, "ignored a recorded extra: "+err.Error())
+			continue
+		}
+		if _, ok := facts.Recorded[s.Path]; !ok {
+			facts.Recorded[s.Path] = plan.Record{Target: s.Target, VariantHash: s.VariantHash, VariantBlob: s.VariantBlob, Extra: true}
+		}
+	}
+	declaredDirs, _ := cleanReplaceDirs(in.ReplaceDirs, in.HookDirs)
+	scanDirs := extraScanDirs(in.W, st, declaredDirs)
+	in.orphanExtras(scanDirs, facts.Recorded)
+
 	// Which of those paths does git know, and in what state?
 	all := append([]string(nil), candidates...)
 	for p := range facts.Recorded {
@@ -233,6 +248,16 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		kept = append(kept, d)
 	}
 	dirs = kept
+	facts.Ignore = map[string]plan.IgnoreFacts{}
+	for _, d := range scanDirs {
+		facts.Ignore[d] = in.ignoreFacts(d, idx)
+	}
+	tracked := newTrackedIdx(idx, dirs)
+	candSet := map[string]bool{}
+	for _, p := range candidates {
+		candSet[p] = true
+	}
+	personal := personalLinkDirs(in.W)
 	// A directory the patterns hide and the profile no longer replaces: files that are not
 	// outfit's links on disk below it would be left half-present when git brings the team's back.
 	for _, d := range curSparse.HideDirs {
@@ -292,6 +317,24 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			}
 		}
 		sort.Strings(pf.StrayLinks)
+		if d := underDirOf(p, dirs); d != "" && candSet[p] && !pf.Tracked && !pf.Unmerged {
+			// The profile's own file below a directory it replaces: linked unless something is in the way.
+			switch {
+			case facts.Ignore[d].Blocked != "":
+				pf.ExtraWhy = facts.Ignore[d].Blocked
+			case p == d+"/.gitignore":
+				pf.ExtraWhy = "the name " + p + " is outfit's here (it lists the profile's own files, which git must not see)"
+			case tracked.clash(p) != "":
+				pf.ExtraWhy = tracked.clash(p)
+			case pf.FS == plan.Link && !isOurLinkText(pf.LinkTarget, personal):
+				pf.ExtraWhy = "a symlink that is not outfit's stands there"
+			default:
+				pf.Extra = true
+				if pf.FS == plan.File {
+					pf.FileHash = hashFile(in.abs(p))
+				}
+			}
+		}
 		if in.Profile != nil {
 			pf.VariantHash = hashFile(in.variantPath(p))
 			if v, ok := variantRel[p]; ok {

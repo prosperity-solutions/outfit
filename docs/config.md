@@ -63,7 +63,7 @@ or the resolution order below) may name directories it replaces as a whole, one 
 ```
 
 While that profile is active, every tracked file below each directory is hidden for you, the team's later
-additions included, and the profile's files at paths the repository tracks are linked in. See
+additions included, and the profile's files are linked in (at tracked paths, and its own files too). See
 [profiles.md](profiles.md). A path is clean and relative (no `..`, not inside `.git` or `.outfit`); one
 directory may not be inside another.
 

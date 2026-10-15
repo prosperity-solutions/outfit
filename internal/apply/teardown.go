@@ -57,13 +57,14 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 	// A directory the profile replaced holds the team's files only in git; a regular file the person
 	// (or an agent) wrote below it while it was hidden is theirs, and sparse checkout coming off would
 	// leave it half-present ("already present, not updated"). Stop and say where.
+	// Only a directory the patterns hide NOW: once an earlier, killed uninstall has switched sparse
+	// checkout off, the team's files are back and are the team's, not strays.
 	replSparse, _ := readInside(w.GitDir, "info/sparse-checkout")
-	replaced := append([]string(nil), st.ReplaceDirs...)
-	if parsed, ok := plan.ParseSparse(string(replSparse)); ok {
-		for _, d := range parsed.HideDirs {
-			if !containsStr(replaced, d) {
-				replaced = append(replaced, d)
-			}
+	var replaced []string
+	if parsed, ok := plan.ParseSparse(string(replSparse)); ok && len(parsed.HideDirs) > 0 {
+		// (the patterns file outlives `sparse-checkout disable` by a moment: ask git whether it is on)
+		if res, err := g.Read(ctx, "config", "--get", "core.sparseCheckout"); err == nil && strings.TrimSpace(string(res.Stdout)) == "true" {
+			replaced = append(replaced, parsed.HideDirs...)
 		}
 	}
 	for _, d := range replaced {
@@ -122,6 +123,11 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 			restore = append(restore, s.Path)
 		}
 	}
+
+	// The profile's own files below the replaced directories, and the ignore files that listed them.
+	exDid, exFailed := teardownExtras(ctx, g, w, st)
+	did = append(did, exDid...)
+	failed = append(failed, exFailed...)
 
 	// A link that could not be removed (or a regular file where one was) stops here:
 	// sparse checkout stays on, because switching it off while a link still stands at a

@@ -53,8 +53,8 @@ the git dir for a local or worktree one. So `git status` stays clean and `git ad
 A profile can own a directory: its `profile.config` says `[outfit "profile"]` / `replace = .claude/skills`,
 and its files at the same relative paths replace the team's. While it is active every tracked file below
 the directory is hidden for you (the team's later additions too), the profile's files at tracked paths are
-linked in **at paths the repository already tracks** (a file that exists only in the profile is skipped with a
-note: not shown yet), `git status` stays clean and the guard refuses to commit anything staged below it
+linked in, and so are the profile's own files that the repository does not track (an untracked `.gitignore` in the
+directory, outfit's, lists them and ignores itself: do not edit it), `git status` stays clean and the guard refuses to commit anything staged below it
 (`OUTFIT_ALLOW=1 git commit` only on purpose, or `outfit use base` first). A team change there is reported
 once (`outfit ack <dir>`; `outfit diff <dir>` says where to look). `outfit status` has a `dirs` line, `show`
 and `use` name the replaced directories. outfit refuses to start while files below the directory are staged

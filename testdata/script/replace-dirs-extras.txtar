@@ -1,0 +1,75 @@
+# A profile's own files below a replaced directory (paths the team does not track): linked in,
+# hidden from git by an untracked .gitignore that ignores itself, absorbed on an editor's save,
+# gone with the profile.
+fixture repo team
+cd repo
+exec mkdir -p skills
+exec sh -c 'echo team-a > skills/a.md; echo team-z > skills/z.md'
+exec git add skills
+exec git commit -qm 'docs: team skills'
+exec mkdir -p .outfit/profiles/mine/skills/deep
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = skills\n" > .outfit/profiles/mine/profile.config'
+exec sh -c 'echo my-a > .outfit/profiles/mine/skills/a.md; echo my-new > .outfit/profiles/mine/skills/new.md; echo my-deep > .outfit/profiles/mine/skills/deep/x.md'
+exec git add --sparse -f .outfit
+exec git commit -qm 'feat: a profile that replaces skills and adds files'
+outfit init
+outfit use mine
+! stderr 'not linked'
+exec cat skills/new.md
+stdout 'my-new'
+exec cat skills/deep/x.md
+stdout 'my-deep'
+exec cat skills/a.md
+stdout 'my-a'
+! exists skills/z.md
+outfit status
+stdout '2 file.s. only the profile has'
+outfit status --json
+stdout 'extra_files'
+exec git status --short
+! stdout 'skills'
+exec git add -A
+exec git status --short
+! stdout 'skills/'
+exec git commit -qm 'feat: nothing of skills' --allow-empty
+exec git ls-tree -r HEAD
+! stdout '^120000'
+exec cat skills/.gitignore
+stdout 'outfit-managed'
+stdout '/new.md'
+stdout '/deep/x.md'
+stdout '/.gitignore'
+
+# a second sync changes nothing
+outfit sync
+exec git status --short
+! stdout 'skills'
+
+# an editor's atomic save over an extra lands in the profile
+atomicsave skills/new.md 'edited in an editor\n'
+outfit sync
+exec cat .outfit/profiles/mine/skills/new.md
+stdout 'edited in an editor'
+exec sh -c 'test -L skills/new.md'
+
+# the profile drops a file: its link, and the directory it leaves empty, go
+exec git rm -q --sparse .outfit/profiles/mine/skills/deep/x.md
+exec rm -f .outfit/profiles/mine/skills/deep/x.md
+outfit sync
+! exists skills/deep
+exec cat skills/.gitignore
+! stdout 'deep'
+
+exec git add --sparse -f -A .outfit
+exec git commit -qm 'feat: profile edits'
+
+# leaving the profile takes everything of ours away and brings the team's files back
+outfit use base
+! exists skills/new.md
+! exists skills/.gitignore
+exec cat skills/a.md
+stdout 'team-a'
+exec cat skills/z.md
+stdout 'team-z'
+exec git status --short
+! stdout 'skills'

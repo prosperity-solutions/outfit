@@ -199,6 +199,9 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 						return err
 					}
 					res.Changed = true
+					if a.Extra && a.Under != "" {
+						pruneEmptyDirs(in.W.WorkTree, a.Path, a.Under)
+					}
 				}
 				if a.Unstage {
 					if _, err := in.Git.Write(ctx, "--literal-pathspecs", "update-index", "--force-remove", "--", a.Path); err != nil {
@@ -206,6 +209,11 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 					}
 					res.Changed = true
 				}
+			case plan.WriteIgnore:
+				if err := in.writeIgnore(a.Path, a.Text); err != nil {
+					return err
+				}
+				res.Changed = true
 			case plan.QuarantineFile:
 				if !realParents(in.W.WorkTree, a.Path) {
 					return fmt.Errorf("%s is below a symlinked directory: refusing to act through it", a.Path)
@@ -315,6 +323,23 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 		}
 	}
 	sort.Slice(next.Swaps, func(i, j int) bool { return next.Swaps[i].Path < next.Swaps[j].Path })
+	// The profile's own files below the replaced directories that stand as links now (a path the
+	// team has since started to track is a swap above, not an extra).
+	next.Extras = nil
+	for _, sw := range want.Swaps {
+		pf := facts.Paths[sw.Path]
+		switch {
+		case quarantined[sw.Path]:
+			for _, old := range st.Extras {
+				if old.Path == sw.Path {
+					next.Extras = append(next.Extras, old)
+				}
+			}
+		case pf.Extra && pf.FS == plan.Link && pf.LinkTarget == sw.Target && pf.VariantHash != "":
+			next.Extras = append(next.Extras, state.Swap{Path: sw.Path, Target: sw.Target, VariantHash: pf.VariantHash, VariantBlob: pf.VariantBlob})
+		}
+	}
+	sort.Slice(next.Extras, func(i, j int) bool { return next.Extras[i].Path < next.Extras[j].Path })
 	next.Profile = ""
 	if in.Profile != nil {
 		next.Profile = in.Profile.Name
@@ -350,6 +375,11 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 // path git could not update (it has uncommitted changes) fails the step loudly: a
 // half-switched tree is the one state outfit must never leave quietly.
 func (in Input) writeSparse(ctx context.Context, text string) error {
+	// Files git wrote in the same second as the index (a checkout that just ran) are "racily
+	// clean": git cannot tell them from modified ones by their stat data and would refuse to
+	// take them off the disk ("not up to date"). Refreshing compares their content and settles it.
+	// (Exit 1 only says some file really differs; the set below names it.)
+	_, _ = in.Git.Write(ctx, "update-index", "-q", "--refresh")
 	res, err := in.Git.WriteStdin(ctx, []byte(text), "sparse-checkout", "set", "--no-cone", "--stdin")
 	if err != nil {
 		return fmt.Errorf("git sparse-checkout set failed: %w", err)

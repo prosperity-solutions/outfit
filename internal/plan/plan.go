@@ -44,6 +44,11 @@ type PathFacts struct {
 	VariantHash  string // SHA-256 of the variant file; "" when it is missing
 	// VariantExec says the variant file has an executable bit.
 	VariantExec bool
+	// Extra says the profile's file at this path may be linked although the repository does not
+	// track it: it is below a directory the profile replaces and nothing in the way. ExtraWhy
+	// says what is in the way when it is not ("" for a path that is not below a replaced one).
+	Extra    bool
+	ExtraWhy string
 	// StrayLinks are OUR links standing where they do not belong, untracked: `<path>~cruft`
 	// (older git renames what stands in the way of a conflict's markers file, the link,
 	// to that name) and the temporary name a link is made under before it is renamed into
@@ -68,6 +73,8 @@ type PathFacts struct {
 type Record struct {
 	Target      string
 	VariantHash string
+	// Extra marks a link below a replaced directory at a path the repository does not track.
+	Extra bool
 	// BaseBlob is the base blob the swap stands on (set at link time, moved by an ack or
 	// an adapted commit): what "the base is different" is measured against. VariantBlob
 	// is the variant's at the last sync.
@@ -127,6 +134,9 @@ type Facts struct {
 	// reverted behind its back: an editor's save is not absorbed into the profile's
 	// (tracked) file until the operation is over.
 	GitBusy string
+	// Ignore is, per directory the profile replaces now or replaced (a stale one is still
+	// cleaned up), outfit's ignore file in it: what the self-ignoring `.gitignore` holds now.
+	Ignore map[string]IgnoreFacts
 	// Dirs describes each directory the active profile replaces (Want.ReplaceDirs).
 	Dirs map[string]DirFacts
 	// DirIssues are reasons a replace declaration cannot be honoured (a nested pair, a path that is
@@ -140,6 +150,13 @@ type Facts struct {
 	// no longer lists then went away from the profile itself (removed), not
 	// because of a switch.
 	SameProfile bool
+}
+
+// IgnoreFacts is the state of `<dir>/.gitignore`, the file that keeps the profile's own files
+// below a replaced directory out of `git status` and `git add`: untracked, and ignoring itself.
+type IgnoreFacts struct {
+	Text    string // what it holds ("" when absent)
+	Blocked string // why outfit may not write one ("" when it may): the team tracks one, or the file is not outfit's
 }
 
 // DirFacts is what sync learned about one replaced directory.
@@ -192,6 +209,7 @@ const (
 	QuarantineBoth ActionKind = "quarantine-both"  // file and variant both changed: save both, touch nothing, exit 3
 	QuarantineFile ActionKind = "quarantine-file"  // an unwanted regular file: save it, then clear the path
 	RecordHash     ActionKind = "record"           // state only: the variant changed through the link
+	WriteIgnore    ActionKind = "write-ignore"     // <dir>/.gitignore: the profile's own files below a replaced directory (Text "" removes it)
 	SaveStray      ActionKind = "save-stray"       // a regular file at a hidden team path: copy it to the quarantine (it stays), exit 3
 	RepairSkip     ActionKind = "repair-skip"      // git update-index --skip-worktree: the bit was lost (a `git reset -- <path>`)
 	AddExclude     ActionKind = "add-exclude"      // .git/info/exclude
@@ -213,6 +231,10 @@ type Action struct {
 	// Replaces says the path holds an UNTOUCHED copy of the committed file (checked
 	// against the index), which LinkPath may remove to put the link there.
 	Replaces bool
+	// Extra (RemoveLink): the link is one of the profile's own files below Under, a replaced
+	// directory: the directories it leaves empty go too.
+	Extra bool
+	Under string
 	// Unstage (RemoveLink): the link is staged and HEAD does not have it: take it off the index too.
 	Unstage bool
 	// Adapted (RecordHash): one commit moved the base and the variant together, so the
@@ -315,16 +337,32 @@ func Plan(w Want, f Facts) []Action {
 		}
 	}
 	inConflict := map[string]bool{} // paths in the middle of a merge: nothing about them is touched
+	extra := map[string]bool{}      // the profile's own files below a replaced directory, to be linked
 	for _, p := range paths {
 		pf := f.Paths[p]
 		// The ORDER of these cases is part of the behaviour: a refusal must come before
 		// any skip, or a switch could skip one file and change the tree around another.
 		switch {
 		case !pf.Tracked && !pf.Unmerged && underDir(p, w.ReplaceDirs) != "":
-			// The profile replaces the directory this file is in, but a replacement only links files at
-			// paths the repository tracks: a file that is only the profile's has nowhere to stand yet.
-			skips = append(skips, Action{Kind: Skip, Path: p, Reason: p + " is in " + underDir(p, w.ReplaceDirs) + ", which the profile replaces, but the repository does not track it: replacing a directory hides the team's files and links the profile's files at tracked paths; a file that exists only in the profile is not shown yet. To use it, have the repository track a file at that path"})
-			delete(want, p)
+			// The profile replaces the directory this file is in and the repository does not track
+			// it: the profile's own file, linked in as an "extra" when nothing is in the way.
+			switch {
+			case !pf.Extra:
+				why := pf.ExtraWhy
+				if why == "" {
+					why = "something is in the way"
+				}
+				skips = append(skips, Action{Kind: Skip, Path: p, Reason: p + " is the profile's own file in " + underDir(p, w.ReplaceDirs) + ", which the profile replaces, but it is not linked: " + why})
+				delete(want, p)
+			case pf.FS == Dir || pf.FS == Other:
+				skips = append(skips, Action{Kind: Skip, Path: p, Reason: p + " is a directory or something that is not a file or link, where the profile has a file: left alone"})
+				delete(want, p)
+			case pf.VariantHash == "":
+				skips = append(skips, Action{Kind: Skip, Path: p, Reason: "the profile's file for " + p + " is missing"})
+				delete(want, p)
+			default:
+				extra[p] = true
+			}
 		case !pf.Tracked && !pf.Unmerged:
 			skips = append(skips, Action{Kind: Skip, Path: p, Reason: p + " is not tracked by git, and outfit swaps only files the repository has: a profile replaces tracked files, it cannot add one. Paths are relative to the repository root and must match the repository's spelling exactly, case included (apps/web/AGENTS.md, not web/AGENTS.md)"})
 			delete(want, p)
@@ -388,7 +426,19 @@ func Plan(w Want, f Facts) []Action {
 		}
 	}
 	sort.Strings(obsolete)
+	ignoreDirs := sortedIgnoreKeys(f.Ignore)
 	for _, p := range obsolete {
+		if rec := f.Recorded[p]; rec.Extra && !f.Paths[p].Tracked {
+			// One of the profile's own files that the profile no longer has (or a link outfit made
+			// that nothing records): the link goes, and the directories it leaves empty.
+			switch f.Paths[p].FS {
+			case Link:
+				out = append(out, Action{Kind: RemoveLink, Path: p, Extra: true, Under: underDir(p, ignoreDirs)})
+			case File:
+				out = append(out, Action{Kind: Skip, Path: p, Reason: p + " is a regular file where the profile's own file was linked, and the profile no longer has it: left where it is"})
+			}
+			continue
+		}
 		switch pf := f.Paths[p]; pf.FS {
 		case Link:
 			a := Action{Kind: RemoveLink, Path: p}
@@ -432,6 +482,10 @@ func Plan(w Want, f Facts) []Action {
 		out = append(out, Action{Kind: DisableSparse})
 	}
 
+	// The ignore file for the profile's own files is written after the links being taken away
+	// and before the ones being made (git must never see a link it has not been told to ignore).
+	linkStart := len(out)
+	keep := map[string]bool{} // extras that stand (or will) and so are listed in the ignore file
 	for _, p := range paths {
 		s, ok := want[p]
 		if !ok {
@@ -439,6 +493,10 @@ func Plan(w Want, f Facts) []Action {
 		}
 		pf, rec := f.Paths[p], f.Recorded[p]
 		_, had := f.Recorded[p]
+		if extra[p] {
+			out = append(out, planExtra(p, s, pf, rec, had, keep)...)
+			continue
+		}
 		switch pf.FS {
 		case Link:
 			switch {
@@ -485,6 +543,9 @@ func Plan(w Want, f Facts) []Action {
 			}
 		}
 	}
+	if ign := ignoreActions(w, f, paths, keep); len(ign) > 0 {
+		out = append(out[:linkStart], append(ign, out[linkStart:]...)...)
+	}
 	// A swapped path whose skip-worktree bit is gone (git reset -- <path>, update-index)
 	// would show as a type change and could be staged: put the bit back. A sparse
 	// write sets the bits itself, so it only matters when none is planned.
@@ -505,6 +566,78 @@ func Plan(w Want, f Facts) []Action {
 	if w.Exclude && !f.ExcludeHas {
 		out = append(out, Action{Kind: AddExclude})
 	}
+	return out
+}
+
+// planExtra decides what one of the profile's own files below a replaced directory needs: a link
+// where nothing is, the record when the link stands, the editor's save absorbed into the profile
+// when the profile's copy is unchanged since linking. A regular file outfit did not put there is
+// never replaced: a copy is saved and the file stays. keep gets the paths the ignore file lists.
+func planExtra(p string, s Swap, pf PathFacts, rec Record, had bool, keep map[string]bool) []Action {
+	switch pf.FS {
+	case Missing:
+		keep[p] = true
+		return []Action{{Kind: LinkPath, Path: p, Target: s.Target}}
+	case Link:
+		keep[p] = true
+		if pf.LinkTarget != s.Target {
+			return []Action{{Kind: LinkPath, Path: p, Target: s.Target}}
+		}
+		if !had || rec.VariantHash != pf.VariantHash || rec.Target != s.Target {
+			return []Action{{Kind: RecordHash, Path: p, Target: s.Target}}
+		}
+	case File:
+		switch {
+		case pf.FileHash != "" && pf.FileHash == pf.VariantHash, had && rec.Extra && rec.VariantHash == pf.VariantHash:
+			// The same bytes, or an editor's atomic save over the link with the profile's copy
+			// untouched since: the file is the newer copy.
+			keep[p] = true
+			return []Action{{Kind: Absorb, Path: p, Target: s.Target}}
+		case had && rec.Extra:
+			return []Action{{Kind: QuarantineBoth, Path: p,
+				Reason: p + " was replaced by a regular file AND the profile's copy changed since outfit linked it: both are saved, the file is left where it is",
+				Fix:    "compare them; put what you want to keep into the profile's copy, then remove " + shq(p) + " (or make the two identical) and run: outfit sync"}}
+		default:
+			return []Action{{Kind: SaveStray, Path: p,
+				Reason: p + " is a regular file where the profile has its own file of that name: it is left where it is, and a copy is saved",
+				Fix:    "move it away (or put its bytes in the profile's copy), then: outfit sync"}}
+		}
+	}
+	return nil
+}
+
+// ignoreActions keeps `<dir>/.gitignore` equal to the files that stand below each directory: the
+// ones the profile replaces now get their lines, a directory it no longer replaces loses the
+// file. A directory where outfit may not write one (the team tracks a .gitignore there, or the file
+// is somebody's) is left alone: no file of the profile's was linked there (see ExtraWhy).
+func ignoreActions(w Want, f Facts, paths []string, keep map[string]bool) []Action {
+	var out []Action
+	for _, d := range sortedIgnoreKeys(f.Ignore) {
+		cur := f.Ignore[d]
+		if cur.Blocked != "" {
+			continue
+		}
+		var files []string
+		if containsStr(w.ReplaceDirs, d) {
+			for _, p := range paths {
+				if keep[p] && underDir(p, []string{d}) == d {
+					files = append(files, p)
+				}
+			}
+		}
+		if text := IgnoreText(d, files); text != cur.Text {
+			out = append(out, Action{Kind: WriteIgnore, Path: d, Text: text})
+		}
+	}
+	return out
+}
+
+func sortedIgnoreKeys(m map[string]IgnoreFacts) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
 	return out
 }
 

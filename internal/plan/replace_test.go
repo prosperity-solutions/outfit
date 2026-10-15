@@ -130,3 +130,135 @@ func TestSparseTextHidesADirectoryOnceAndDropsCoveredPaths(t *testing.T) {
 		t.Fatal("not a fixed point")
 	}
 }
+
+// extraIn adds one of the profile's own files (untracked, below skills/) to a replacing() world.
+func extraIn(p string, pf PathFacts) (Want, Facts) {
+	w, f := replacing()
+	w.Swaps = append(w.Swaps, Swap{Path: p, Target: "../.outfit/profiles/mine/" + p})
+	pf.Extra = true
+	if pf.VariantHash == "" {
+		pf.VariantHash = "v1"
+	}
+	f.Paths[p] = pf
+	f.Ignore = map[string]IgnoreFacts{"skills": {}}
+	return w, f
+}
+
+func TestAnExtraIsLinkedAndListedInTheIgnoreFileFirst(t *testing.T) {
+	w, f := extraIn("skills/new.md", PathFacts{FS: Missing})
+	got := Plan(w, f)
+	if len(got) != 2 || got[0].Kind != WriteIgnore || got[1].Kind != LinkPath {
+		t.Fatalf("the ignore file must come before the link: %v", kinds(got))
+	}
+	if got[0].Path != "skills" || !strings.Contains(got[0].Text, "/new.md\n") || !OurIgnore(got[0].Text) {
+		t.Errorf("ignore text: %q", got[0].Text)
+	}
+}
+
+func TestAnExtraThatStandsPlansNothing(t *testing.T) {
+	w, f := extraIn("skills/new.md", PathFacts{FS: Link, LinkTarget: "../.outfit/profiles/mine/skills/new.md"})
+	f.Recorded["skills/new.md"] = Record{Target: "../.outfit/profiles/mine/skills/new.md", VariantHash: "v1", Extra: true}
+	f.Ignore["skills"] = IgnoreFacts{Text: IgnoreText("skills", []string{"skills/new.md"})}
+	if got := Plan(w, f); len(got) != 0 {
+		t.Fatalf("%v", kinds(got))
+	}
+}
+
+func TestAnEditorsSaveOverAnExtraIsAbsorbedOnlyWhenTheProfilesCopyIsUnchanged(t *testing.T) {
+	target := "../.outfit/profiles/mine/skills/new.md"
+	w, f := extraIn("skills/new.md", PathFacts{FS: File, VariantHash: "v1"})
+	f.Recorded["skills/new.md"] = Record{Target: target, VariantHash: "v1", Extra: true}
+	f.Ignore["skills"] = IgnoreFacts{Text: IgnoreText("skills", []string{"skills/new.md"})}
+	if got := Plan(w, f); len(got) != 1 || got[0].Kind != Absorb {
+		t.Fatalf("unchanged variant: %v", kinds(got))
+	}
+	f.Recorded["skills/new.md"] = Record{Target: target, VariantHash: "older", Extra: true}
+	if got := Plan(w, f); !hasKind(got, QuarantineBoth) || hasKind(got, Absorb) {
+		t.Fatalf("changed variant: %v", kinds(got))
+	}
+}
+
+func TestARegularFileOutfitDidNotMakeIsNeverReplacedByAnExtra(t *testing.T) {
+	w, f := extraIn("skills/new.md", PathFacts{FS: File, FileHash: "mine"})
+	got := Plan(w, f)
+	if !hasKind(got, SaveStray) || hasKind(got, LinkPath) || hasKind(got, Absorb) || hasKind(got, WriteIgnore) {
+		t.Fatalf("%v", kinds(got))
+	}
+}
+
+func TestAnExtraInTheWayIsSkippedWithItsReasonAndNeverListed(t *testing.T) {
+	w, f := extraIn("skills/new.md", PathFacts{FS: Missing})
+	pf := f.Paths["skills/new.md"]
+	pf.Extra, pf.ExtraWhy = false, "the team tracks a file at skills, where a directory would have to stand"
+	f.Paths["skills/new.md"] = pf
+	got := Plan(w, f)
+	if len(got) != 1 || got[0].Kind != Skip || !strings.Contains(got[0].Reason, "where a directory would have to stand") {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestAnExtraTheProfileDroppedLosesItsLinkAndTheEmptyFolders(t *testing.T) {
+	w, f := replacing()
+	f.Paths["skills/deep/x.md"] = PathFacts{FS: Link, LinkTarget: "../../.outfit/profiles/mine/skills/deep/x.md"}
+	f.Recorded["skills/deep/x.md"] = Record{Target: "../../.outfit/profiles/mine/skills/deep/x.md", VariantHash: "v1", Extra: true}
+	f.Ignore = map[string]IgnoreFacts{"skills": {Text: IgnoreText("skills", []string{"skills/deep/x.md"})}}
+	got := Plan(w, f)
+	if len(got) != 2 || got[0].Kind != RemoveLink || !got[0].Extra || got[0].Under != "skills" || got[1].Kind != WriteIgnore || got[1].Text != "" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestLeavingTheProfileRemovesTheIgnoreFileAfterTheLinks(t *testing.T) {
+	w, f := replacing()
+	w.ReplaceDirs, w.Swaps = nil, nil
+	w.Sparse = ""
+	f.SparseOn = true
+	f.Paths["skills/new.md"] = PathFacts{FS: Link, LinkTarget: "x"}
+	f.Recorded["skills/new.md"] = Record{Target: "x", Extra: true}
+	f.Ignore = map[string]IgnoreFacts{"skills": {Text: IgnoreText("skills", []string{"skills/new.md"})}}
+	got := Plan(w, f)
+	var order []string
+	for _, a := range got {
+		order = append(order, string(a.Kind))
+	}
+	li, ii := indexOf(order, string(RemoveLink)), indexOf(order, string(WriteIgnore))
+	if li < 0 || ii < 0 || li > ii {
+		t.Fatalf("links go before the ignore file: %v", order)
+	}
+}
+
+func TestABlockedIgnoreFileIsLeftAlone(t *testing.T) {
+	w, f := extraIn("skills/new.md", PathFacts{FS: Missing})
+	f.Ignore["skills"] = IgnoreFacts{Blocked: "the team tracks skills/.gitignore"}
+	pf := f.Paths["skills/new.md"]
+	pf.Extra, pf.ExtraWhy = false, "the team tracks skills/.gitignore"
+	f.Paths["skills/new.md"] = pf
+	if got := Plan(w, f); hasKind(got, WriteIgnore) || hasKind(got, LinkPath) {
+		t.Fatalf("%v", kinds(got))
+	}
+}
+
+func TestIgnoreTextIsAPureFunctionOfItsInputs(t *testing.T) {
+	a := IgnoreText("skills", []string{"skills/b.md", "skills/a b.md", "skills/#x", "skills/deep/x.md", "skills/b.md"})
+	b := IgnoreText("skills", []string{"skills/#x", "skills/deep/x.md", "skills/a b.md", "skills/b.md"})
+	if a != b || !OurIgnore(a) {
+		t.Fatalf("%q != %q", a, b)
+	}
+	for _, want := range []string{"/.gitignore\n", "/a b.md\n", "/\\#x\n", "/deep/x.md\n", "/b.md\n"} {
+		if !strings.Contains(a, want) {
+			t.Errorf("missing %q in %q", want, a)
+		}
+	}
+	if IgnoreText("skills", nil) != "" || OurIgnore("# mine\n/.gitignore\n") {
+		t.Error("no files is no file, and only outfit's marker line makes it outfit's")
+	}
+}
+
+func indexOf(s []string, x string) int {
+	for i, v := range s {
+		if v == x {
+			return i
+		}
+	}
+	return -1
+}
