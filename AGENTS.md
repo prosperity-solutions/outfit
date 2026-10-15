@@ -99,6 +99,8 @@ user-visible behaviour updates **all** of:
 - [ ] `README.md`
 - [ ] the command's `--help` text
 - [ ] the relevant file in `docs/`
+- [ ] the matching topic in `skills/topics/` (what agents read through `outfit skills`; a
+      test fails when it names a command or flag that does not exist)
 - [ ] the header of `install.sh` (when an `OUTFIT_*` variable changes)
 - [ ] `docs/git-behavior.md` (when you learned something about how git behaves)
 

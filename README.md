@@ -79,6 +79,8 @@ outfit init --agents             # a Claude Code SessionStart entry that runs ou
 outfit sync                      # put the files right again (hooks run it after checkout and merge)
 outfit author on                 # all profiles on disk, to edit side by side (author off hides them)
 outfit uninstall                 # put the repository back as it was (--purge also deletes your own profiles)
+outfit skills                    # how outfit works, written for coding agents (the binary carries it)
+outfit skills install            # a pointer skill where Claude Code and other agents read skills
 outfit update                    # install the latest release (--check only looks)
 ```
 
@@ -96,6 +98,16 @@ v=$(outfit get biome 2>/dev/null || git config -f .outfit/config --get outfit.bi
 
 It works with outfit installed and without it.
 
+## Agent skills
+
+Coding agents learn outfit from the binary itself: `outfit skills` lists eight short topics
+and `outfit skills basics` prints the one to read first. `outfit skills install` puts a
+small pointer skill in `~/.claude/skills/outfit/` and `~/.agents/skills/outfit/` (or, with
+`--project`, in this worktree, kept out of commits), and `outfit skills remove` takes it
+away. The pointer holds no documentation, so it never goes stale: what it points at is
+the text of the outfit you have installed. Without outfit installed, `npx skills add
+prosperity-solutions/outfit` adds the same pointer. Details: [docs/skills.md](docs/skills.md).
+
 ## How it decides
 
 A value comes from the first of: your worktree, your clone, your machine, the active
@@ -107,8 +119,8 @@ profile, then the team's committed defaults in `.outfit/config`. Keys the team
 
 Under construction, one pull request at a time: toggles, the hook dispatcher and
 the release pipeline, `outfit update` and profile file swaps (`use`, `sync`, `show`,
-`author`), conflict and stale-base detection (`diff`, `ack`), `init --agents` and personal
-profiles (`new`, `promote`) are in; the property tests and the final polish are next. Swaps: [docs/profiles.md](docs/profiles.md). How a
+`author`), conflict and stale-base detection (`diff`, `ack`), `init --agents`, personal
+profiles (`new`, `promote`) and the agent skills (`skills`) are in; the property tests and the final polish are next. Swaps: [docs/profiles.md](docs/profiles.md). How a
 release is built and checked: [docs/release.md](docs/release.md). The plan is
 [docs/HANDOVER.md](docs/HANDOVER.md); how git actually behaves, pinned by tests, is
 [docs/git-behavior.md](docs/git-behavior.md).

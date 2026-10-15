@@ -1,0 +1,117 @@
+# `outfit skills`: the documentation the binary carries (works anywhere: no init, no
+# repository), and `skills install|remove`, which put a pointer skill where agents
+# read skills, never over a file outfit did not write.
+fixture repo team
+cd repo
+
+# The index and a topic work without `outfit init`, with --json too.
+outfit skills
+stdout 'outfit agent documentation'
+stdout 'basics +[0-9]+K'
+stdout 'outfit skills install'
+outfit skills basics
+stdout '^# outfit: the basics'
+outfit skills authoring
+stdout 'outfit author on'
+outfit skills --json
+stdout '"name": "basics"'
+outfit skills basics --json
+stdout '"body": "# outfit: the basics'
+# A wrong name lists the topics and names the fix; a near miss is suggested.
+! outfit skills nope
+stderr 'unknown skill topic "nope"'
+stderr 'fix: outfit skills'
+! outfit skills prof
+stderr 'did you mean profiles'
+! outfit skills --project
+stderr 'belong to'
+! outfit skills basics profiles
+stderr 'usage: outfit skills'
+
+# Nothing above touched the repository or the home directory.
+exec git status --short
+! stdout .
+! exists $HOME/.claude
+
+# Global install: both agent directories, once; a second run changes nothing.
+outfit skills install --dry-run
+stdout 'created ~/.claude/skills/outfit/SKILL.md'
+stdout 'dry run'
+! exists $HOME/.claude
+outfit skills install
+stdout 'created ~/.claude/skills/outfit/SKILL.md'
+stdout 'created ~/.agents/skills/outfit/SKILL.md'
+grep 'managed-by: outfit' $HOME/.claude/skills/outfit/SKILL.md
+grep 'outfit skills' $HOME/.agents/skills/outfit/SKILL.md
+cmp $HOME/.claude/skills/outfit/SKILL.md $HOME/.agents/skills/outfit/SKILL.md
+outfit skills install --json
+stdout '"action":"unchanged"'
+! stdout '"action":"created"'
+# An older pointer of ours is updated in place.
+exec sh -c 'printf -- "---\nname: outfit\nmetadata:\n  managed-by: outfit\n---\nold\n" > "$HOME/.claude/skills/outfit/SKILL.md"'
+outfit skills install
+stdout 'updated ~/.claude/skills/outfit/SKILL.md'
+stdout 'unchanged ~/.agents/skills/outfit/SKILL.md'
+# Remove takes both away, and the directories it made, but not .claude itself.
+outfit skills remove
+stdout 'removed ~/.claude/skills/outfit/SKILL.md'
+! exists $HOME/.claude/skills
+exists $HOME/.claude
+outfit skills remove
+stdout 'absent'
+
+# A SKILL.md outfit did not write is never replaced or removed, and nothing is written
+# anywhere before every target has been checked.
+exec mkdir -p $HOME/.agents/skills/outfit
+exec sh -c 'echo "mine" > "$HOME/.agents/skills/outfit/SKILL.md"'
+! outfit skills install
+stderr 'not written by outfit'
+stderr 'fix: move or delete that file'
+! exists $HOME/.claude/skills
+grep '^mine$' $HOME/.agents/skills/outfit/SKILL.md
+! outfit skills remove
+grep '^mine$' $HOME/.agents/skills/outfit/SKILL.md
+exec rm $HOME/.agents/skills/outfit/SKILL.md
+
+# A link at the target is never written through.
+exec mkdir -p $HOME/.claude/skills/outfit $WORK/elsewhere
+exec ln -s $WORK/elsewhere/target.md $HOME/.claude/skills/outfit/SKILL.md
+! outfit skills install
+! exists $WORK/elsewhere/target.md
+exec rm $HOME/.claude/skills/outfit/SKILL.md
+
+# Project scope: this worktree's .claude/skills and .agents/skills, kept out of commits.
+outfit skills install --project
+stdout 'created ./.claude/skills/outfit/SKILL.md'
+exists .claude/skills/outfit/SKILL.md
+exists .agents/skills/outfit/SKILL.md
+exec git status --short
+! stdout .
+exec git add -A
+exec git status --short
+! stdout 'skills'
+exec git reset -q
+grep 'outfit skills install --project' .git/info/exclude
+outfit skills install --project
+! stdout 'created'
+exec sh -c 'grep -c "outfit skills install --project" .git/info/exclude'
+stdout '^2$'
+outfit skills remove --project
+! exists .claude/skills
+! exists .agents/skills
+! grep 'outfit skills install --project' .git/info/exclude
+
+# A skill directory the team tracks is not ours to write into.
+exec mkdir -p .claude/skills/outfit
+exec sh -c 'echo team > .claude/skills/outfit/SKILL.md'
+exec git add -f .claude/skills/outfit/SKILL.md
+exec git commit -qm 'docs: the team skill'
+! outfit skills install --project
+stderr 'tracked by git'
+exec git status --short
+! stdout .
+
+# Project scope needs a repository.
+cd $WORK
+! outfit skills install --project
+stderr 'not inside a git repository'
