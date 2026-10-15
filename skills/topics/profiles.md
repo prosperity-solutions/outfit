@@ -42,7 +42,7 @@ the git dir for a local or worktree one. So `git status` stays clean and `git ad
   see it, `git diff .outfit` does. For a local or worktree profile git sees nothing:
   `outfit status` lists each file with when it changed, and there is no undo.
 - Only the **active committed** profile is on disk. The other committed ones are in git:
-  `outfit show <profile>` reads them, `outfit author on` puts them all on disk.
+  `outfit show <profile>` reads them, `outfit author on [profile]` puts them (or one) on disk.
 - `.outfit/` is in `.git/info/exclude`. A consequence: `git add .outfit/…` by path refuses;
   use `git add -u .outfit`, `git add -f` (new file) or `git commit -a`. A **new profile
   directory** needs `git add --sparse -f .outfit/profiles/<name>`.

@@ -69,6 +69,7 @@ func Run(ctx context.Context, in Input) (*Result, error) {
 	// Author mode is a setting `outfit author` writes to state.json; one written while
 	// this sync waited for the lock must win over the value it was started with.
 	in.Author = st.Author
+	in.AuthorProfiles = st.AuthorProfiles
 	res, acts, err = in.planOnce(ctx, st)
 	if err != nil || len(res.Refused) > 0 || !actionable(acts) {
 		return res, err
@@ -302,6 +303,7 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 		next.Profile = in.Profile.Name
 	}
 	next.Author = in.Author
+	next.AuthorProfiles = in.AuthorProfiles
 	next.CommittedProfiles = in.CommittedProfiles
 	fault.Point("before the state is written")
 	changed, werr := state.Write(in.W.GitDir, &next)

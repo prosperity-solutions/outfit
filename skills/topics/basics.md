@@ -37,7 +37,7 @@ the team. `git status` stays truthful.
 | `outfit set <key>=<val>… [--here\|--global]` | personal toggle override; `key=` unsets |
 | `outfit new <name> [--from <profile>] [--here]` | make a personal profile |
 | `outfit promote <name>` | move a local profile into `.outfit/profiles/` so git can version it |
-| `outfit author on\|off` | put every committed profile on disk to edit side by side, or hide them again |
+| `outfit author [on\|off] [profile…]` | show or hide inactive committed profiles' files in the working tree (all or the named ones); bare: what is on disk. Hidden by default |
 | `outfit diff <path>` / `outfit ack <path>` | the base of a swapped file changed under the swap: see it, accept it |
 | `outfit init [--agents] [--team]` / `outfit uninstall [--purge]` | install or remove the hook dispatcher (and the Claude Code SessionStart entry); `--team` writes a line in AGENTS.md and docs/outfit.md for teammates without outfit |
 | `outfit update [--check]` | install the newest release |

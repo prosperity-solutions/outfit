@@ -158,7 +158,6 @@ git add --sparse -f .outfit/profiles/mine
 run git commit -m "share the mine profile"
 
 step "Inactive profiles are hidden from the working tree (agents would find them in every search); show one when you need to edit it"
-[ ! -e .outfit/profiles/mine ] || echo "(mine is on disk because it was just promoted)"
 run outfit author on mine
 run outfit author
 run outfit author off mine

@@ -51,6 +51,8 @@ type Input struct {
 	CommittedProfiles bool
 	// Author is author mode: every committed profile stays on disk.
 	Author bool
+	// AuthorProfiles are committed profiles kept on disk one by one (ignored while Author is on).
+	AuthorProfiles []string
 	// OperationDone says the git operation that makes the worktree look busy has just
 	// finished: the post-rewrite hook of a rebase runs while git's rebase directory is
 	// still there, but nothing can abort it any more.
@@ -303,11 +305,12 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	}
 	hide := in.CommittedProfiles && !in.Author
 	if len(hidden) > 0 || hide {
-		active := ""
+		var show []string
 		if in.Profile != nil && in.Profile.Tier == profiles.Committed {
-			active = in.Profile.Name
+			show = append(show, in.Profile.Name)
 		}
-		want.Sparse = plan.SparseText(plan.SparseOptions{Hidden: hidden, HideProfiles: hide, Active: active})
+		show = append(show, in.AuthorProfiles...)
+		want.Sparse = plan.SparseText(plan.SparseOptions{Hidden: hidden, HideProfiles: hide, Show: show})
 		want.HidesProfiles = hide
 		if hide && want.Sparse != sparseNow(in.W.GitDir) {
 			// Only when the patterns are about to change: a profile file that is staged but
@@ -318,7 +321,10 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 				return want, facts, g, fmt.Errorf("cannot list staged profile files: %w", err)
 			}
 			for _, p := range strings.Split(string(res.Stdout), "\x00") {
-				if p != "" {
+				// A shown profile (the active one, or kept by `outfit author on`) stays on disk:
+				// only a staged file under a profile that is about to go is at risk.
+				rest, _ := strings.CutPrefix(p, profiles.CommittedRoot+"/")
+				if name, _, _ := strings.Cut(rest, "/"); p != "" && !contains(show, name) {
 					facts.StagedProfiles = append(facts.StagedProfiles, p)
 				}
 			}

@@ -11,6 +11,7 @@ only the repository owner can switch on.
 | `permissions: contents: read` at the top, wider only in the job that needs it, each with a comment | a compromised step gets the least it can use | `zizmor` (excessive-permissions, undocumented-permissions) |
 | `persist-credentials: false` on every checkout | the token is not left in `.git/config` for a later step (or an uploaded artifact) to find | `zizmor` (artipacked) |
 | Secrets are referenced only by the `build` job, which runs in the `release` environment on a push to `main` | the later jobs learn "is macOS signed" from build's outputs, not from the secrets. **This does not keep a pull request away from them yet:** see "What only the owner can switch on" | `zizmor` (secrets-outside-env) |
+| Every release archive carries a signed build provenance (`actions/attest-build-provenance`, made by a separate `attest` job that alone holds `id-token: write`). `publish` verifies it before anything is public, and all four `verify` legs verify their platform's archive again, each time with an exact certificate identity (`release.yml@refs/heads/main`) and the commit | the file was built by `release.yml` on `main` for this commit; a copy of the workflow on another branch cannot produce one that passes. (Releases before the provenance was added, up to v0.7.0, have none.) | `publish` and `verify` jobs |
 | The tag is created through the API with the job's token, not `git push` | no git credential is stored in the checkout | review |
 | `timeout-minutes` on every job | a hung job does not hold a runner (or a secret) for six hours | review |
 | No `pull_request_target`, no untrusted text in a `run:` line (values go through `env:`) | template injection | `zizmor` (dangerous-triggers, template-injection) |
@@ -31,6 +32,26 @@ at least **seven days old**. An exception is a fix for a known vulnerability (a 
 Examples: `zizmor` 1.31.0 shipped the day 1.30.1 was pinned, so CI uses 1.30.1; GoReleaser 2.18.3
 (six days old) and `govulncheck` 1.9.0 (four) were not taken, 2.18.2 and 1.8.0 are.
 
+`scripts/ci/dep-age.py` (the `Dependency age` CI job) enforces it for everything pinned: `go.mod`
+(requires, `replace` targets, the `toolchain` line), action SHAs, `go run tool@v`, the pip
+requirements, golangci-lint and the minisign downloads in `install.sh`. A version younger than
+seven days fails unless `.github/fresh-deps.txt` names it with the reason. It also fails on a
+registry that answers "no such version" or "not allowed", and on any line that looks like a pin
+but that it cannot read (`@latest`, a branch ref, `docker://`), so a pin written in an unusual way
+cannot slip past; an unreachable registry (a timeout) fails on a pull request and only warns on a
+push to `main`, because that job gates the release.
+
+What "published" means: for Go modules it is the proxy's time, which is the tag commit's
+committer date, so a maintainer *could* back-date a release; the rule stops "adopt it today", not
+that. For an action it is the GitHub release's publish date (the registry's own clock), and only
+for an action with no release the commit date. zizmor's online `ref-version-mismatch` audit is what
+checks that a pinned SHA is the commit of the version in its comment.
+`.github/dependabot.yml` sets `cooldown: default-days: 7` so Dependabot waits too (security
+updates are not delayed). The pip pins and `go run tool@v` lines are updated by hand, following the
+same rule; the job will say when one is too new. Example found while adding it: `golang.org/x/crypto`
+0.58.0 and `x/tools` 0.52.0 were five and six days old, so go.mod went back to 0.57.0 and 0.51.0
+(0.57.0 is above the 0.56.0 floor Wiz asked for).
+
 ## `workflows` job
 
 `zizmor` (pinned by hash) audits `.github/workflows/` on every pull request, with the job's
@@ -49,4 +70,4 @@ Settings of `prosperity-solutions/outfit` (all were **disabled** when checked):
 | Secret scanning and push protection | Code security | a committed key is blocked at push |
 | Dependabot security updates | Code security | pull requests for vulnerable dependencies |
 | **First:** the `release` environment (it exists after the first release run): deployment branches = `main`, then move the seven signing secrets from the repository into it | Environments | until then they are repository secrets, which a pull request from a branch of this repository can read by editing a workflow (a fork's pull request cannot). After, only a run on `main` can |
-| Branch ruleset on `main` (pull request, `ship`, `commits`, `all-green`) | Rules | nothing lands unreviewed by CI; set up at the end of the build |
+| Branch ruleset on `main` (pull request, `ship`, `commits`, `all-green`), optionally "require review from code owners" | Rules | nothing lands unreviewed by CI; `.github/CODEOWNERS` names who must look at workflows, `install.sh`, the update keys and the release scripts. Set up at the end of the build |

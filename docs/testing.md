@@ -89,8 +89,8 @@ patterns are written, before the state is written, in the teardown), in every at
 write (`state.WriteFileAtomic`, between the temporary file and its rename), in a profile copy
 and in `promote` (before the rename, before the local copy is removed), and in `init` and
 `uninstall` (between their phases). With `OUTFIT_FAULT_AT=N` the process dies by SIGKILL at
-the Nth point; `OUTFIT_FAULT_LOG=<file>` lists them. `TestFaultInjection` kills fourteen
-operations (use, switch, back to base, absorb, quarantine, `author on/off`, use of a local
+the Nth point; `OUTFIT_FAULT_LOG=<file>` lists them. `TestFaultInjection` kills fifteen
+operations (use, switch, back to base, absorb, quarantine, `author on/off` and `author on <profile>`, use of a local
 profile, the same from a symlinked spelling of the path, `promote`, `init`, `uninstall`,
 uninstall in a worktree farm, a killed `use` followed by `uninstall`) at **every** point each has, in parallel, then reruns `sync` (or
 `uninstall`) twice and checks that both runs simply worked (exit 0, except the one scenario

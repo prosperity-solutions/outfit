@@ -127,12 +127,15 @@ commands:
   sync                   make the files match the active profile (hooks and agents run it)
   ls                     list profiles across the three tiers
   show <profile> [path]  a profile's toggles and files, without switching to it
-  author on|off          put every committed profile on disk to edit side by side
+  author [on|off] [profile…]
+                         show (on) or hide (off) inactive committed profiles' files in the working tree,
+                         all or the named ones; bare, say what is on disk (default: hidden)
   status                 the active profile and where every value comes from, in sync or not
   diff <path>            what changed in a swapped file's base since it was swapped
   ack <path>             accept the new base: the profile's copy stays, the note goes away
-  skills [topic]         how outfit works, for agents (the docs the binary carries); skills install|remove
-                         puts a pointer skill where Claude Code and other agents read skills
+  skills [topic | install | remove]
+                         how outfit works, for agents (the docs the binary carries); install|remove put a
+                         pointer skill where Claude Code and other agents read skills
   update                 install the latest release (or --version vX.Y.Z); --check only looks
   version                version, commit, build date, git version found
 

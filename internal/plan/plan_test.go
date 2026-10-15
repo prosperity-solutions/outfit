@@ -26,7 +26,7 @@ const tgt = "../../.outfit/profiles/yolo/AGENTS.md"
 
 // inSync builds Facts for one swapped path AGENTS.md that is correctly linked.
 func inSync() (Want, Facts) {
-	w := Want{Swaps: []Swap{{Path: "AGENTS.md", Target: tgt}}, Sparse: SparseText(SparseOptions{Hidden: []string{"AGENTS.md"}, HideProfiles: true, Active: "yolo"}), Exclude: true}
+	w := Want{Swaps: []Swap{{Path: "AGENTS.md", Target: tgt}}, Sparse: SparseText(SparseOptions{Hidden: []string{"AGENTS.md"}, HideProfiles: true, Show: []string{"yolo"}}), Exclude: true}
 	f := Facts{
 		SparseOn: true, SparseText: w.Sparse, ExpectFiles: true, ExcludeHas: true,
 		Paths:    map[string]PathFacts{"AGENTS.md": {FS: Link, LinkTarget: tgt, Tracked: true, SkipWorktree: true, Mode: "100644", VariantHash: "h1"}},
@@ -211,10 +211,10 @@ func TestPlanRecordsAVariantEditedThroughTheLink(t *testing.T) {
 func TestPlanSwitchRemovesObsoleteLinksBeforeTheSparseChange(t *testing.T) {
 	// yolo swapped AGENTS.md and CLAUDE.md; lean swaps only apps/web/AGENTS.md.
 	w := Want{Swaps: []Swap{{Path: "apps/web/AGENTS.md", Target: "../../.outfit/profiles/lean/apps/web/AGENTS.md"}},
-		Sparse: SparseText(SparseOptions{Hidden: []string{"apps/web/AGENTS.md"}, HideProfiles: true, Active: "lean"}), Exclude: true}
+		Sparse: SparseText(SparseOptions{Hidden: []string{"apps/web/AGENTS.md"}, HideProfiles: true, Show: []string{"lean"}}), Exclude: true}
 	f := Facts{
 		SparseOn: true, ExpectFiles: true, ExcludeHas: true,
-		SparseText: SparseText(SparseOptions{Hidden: []string{"AGENTS.md", "CLAUDE.md"}, HideProfiles: true, Active: "yolo"}),
+		SparseText: SparseText(SparseOptions{Hidden: []string{"AGENTS.md", "CLAUDE.md"}, HideProfiles: true, Show: []string{"yolo"}}),
 		Paths: map[string]PathFacts{
 			"AGENTS.md":          {FS: Link, LinkTarget: "x", Tracked: true, SkipWorktree: true, Mode: "100644"},
 			"CLAUDE.md":          {FS: Link, LinkTarget: "y", Tracked: true, SkipWorktree: true, Mode: "100644"},
@@ -329,7 +329,7 @@ func TestPlanStaleBaseKeepsTheSwapAndSaysSo(t *testing.T) {
 func TestPlanVariantRemovedFromTheActiveProfileIsUnswappedWithAReason(t *testing.T) {
 	w, f := inSync()
 	w.Swaps = nil
-	w.Sparse = SparseText(SparseOptions{HideProfiles: true, Active: "yolo"})
+	w.Sparse = SparseText(SparseOptions{HideProfiles: true, Show: []string{"yolo"}})
 	f.SameProfile = true
 	got := Plan(w, f)
 	var found bool

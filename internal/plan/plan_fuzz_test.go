@@ -31,7 +31,7 @@ func FuzzPlan(f *testing.F) {
 			GitBusy: []string{"", "rebase", "merge"}[int(next())%3],
 		}
 		if flag() {
-			f.SparseText = SparseText(SparseOptions{Hidden: []string{"AGENTS.md"}, HideProfiles: true, Active: "p"})
+			f.SparseText = SparseText(SparseOptions{Hidden: []string{"AGENTS.md"}, HideProfiles: true, Show: []string{"p"}})
 		}
 		if flag() {
 			f.StagedProfiles = []string{".outfit/profiles/x/AGENTS.md"}
@@ -68,7 +68,7 @@ func FuzzPlan(f *testing.F) {
 			}
 		}
 		if len(w.Swaps) > 0 || flag() {
-			w.Sparse = SparseText(SparseOptions{Hidden: hidden, HideProfiles: w.HidesProfiles, Active: "p"})
+			w.Sparse = SparseText(SparseOptions{Hidden: hidden, HideProfiles: w.HidesProfiles, Show: []string{"p"}})
 		}
 
 		a := Plan(w, f)

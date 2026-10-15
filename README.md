@@ -103,7 +103,8 @@ outfit ack AGENTS.md             # ...and that is fine: the profile's copy stays
 outfit init --agents             # a Claude Code SessionStart entry that runs outfit sync
 outfit init --team               # once, for the repository: a line in AGENTS.md and docs/outfit.md for teammates without outfit (commits nothing)
 outfit sync                      # put the files right again (hooks run it after checkout and merge)
-outfit author on                 # all profiles on disk, to edit side by side (author off hides them)
+outfit author on                 # all committed profiles on disk, to read and edit side by side (default: hidden)
+outfit author on lean            # ...or just one; `author off [lean]` hides again; bare `author` says what is on disk
 outfit uninstall                 # put the repository back as it was (--purge also deletes your own profiles)
 outfit skills                    # how outfit works, written for coding agents (the binary carries it)
 outfit skills install            # a pointer skill where Claude Code and other agents read skills

@@ -39,7 +39,10 @@ version → build → smoke (4 runners) ┐
 4. **publish.** Needs smoke and CI. Re-checks the files (`sha256sum -c`, and the
    signature against `keys.txt`) since they sat in artifact storage while four
    runners ran third-party packages in the same run (any job of a run can replace its
-   artifacts), then pushes the tag and runs [`scripts/release/publish.sh`](../scripts/release/publish.sh):
+   artifacts) and the release text against the hash the build job wrote, checks that the
+   **build provenance** the separate `attest` job made (signed with the run's OIDC identity; that job
+   alone holds `id-token: write`) is there for these archives, this commit and `release.yml` on
+   `main`, then pushes the tag and runs [`scripts/release/publish.sh`](../scripts/release/publish.sh):
    a *draft* release, upload with retries, check every asset by name, size and
    state, flip to published, read it back. Any failure leaves a draft, which users
    cannot see; re-running the job tops it up.
@@ -47,7 +50,9 @@ version → build → smoke (4 runners) ┐
    it (the script downloaded from raw.githubusercontent.com with the workflow token, its
    SHA-256 logged, then run; the `curl | sh` pipe form is covered by `tests/install-test.sh`),
    retried every minute for up to ten minutes because raw.githubusercontent.com caches
-   for about five. It asserts `outfit version` equals the tag.
+   for about five. It asserts `outfit version` equals the tag, then downloads this runner's
+   archive from the release and runs `gh attestation verify` against this repository's release
+   workflow.
 
 Two quick merges cannot collide: the workflow runs under
 `concurrency: {group: release, cancel-in-progress: false}` with a full checkout.

@@ -180,6 +180,29 @@ jobs:
           [ "$EVENT" = pull_request ] || offline="--offline"
           zizmor $offline --persona auditor --min-severity low --format plain .github/workflows
 
+  # A new version waits seven days (docs/security.md): every pinned version (go.mod, action SHAs,
+  # tools run with `go run x@v`, pip pins, the minisign downloads) must be at least seven days
+  # old, or named in .github/fresh-deps.txt with the reason. A registry that cannot be reached
+  # is a warning, never a failure, so this cannot block a release on a network hiccup.
+  dependency-age:
+    name: Dependency age
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Selftest
+        run: python3 scripts/ci/dep-age.py --selftest
+      # On a pull request a registry that cannot be reached fails the job (strict); on a push to
+      # main, which gates the release, it only warns.
+      - name: Every pinned version is old enough
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTFIT_DEP_AGE_STRICT: ${{ github.event_name == 'pull_request' && '1' || '0' }}
+        run: python3 scripts/ci/dep-age.py
+
   unit:
     name: Unit (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -391,7 +414,7 @@ jobs:
     name: all-green
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs: [commits, ship, lint, workflows, unit, plan, integration, install, demo, signing]
+    needs: [commits, ship, lint, workflows, dependency-age, unit, plan, integration, install, demo, signing]
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always()
     steps:
       - name: Every needed job must have succeeded
