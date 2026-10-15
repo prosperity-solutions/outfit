@@ -56,6 +56,9 @@ type Input struct {
 	// ReplaceDirs are the directories the active profile replaces as a whole
 	// (its config's `[outfit "profile"] replace` lines); gather cleans and checks them.
 	ReplaceDirs []string
+	// HookDirs are directories (relative to the worktree) that hold the team's git hooks: a
+	// profile may not replace one, or a hook the team locked on would silently stop running.
+	HookDirs []string
 	// OperationDone says the git operation that makes the worktree look busy has just
 	// finished: the post-rewrite hook of a rebase runs while git's rebase directory is
 	// still there, but nothing can abort it any more.
@@ -181,7 +184,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	}
 	// The directories the profile replaces: asked about in the same ls-files call (a literal
 	// directory pathspec matches everything below it), so the no-op sync stays at its git budget.
-	dirs, dirIssues := cleanReplaceDirs(in.ReplaceDirs)
+	dirs, dirIssues := cleanReplaceDirs(in.ReplaceDirs, in.HookDirs)
 	facts.DirIssues = append(facts.DirIssues, dirIssues...)
 	ask = append(ask, dirs...)
 	// A `<path>~cruft` symlink (older git, mid-merge) or a temporary link beside the path (the
@@ -216,10 +219,20 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	// The patterns in force: what is hidden now decides what a change would take off disk.
 	curSparse, _ := plan.ParseSparse(sparseNow(in.W.GitDir))
 	facts.Dirs = map[string]plan.DirFacts{}
+	var kept []string
 	for _, d := range dirs {
-		df := in.dirFacts(ctx, d, idx, st.ReplaceSeen[d], contains(curSparse.HideDirs, d), &facts, g)
+		df := in.dirFacts(ctx, d, idx, st.ReplaceSeen[d], contains(curSparse.HideDirs, d), all, &facts, g)
+		if df.Tracked == 0 && !df.Unmerged {
+			// Nothing to replace: a typo (the case must match exactly: git matches patterns
+			// case-insensitively on some systems and would hide a different directory) or a
+			// directory only the profile has. No pattern is written for it.
+			g.messages = append(g.messages, "replace = "+d+": the repository tracks no file there, so there is nothing to replace (the spelling, case included, must match the repository's)")
+			continue
+		}
 		facts.Dirs[d] = df
+		kept = append(kept, d)
 	}
+	dirs = kept
 	// A directory the patterns hide and the profile no longer replaces: files that are not
 	// outfit's links on disk below it would be left half-present when git brings the team's back.
 	for _, d := range curSparse.HideDirs {
@@ -227,7 +240,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			if facts.UnhideStrays == nil {
 				facts.UnhideStrays = map[string][]string{}
 			}
-			facts.UnhideStrays[d] = in.strayFiles(d)
+			facts.UnhideStrays[d] = onlyTracked(ctx, in.Git, d, in.strayFiles(d))
 		}
 	}
 
@@ -263,8 +276,19 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			pf.FS = plan.Other
 		}
 		for stray, t := range strays[p] {
-			if !idx[stray].tracked && !idx[stray].unmerged && (t == facts.Recorded[p].Target || (in.Profile != nil && t == in.Target(p))) {
+			ie := idx[stray]
+			ours := t == facts.Recorded[p].Target || (in.Profile != nil && t == in.Target(p))
+			if ie.unmerged || !ours {
+				continue
+			}
+			switch {
+			case !ie.tracked:
 				pf.StrayLinks = append(pf.StrayLinks, stray)
+			case stagedOnlyLink(ctx, in.Git, stray, ie):
+				// `git add -A` after the merge staged it: a commit would put the link into history,
+				// and once nothing is swapped the guard no longer looks. Take it off the index too.
+				pf.StrayLinks = append(pf.StrayLinks, stray)
+				pf.StagedStrays = append(pf.StagedStrays, stray)
 			}
 		}
 		sort.Strings(pf.StrayLinks)
@@ -512,12 +536,16 @@ func excludeHas(path string) bool {
 
 // cleanReplaceDirs sorts and validates the declared directories: each a clean relative path outside
 // .git and .outfit, none inside another. What cannot be honoured comes back as an issue.
-func cleanReplaceDirs(declared []string) (dirs, issues []string) {
+func cleanReplaceDirs(declared, hookDirs []string) (dirs, issues []string) {
 	seen := map[string]bool{}
 	for _, d := range declared {
 		d = strings.TrimSuffix(strings.TrimSpace(d), "/")
 		if err := plan.ValidSwapPath(d); err != nil {
 			issues = append(issues, "replace = "+d+": "+err.Error())
+			continue
+		}
+		if hd := hooksIn(d, hookDirs); hd != "" {
+			issues = append(issues, fmt.Sprintf("replace = %s would hide %s, where the team's git hooks live: a hook the team locked on could stop running unseen", d, hd))
 			continue
 		}
 		if !seen[d] {
@@ -552,7 +580,7 @@ func keepHidden(dirs []string, facts map[string]plan.DirFacts) []string {
 
 // dirFacts reads what the index says about one replaced directory (from the ls-files answer in idx)
 // and, when the directory is about to be hidden, what hiding it would take off disk.
-func (in Input) dirFacts(ctx context.Context, d string, idx map[string]indexEntry, seen string, hiddenNow bool, facts *plan.Facts, g *gathered) plan.DirFacts {
+func (in Input) dirFacts(ctx context.Context, d string, idx map[string]indexEntry, seen string, hiddenNow bool, swapped []string, facts *plan.Facts, g *gathered) plan.DirFacts {
 	df := plan.DirFacts{Seen: seen, Hidden: hiddenNow}
 	if e, ok := idx[d]; ok && e.tracked {
 		facts.DirIssues = append(facts.DirIssues, "replace = "+d+": the repository tracks "+d+" as a file or link, not a directory")
@@ -579,6 +607,26 @@ func (in Input) dirFacts(ctx context.Context, d string, idx map[string]indexEntr
 		}
 	}
 	df.Tracked, df.Digest = dirDigest(d, idx)
+	if hiddenNow {
+		// A regular file at a tracked, hidden path is the person's, and git may delete it unasked.
+		var strays []string
+		isSwap := map[string]bool{}
+		for _, p := range swapped {
+			isSwap[p] = true
+		}
+		for p, e := range idx {
+			if len(strays) >= 50 {
+				break
+			}
+			if e.tracked && e.skip && e.mode != "160000" && strings.HasPrefix(p, d+"/") && !isSwap[p] {
+				if fi, err := os.Lstat(in.abs(p)); err == nil && fi.Mode().IsRegular() {
+					strays = append(strays, p)
+				}
+			}
+		}
+		sort.Strings(strays)
+		df.Strays = strays
+	}
 	if df.Tracked > maxSwaps {
 		facts.DirIssues = append(facts.DirIssues, fmt.Sprintf("replace = %s: %d tracked files below it (outfit replaces at most %d)", d, df.Tracked, maxSwaps))
 	}
@@ -650,4 +698,49 @@ func dirDigest(d string, idx map[string]indexEntry) (tracked int, digest string)
 	sort.Strings(lines)
 	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
 	return len(lines), hex.EncodeToString(sum[:])
+}
+
+// hooksIn returns the hook directory that d is, or contains, "" when none.
+func hooksIn(d string, hookDirs []string) string {
+	for _, h := range hookDirs {
+		if h == d || strings.HasPrefix(h, d+"/") {
+			return h
+		}
+	}
+	return ""
+}
+
+// onlyTracked keeps the files git tracks below d: only those it will not restore ("already present, not
+// updated") when the directory stops being hidden. A file it does not track is just an untracked file.
+func onlyTracked(ctx context.Context, g gitx.Client, d string, files []string) []string {
+	if len(files) == 0 {
+		return nil
+	}
+	res, err := g.Read(ctx, "--literal-pathspecs", "ls-files", "-z", "--", d)
+	if err != nil {
+		return files // cannot tell: be careful, treat every one as in the way
+	}
+	tracked := map[string]bool{}
+	for _, p := range strings.Split(string(res.Stdout), "\x00") {
+		if p != "" {
+			tracked[p] = true
+		}
+	}
+	var out []string
+	for _, f := range files {
+		if tracked[f] {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// stagedOnlyLink reports that the index holds a symlink at rel that HEAD does not: staged, never
+// committed. A link HEAD has is the repository's own file, and never ours to remove.
+func stagedOnlyLink(ctx context.Context, g gitx.Client, rel string, ie indexEntry) bool {
+	if !ie.tracked || ie.unmerged || ie.mode != "120000" {
+		return false
+	}
+	_, err := g.Read(ctx, "--literal-pathspecs", "cat-file", "-e", "HEAD:"+rel)
+	return err != nil
 }

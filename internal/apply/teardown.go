@@ -54,6 +54,37 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 		return nil, nil
 	}
 
+	// A directory the profile replaced holds the team's files only in git; a regular file the person
+	// (or an agent) wrote below it while it was hidden is theirs, and sparse checkout coming off would
+	// leave it half-present ("already present, not updated"). Stop and say where.
+	replSparse, _ := readInside(w.GitDir, "info/sparse-checkout")
+	replaced := append([]string(nil), st.ReplaceDirs...)
+	if parsed, ok := plan.ParseSparse(string(replSparse)); ok {
+		for _, d := range parsed.HideDirs {
+			if !containsStr(replaced, d) {
+				replaced = append(replaced, d)
+			}
+		}
+	}
+	for _, d := range replaced {
+		if plan.ValidSwapPath(d) != nil || !realParents(w.WorkTree, d+"/x") {
+			continue
+		}
+		var own []string
+		for _, f := range strayFilesIn(w.WorkTree, d) {
+			if !isRecordedSwap(st, f) { // an editor's save over a swapped path is handled with the links
+				own = append(own, f)
+			}
+		}
+		if strays := onlyTracked(ctx, g, d, own); len(strays) > 0 {
+			failed = append(failed, fmt.Sprintf("%s, which the profile replaced, holds regular files at paths the team tracks that outfit did not make (%s): left alone (git would leave them where they are when the team's come back); move or commit them, then rerun", d, strings.Join(firstFew(strays, 3), ", ")))
+		}
+	}
+
+	if len(failed) > 0 {
+		return nil, failed // nothing is touched: links and patterns stay as they are
+	}
+
 	var restore []string
 	swaps := append([]state.Swap(nil), st.Swaps...)
 	swaps = append(swaps, unrecordedLinks(ctx, g, w, st)...)
@@ -89,27 +120,6 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 			failed = append(failed, s.Path+" is a regular file where outfit's link was: left alone (its bytes are yours; `outfit sync` absorbs an editor's save into the profile, or saves both copies when the profile changed too, then rerun)")
 		default:
 			restore = append(restore, s.Path)
-		}
-	}
-
-	// A directory the profile replaced holds the team's files only in git; a regular file the person
-	// (or an agent) wrote below it while it was hidden is theirs, and sparse checkout coming off would
-	// leave it half-present ("already present, not updated"). Stop and say where.
-	replSparse, _ := readInside(w.GitDir, "info/sparse-checkout")
-	replaced := append([]string(nil), st.ReplaceDirs...)
-	if parsed, ok := plan.ParseSparse(string(replSparse)); ok {
-		for _, d := range parsed.HideDirs {
-			if !containsStr(replaced, d) {
-				replaced = append(replaced, d)
-			}
-		}
-	}
-	for _, d := range replaced {
-		if plan.ValidSwapPath(d) != nil || !realParents(w.WorkTree, d+"/x") {
-			continue
-		}
-		if strays := strayFilesIn(w.WorkTree, d); len(strays) > 0 {
-			failed = append(failed, fmt.Sprintf("%s, which the profile replaced, holds regular files outfit did not make (%s): left alone; move or commit them, then rerun", d, strings.Join(firstFew(strays, 3), ", ")))
 		}
 	}
 
@@ -275,8 +285,17 @@ func removeStrays(ctx context.Context, g gitx.Client, worktree, rel, target stri
 		if err != nil || t != target {
 			continue
 		}
-		if res, err := g.Read(ctx, "--literal-pathspecs", "ls-files", "-z", "--", stray); err != nil || len(res.Stdout) > 0 {
+		res, err := g.Read(ctx, "--literal-pathspecs", "ls-files", "-s", "-t", "-z", "--", stray)
+		if err != nil {
 			continue
+		}
+		if len(res.Stdout) > 0 {
+			// Staged by `git add -A` (and not in HEAD): ours too, and a commit would put the
+			// link into history. Anything else git tracks is the repository's own.
+			if !stagedOnlyLink(ctx, g, stray, parseLsFiles(res.Stdout)[stray]) {
+				continue
+			}
+			_, _ = g.Write(ctx, "--literal-pathspecs", "rm", "--cached", "-q", "--ignore-unmatch", "--", stray)
 		}
 		_ = os.Remove(sp)
 	}
@@ -312,4 +331,13 @@ func firstFew(s []string, n int) []string {
 		return append(append([]string(nil), s[:n]...), "…")
 	}
 	return s
+}
+
+func isRecordedSwap(st *state.State, path string) bool {
+	for _, s := range st.Swaps {
+		if s.Path == path {
+			return true
+		}
+	}
+	return false
 }

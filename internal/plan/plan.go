@@ -50,6 +50,9 @@ type PathFacts struct {
 	// place (a kill between the two leaves it). Either would show up as an untracked
 	// symlink that `git add -A` could commit.
 	StrayLinks []string
+	// StagedStrays are the StrayLinks that `git add -A` staged: removing them also takes them
+	// off the index.
+	StagedStrays []string
 	// VariantBlob is the blob id the index holds for the variant ("" when the profile
 	// is not committed or the file is not tracked yet).
 	VariantBlob string
@@ -148,8 +151,13 @@ type DirFacts struct {
 	// Visible are tracked files below it that git has NOT hidden (a merge that touched them
 	// clears the bit): the patterns must be applied again.
 	Visible []string
+	// Strays: see below.
+	Strays []string
 	// Unmerged says a merge conflict has files below it: nothing about it is touched.
 	Unmerged bool
+	// Strays are regular files standing at hidden team paths below it (written there by a person,
+	// an editor or an agent while the directory was hidden): git treats such a path as "expected
+	// outside the patterns" and may delete the file on a checkout, reset or pull without a word.
 	// Staged and Dirty are changes below it, filled only when the directory is about to be hidden:
 	// hiding would take them off disk (docs/git-behavior.md rows 35 and 40).
 	Staged, Dirty []string
@@ -184,6 +192,7 @@ const (
 	QuarantineBoth ActionKind = "quarantine-both"  // file and variant both changed: save both, touch nothing, exit 3
 	QuarantineFile ActionKind = "quarantine-file"  // an unwanted regular file: save it, then clear the path
 	RecordHash     ActionKind = "record"           // state only: the variant changed through the link
+	SaveStray      ActionKind = "save-stray"       // a regular file at a hidden team path: copy it to the quarantine (it stays), exit 3
 	RepairSkip     ActionKind = "repair-skip"      // git update-index --skip-worktree: the bit was lost (a `git reset -- <path>`)
 	AddExclude     ActionKind = "add-exclude"      // .git/info/exclude
 	Conflict       ActionKind = "conflict"         // unmerged path: leave it alone, exit 3
@@ -204,6 +213,8 @@ type Action struct {
 	// Replaces says the path holds an UNTOUCHED copy of the committed file (checked
 	// against the index), which LinkPath may remove to put the link there.
 	Replaces bool
+	// Unstage (RemoveLink): the link is staged and HEAD does not have it: take it off the index too.
+	Unstage bool
 	// Adapted (RecordHash): one commit moved the base and the variant together, so the
 	// swap's recorded base moves too.
 	Adapted bool
@@ -213,7 +224,7 @@ type Action struct {
 func NeedsHuman(as []Action) bool {
 	for _, a := range as {
 		switch a.Kind {
-		case QuarantineBoth, QuarantineFile, Conflict:
+		case QuarantineBoth, QuarantineFile, Conflict, SaveStray:
 			return true
 		}
 	}
@@ -263,7 +274,7 @@ func Plan(w Want, f Facts) []Action {
 			Fix: "fix the `replace` lines of the profile (profile.config, [outfit \"profile\"] section), then: outfit sync"})
 	}
 	var skips, conflicts []Action
-	var dirStale []Action
+	var dirStale, strays []Action
 	reapply := false
 	for _, d := range w.ReplaceDirs {
 		df := f.Dirs[d]
@@ -271,7 +282,7 @@ func Plan(w Want, f Facts) []Action {
 		case df.Unmerged:
 			conflicts = append(conflicts, Action{Kind: Conflict, Path: d,
 				Reason: d + " has files in the middle of a merge conflict: outfit leaves the directory alone until it is resolved",
-				Fix:    "resolve it, then: git add --sparse " + shq(d) + " && git commit, then outfit sync"})
+				Fix:    "resolve it and conclude the merge (git add --sparse <file> && git commit, or git rebase --continue), then: outfit sync"})
 			continue
 		case !df.Hidden && len(df.Staged) > 0:
 			refuse = append(refuse, Action{Kind: Refuse, Path: d,
@@ -285,6 +296,11 @@ func Plan(w Want, f Facts) []Action {
 		if df.Hidden && len(df.Visible) > 0 {
 			reapply = true
 		}
+		for _, sp := range df.Strays {
+			strays = append(strays, Action{Kind: SaveStray, Path: sp,
+				Reason: sp + " is a file at a path the team tracks inside " + d + ", which your profile replaces: git treats the path as hidden and may delete your file on a checkout, reset or pull. A copy is saved",
+				Fix:    "move it out of " + d + " (or commit it somewhere else), then: outfit sync"})
+		}
 		if df.Seen != "" && df.Digest != "" && df.Seen != df.Digest {
 			dirStale = append(dirStale, Action{Kind: Stale, Path: d,
 				Reason: d + ": the team changed files below it (" + fmt.Sprint(df.Tracked) + " tracked now) since outfit replaced it; your profile's copy stands. When that is fine: outfit ack " + shq(d),
@@ -294,8 +310,8 @@ func Plan(w Want, f Facts) []Action {
 	for _, d := range sortedDirKeys(f.UnhideStrays) {
 		if len(f.UnhideStrays[d]) > 0 && !containsStr(w.ReplaceDirs, d) {
 			refuse = append(refuse, Action{Kind: Refuse, Path: d,
-				Reason: "regular files that are not outfit's links are in " + d + ", which the profile no longer replaces (" + strings.Join(firstN(f.UnhideStrays[d], 3), ", ") + "): git would leave them half-present when the team's files come back",
-				Fix:    "move or commit them, then: outfit sync"})
+				Reason: "regular files at paths the team tracks, which are not outfit's links, are in " + d + ", which the profile no longer replaces (" + strings.Join(firstN(f.UnhideStrays[d], 3), ", ") + "): git would leave them as they are, half-present, when the team's files come back",
+				Fix:    "move them out (or commit them if they are meant to be the team's), then: outfit sync"})
 		}
 	}
 	inConflict := map[string]bool{} // paths in the middle of a merge: nothing about them is touched
@@ -304,6 +320,11 @@ func Plan(w Want, f Facts) []Action {
 		// The ORDER of these cases is part of the behaviour: a refusal must come before
 		// any skip, or a switch could skip one file and change the tree around another.
 		switch {
+		case !pf.Tracked && !pf.Unmerged && underDir(p, w.ReplaceDirs) != "":
+			// The profile replaces the directory this file is in, but a replacement only links files at
+			// paths the repository tracks: a file that is only the profile's has nowhere to stand yet.
+			skips = append(skips, Action{Kind: Skip, Path: p, Reason: p + " is in " + underDir(p, w.ReplaceDirs) + ", which the profile replaces, but the repository does not track it: replacing a directory hides the team's files and links the profile's files at tracked paths; a file that exists only in the profile is not shown yet. To use it, have the repository track a file at that path"})
+			delete(want, p)
 		case !pf.Tracked && !pf.Unmerged:
 			skips = append(skips, Action{Kind: Skip, Path: p, Reason: p + " is not tracked by git, and outfit swaps only files the repository has: a profile replaces tracked files, it cannot add one. Paths are relative to the repository root and must match the repository's spelling exactly, case included (apps/web/AGENTS.md, not web/AGENTS.md)"})
 			delete(want, p)
@@ -343,6 +364,7 @@ func Plan(w Want, f Facts) []Action {
 	out = append(out, skips...)
 	out = append(out, conflicts...)
 	out = append(out, dirStale...)
+	out = append(out, strays...)
 
 	needSparse := w.Sparse != "" || len(want) > 0
 	if needSparse && !f.ExpectFiles {
@@ -353,7 +375,7 @@ func Plan(w Want, f Facts) []Action {
 	// cut short): remove them at once (they are untracked, and `git add -A` would commit a symlink).
 	for _, p := range sortedKeys(f.Paths) {
 		for _, stray := range f.Paths[p].StrayLinks {
-			out = append(out, Action{Kind: RemoveLink, Path: stray})
+			out = append(out, Action{Kind: RemoveLink, Path: stray, Unstage: containsStr(f.Paths[p].StagedStrays, stray)})
 		}
 	}
 
@@ -554,4 +576,14 @@ func sortedDirKeys(m map[string][]string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// underDir returns the directory of dirs that p is inside, "" when none.
+func underDir(p string, dirs []string) string {
+	for _, d := range dirs {
+		if strings.HasPrefix(p, d+"/") {
+			return d
+		}
+	}
+	return ""
 }

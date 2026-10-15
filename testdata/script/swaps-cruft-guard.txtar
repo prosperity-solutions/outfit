@@ -20,3 +20,19 @@ exec git add -A
 exec git commit -qm 'feat: nothing of outfit' --allow-empty
 exec git ls-tree -r HEAD
 ! stdout '^120000'
+
+# The refused commit left the link staged. Leaving the profile (nothing swapped, so the guard
+# no longer looks) takes it off the index and the disk: the next `git add -A` and commit carry
+# no link. (The property test found the link in history on the git floor.)
+exec git add -A
+! exec git commit -qm 'feat: everything'
+symlink AGENTS.md~cruft -> .outfit/profiles/yolo/AGENTS.md
+exec git add -f AGENTS.md~cruft
+outfit use base
+! exists AGENTS.md~cruft
+exec git ls-files -s
+! stdout '^120000'
+exec git add -A
+exec git commit -qm 'feat: still nothing of outfit' --allow-empty
+exec git ls-tree -r HEAD
+! stdout '^120000'

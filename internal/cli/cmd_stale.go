@@ -90,7 +90,7 @@ func cmdDiff(ctx context.Context, e Env, args []string) int {
 	}
 	fail := func(err error) int { return report(e.Stdout, e.Stderr, asJSON, err) }
 	if apply.IsReplacedDir(in, path) {
-		note := path + " is a directory your profile replaces: the team's files below it are hidden and yours stand in. What the team changed there: git log --stat -- " + plan.Quote(path) + "   (when that is fine: outfit ack " + plan.Quote(path) + ")"
+		note := path + " is a directory your profile replaces: the team's files below it are hidden and yours stand in. outfit remembers a digest of the team's files, not a commit, so there is no exact diff: what the team changed there is in `git log --stat -- " + plan.Quote(path) + "` (the recent commits). When that is fine: outfit ack " + plan.Quote(path)
 		if asJSON {
 			out, _ := json.Marshal(struct {
 				Path     string `json:"path"`

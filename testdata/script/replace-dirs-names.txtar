@@ -1,0 +1,39 @@
+# Replace declarations that are unsound or whose names need care: escaped names in the sparse patterns and
+# the guard, a team's hook directory, a submodule, too many files, `.outfit` in any case.
+fixture repo team husky
+cd repo
+# a directory whose name needs escaping in a sparse pattern (and a space)
+exec mkdir -p 'sk[1] x/inner'
+exec sh -c 'echo team-a > "sk[1] x/a.md"; echo team-i > "sk[1] x/inner/i.md"'
+exec git add .
+exec git commit -qm 'docs: odd directory'
+exec mkdir -p '.outfit/profiles/odd/sk[1] x'
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = sk[1] x\n" > .outfit/profiles/odd/profile.config'
+exec sh -c 'echo mine > ".outfit/profiles/odd/sk[1] x/a.md"'
+# hostile or unsound declarations
+exec mkdir -p .outfit/profiles/hooks .outfit/profiles/outfitcase
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = .husky\n" > .outfit/profiles/hooks/profile.config'
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = .OUTFIT\n" > .outfit/profiles/outfitcase/profile.config'
+exec git add --sparse -f .outfit
+exec git commit -qm 'feat: odd profiles'
+outfit init
+
+outfit use odd
+! exists 'sk[1] x/inner'
+islink 'sk[1] x/a.md' '../.outfit/profiles/odd/sk[1] x/a.md'
+# the guard does not trip over the escaped pattern: an unrelated commit goes through, and so does a team commit
+exec sh -c 'echo more >> README.md'
+exec git commit -qam 'docs: readme'
+exec git status --short
+! stdout .
+outfit use base
+exists 'sk[1] x/inner/i.md'
+
+# the directory that holds the team's hooks cannot be replaced (a hook the team locked on would stop running unseen)
+! outfit use hooks
+stderr 'would hide'
+stderr 'git hooks live'
+# `.outfit` in any case is refused: git matches sparse patterns case-insensitively on some systems
+! outfit use outfitcase
+stderr 'inside .outfit'
+exists .outfit/config

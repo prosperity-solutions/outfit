@@ -150,7 +150,9 @@ hidden (they live in the git directory, outside the tree: `outfit show <profile>
 ## Replacing a whole directory
 
 A profile can say that a directory is **its own**: the team's files below it disappear for you, and the
-profile's stand in. In the profile's `profile.config`:
+profile's files stand in **at the paths the repository already tracks** (files that exist only in the
+profile are not shown yet: they are skipped with a note, and an untracked file you create there is
+neither linked nor hidden, it is simply an untracked file). In the profile's `profile.config`:
 
 ```ini
 [outfit "profile"]
@@ -179,6 +181,16 @@ that is not outfit's link stands below it (git would leave it half-present and c
 the declaration is unsound: the path is a tracked file or link, it holds a submodule, another declared
 directory is inside it, or it has more than 2000 tracked files. While a merge has conflicts below the
 directory, outfit leaves it alone (exit 3) and tidies up once the merge is over.
+
+A regular file at a path the team tracks below the directory (written by you, an editor or an agent while
+it is hidden) is a trap: git treats such a path as "expected outside the patterns" and **deletes the
+file without a word** on a checkout, reset or pull. So every sync saves a copy under
+`.git/outfit/quarantine/` and says so (exit 3) until the file is moved. `outfit show <profile>` and
+`outfit ls --json` list a profile's `replace` directories, `outfit use` names them, `outfit status --json`
+has `replaced_dirs`, and `outfit diff <dir> --json` says `{"path", "replaced": true, "note"}`. A directory
+the repository tracks nothing in (a typo, or the wrong case: git matches patterns case-insensitively on
+some systems) is not replaced, with a note. A profile may not replace the directory that holds the
+team's git hooks (a hook the team locked on would stop running unseen), nor `.git` or `.outfit`.
 
 Limits: `git add -A` fails while an untracked file stands in a hidden directory (git's own rule: use `git add
 --sparse`); `git clean -fdx` and `git stash -u` leave the directory as it is (the links are tracked paths).

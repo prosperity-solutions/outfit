@@ -68,3 +68,24 @@ exec cat skills/b.md
 stdout '^resolved$'
 exec git status --short
 ! stdout .
+
+# --- the other side DELETED a team file below the directory (the commit guard lets a merge conclude) ---
+outfit use base
+exec git checkout -q -b deleter main
+exec git rm -q skills/b.md
+exec sh -c 'echo deleter > README.md'
+exec git commit -qam 'docs: delete b, edit readme'
+exec git checkout -q main
+exec sh -c 'echo mainreadme > README.md'
+exec git commit -qam 'docs: main readme'
+outfit use mine
+! exec git merge --no-edit deleter
+exec sh -c 'echo resolved-readme > README.md'
+exec git add README.md
+exec git commit -qm 'merge: deleter'
+outfit sync
+exec git ls-files skills/b.md
+! stdout .
+! exists skills/b.md
+exec git status --short
+! stdout .

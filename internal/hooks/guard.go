@@ -12,6 +12,7 @@ import (
 
 	"github.com/prosperity-solutions/outfit/internal/config"
 	"github.com/prosperity-solutions/outfit/internal/gitx"
+	"github.com/prosperity-solutions/outfit/internal/plan"
 	"github.com/prosperity-solutions/outfit/internal/state"
 )
 
@@ -108,7 +109,7 @@ func Guard(ctx context.Context, g gitx.Client, gitDir string, gc config.GitConfi
 					Message: fmt.Sprintf("%s is staged as a symlink (mode 120000) below %s, which your active profile replaces: committing it would put outfit's link into history", e.path, d),
 					Fix:     fmt.Sprintf("git reset -q -- %s && outfit sync", shArg(e.path))})
 			case allow:
-			case merging && (e.newMode == "100644" || e.newMode == "100755"):
+			case merging && (e.newMode == "100644" || e.newMode == "100755" || e.newMode == "000000"):
 			default:
 				out = append(out, Violation{Path: e.path,
 					Message: fmt.Sprintf("%s is below %s, which your active profile replaces: what is staged there is not what your checkout shows, and must not be committed from it", e.path, d),
@@ -125,7 +126,7 @@ func Guard(ctx context.Context, g gitx.Client, gitDir string, gc config.GitConfi
 				Message: fmt.Sprintf("%s is staged as a symlink (mode 120000): committing it would put outfit's link into history", e.path),
 				Fix:     fmt.Sprintf("git reset -q -- %s && outfit sync", shArg(e.path))})
 		case allow:
-		case merging && (e.newMode == "100644" || e.newMode == "100755"):
+		case merging && (e.newMode == "100644" || e.newMode == "100755" || e.newMode == "000000"):
 		default:
 			out = append(out, Violation{Path: e.path,
 				Message: fmt.Sprintf("%s is swapped by your active profile and must not be committed from this checkout", e.path),
@@ -146,15 +147,17 @@ func Guard(ctx context.Context, g gitx.Client, gitDir string, gc config.GitConfi
 	return out, nil
 }
 
-// hiddenPaths lists the swapped paths an outfit-managed sparse-checkout file
-// hides (`!/<path>` lines), excluding the inactive-profile pattern.
+// hiddenPaths lists the swapped paths an outfit-managed sparse-checkout file hides
+// (`!/<path>` lines, read back through plan.ParseSparse so escaped names compare equal),
+// excluding the inactive-profile pattern.
 func hiddenPaths(text string) []string {
-	if !strings.HasPrefix(text, state.SparseMarker) {
+	o, ok := plan.ParseSparse(text)
+	if !ok {
 		return nil
 	}
 	var out []string
-	for _, l := range strings.Split(text, "\n") {
-		if p, ok := strings.CutPrefix(l, "!/"); ok && p != "" && !strings.HasPrefix(p, ".outfit/") && !strings.HasSuffix(p, "/") {
+	for _, p := range o.Hidden {
+		if !strings.HasPrefix(p, ".outfit/") {
 			out = append(out, p)
 		}
 	}
@@ -165,13 +168,14 @@ func hiddenPaths(text string) []string {
 // hiddenDirs lists the directories an outfit-managed sparse-checkout file hides as a whole
 // (`!/dir/` lines): the directories the active profile replaces.
 func hiddenDirs(text string) []string {
-	if !strings.HasPrefix(text, state.SparseMarker) {
+	o, ok := plan.ParseSparse(text)
+	if !ok {
 		return nil
 	}
 	var out []string
-	for _, l := range strings.Split(text, "\n") {
-		if p, ok := strings.CutPrefix(l, "!/"); ok && strings.HasSuffix(p, "/") && !strings.HasPrefix(p, ".outfit/") {
-			out = append(out, strings.TrimSuffix(p, "/"))
+	for _, d := range o.HideDirs {
+		if d != ".outfit" && !strings.HasPrefix(d, ".outfit/") {
+			out = append(out, d)
 		}
 	}
 	sort.Strings(out)
@@ -203,9 +207,17 @@ func checkSparse(swapped map[string]bool, replaced []string, gitDir string, gc c
 	if !strings.HasPrefix(text, state.SparseMarker) {
 		return &Violation{Message: "the sparse-checkout file is not outfit-managed (marker line missing)", Fix: fix}
 	}
-	lines := map[string]bool{}
-	for _, l := range strings.Split(text, "\n") {
-		lines[l] = true
+	parsed, ok := plan.ParseSparse(text)
+	if !ok {
+		return &Violation{Message: "the sparse-checkout file has lines outfit does not recognise", Fix: fix}
+	}
+	hiddenDirSet := map[string]bool{}
+	for _, d := range parsed.HideDirs {
+		hiddenDirSet[d] = true
+	}
+	hiddenSet := map[string]bool{}
+	for _, p := range parsed.Hidden {
+		hiddenSet[p] = true
 	}
 	paths := make([]string, 0, len(swapped))
 	for p := range swapped {
@@ -213,7 +225,7 @@ func checkSparse(swapped map[string]bool, replaced []string, gitDir string, gc c
 	}
 	sort.Strings(paths)
 	for _, d := range replaced {
-		if !lines["!/"+d+"/"] {
+		if !hiddenDirSet[d] {
 			return &Violation{Path: d, Message: fmt.Sprintf("the sparse-checkout file no longer hides %s, the directory your profile replaces", d), Fix: fix}
 		}
 	}
@@ -221,7 +233,7 @@ func checkSparse(swapped map[string]bool, replaced []string, gitDir string, gc c
 		if _, in := under(p, replaced); in {
 			continue // hidden with its directory
 		}
-		if !lines["!/"+p] {
+		if !hiddenSet[p] {
 			return &Violation{Path: p, Message: fmt.Sprintf("the sparse-checkout file no longer hides %s", p), Fix: fix}
 		}
 	}

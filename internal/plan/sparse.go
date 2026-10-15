@@ -35,7 +35,9 @@ func ValidSwapPath(p string) error {
 			return fmt.Errorf("%q is inside .git", p)
 		}
 	}
-	if p == ".outfit" || strings.HasPrefix(p, ".outfit/") {
+	// (Any case: git matches sparse patterns case-insensitively where core.ignorecase is on, so
+	// `.OUTFIT` would hide the team's .outfit/config as well.)
+	if first, _, _ := strings.Cut(p, "/"); strings.EqualFold(first, ".outfit") {
 		return fmt.Errorf("%q is inside .outfit, which holds the profiles themselves", p)
 	}
 	for _, r := range p {

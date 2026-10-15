@@ -360,6 +360,13 @@ func (m *model) upstreamChange(file string) {
 	// A local commit (the rebase step, commit-everything) makes a fast-forward impossible:
 	// then rebase onto the upstream, like `git pull --rebase`.
 	if _, err := m.git("pull", "-q", "--ff-only", "origin", "main"); err != nil {
+		// The rebase replays local commits, and one that adds a file below a replaced directory
+		// removes that path first, with any unabsorbed save on it (git-behavior row 52, pinned
+		// by replace-dirs-unpushed-rebase.txtar): follow the rule, `outfit sync` after saving.
+		if len(m.replaced()) > 0 && m.pendingAbsorb() {
+			m.logf("outfit sync first: a rebase would remove an unabsorbed save below a replaced directory (git-behavior row 52)")
+			m.outfit("sync")
+		}
 		if _, rerr := m.git("pull", "-q", "--rebase", "origin", "main"); rerr != nil {
 			_, _ = m.git("rebase", "--abort")
 		}

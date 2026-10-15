@@ -1,0 +1,37 @@
+# The limits of a replacement: a submodule below it, too many tracked files.
+fixture repo team
+cd repo
+exec mkdir -p big sub
+exec sh -c 'i=0; while [ $i -lt 2001 ]; do echo $i > big/f$i.txt; i=$((i+1)); done'
+exec git add big
+exec git commit -qm 'docs: many files'
+exec git init -q -b main $WORK/subrepo
+exec git -C $WORK/subrepo config user.email a@b
+exec git -C $WORK/subrepo config user.name a
+exec git -C $WORK/subrepo commit -q --allow-empty -m init
+exec git -c protocol.file.allow=always submodule add -q $WORK/subrepo sub/m
+exec git commit -qm 'chore: a submodule'
+exec mkdir -p .outfit/profiles/many .outfit/profiles/withsub .outfit/profiles/typo
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = big\n" > .outfit/profiles/many/profile.config'
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = sub\n" > .outfit/profiles/withsub/profile.config'
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = Bigg\n" > .outfit/profiles/typo/profile.config'
+exec git add --sparse -f .outfit
+exec git commit -qm 'feat: three profiles'
+outfit init
+! outfit use many
+stderr '2001 tracked files below it'
+exists big/f0.txt
+! outfit use withsub
+stderr 'sub/m is a submodule'
+exists sub/m
+exec git status --short
+! stdout .
+
+# a directory the repository does not track (a typo, or a different case) is not replaced: said once, nothing hidden
+outfit use typo
+stderr 'replace = Bigg: the repository tracks no file there'
+exists big/f0.txt
+exec git status --short
+! stdout .
+outfit status
+stdout 'profile  typo'

@@ -18,9 +18,11 @@ type lsEntry struct {
 	Active bool   `json:"active"`
 	// OnDisk says a committed profile's files are in the working tree (the active one, or shown
 	// with `outfit author on`); personal profiles are always on disk, in the git dir.
-	OnDisk bool     `json:"on_disk"`
-	Keys   []string `json:"keys"`
-	Files  []string `json:"files"`
+	OnDisk bool `json:"on_disk"`
+	// Replace lists the directories the profile replaces as a whole.
+	Replace []string `json:"replace,omitempty"`
+	Keys    []string `json:"keys"`
+	Files   []string `json:"files"`
 	// Dir is where a local or worktree profile's files are.
 	Dir string `json:"dir,omitempty"`
 }
@@ -58,6 +60,7 @@ func cmdLs(ctx context.Context, e Env, args []string) int {
 			ent.Files = profiles.Files(p)
 		}
 		if cfg != nil {
+			ent.Replace = cfg.Replace
 			for k, v := range cfg.Keys {
 				ent.Keys = append(ent.Keys, k+"="+v)
 			}

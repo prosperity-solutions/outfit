@@ -1,0 +1,45 @@
+# git-behavior row 52, the rebase case: a `pull --rebase` replays a local commit that adds a
+# file below a replaced directory, which first removes that path from the tree. A regular
+# file standing there (an editor's atomic save outfit has not absorbed yet) goes with it.
+# `outfit sync` after the save absorbs it into the profile first, and nothing is lost.
+fixture repo team upstream
+cd repo
+exec mkdir -p skills
+exec sh -c 'echo team-a > skills/a.md'
+exec git add skills
+exec mkdir -p .outfit/profiles/mine/skills
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = skills\n" > .outfit/profiles/mine/profile.config'
+exec sh -c 'echo my-a > .outfit/profiles/mine/skills/a.md'
+exec git add --sparse -f .outfit/profiles/mine
+exec git commit -qm 'feat: skills and a profile that replaces them (not pushed)'
+outfit init
+outfit use mine --here
+outfit sync
+cd ..
+exec git clone -q repo-upstream.git other
+cd other
+exec git config user.email a@b
+exec git config user.name a
+exec sh -c 'echo x >> README.md'
+exec git commit -qam 'docs: upstream change'
+exec git push -q origin HEAD:main
+cd ../repo
+
+# Saved, then synced: absorbed into the profile, so the rebase has nothing to take.
+atomicsave skills/a.md 'saved and synced\n'
+outfit sync
+exec git commit -qam 'feat: my skills'
+exec git pull -q --rebase origin main
+grep 'saved and synced' .outfit/profiles/mine/skills/a.md
+
+# Saved and not synced, after another upstream commit: the limit. The save is gone, and the
+# profile keeps what it had.
+cd ../other
+exec sh -c 'echo y >> README.md'
+exec git commit -qam 'docs: another upstream change'
+exec git push -q origin HEAD:main
+cd ../repo
+atomicsave skills/a.md 'saved, not synced\n'
+exec git pull -q --rebase origin main
+! grep 'saved, not synced' .outfit/profiles/mine/skills/a.md
+grep 'saved and synced' .outfit/profiles/mine/skills/a.md

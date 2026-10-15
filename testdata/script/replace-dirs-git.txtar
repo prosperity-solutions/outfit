@@ -79,15 +79,33 @@ outfit use mine
 
 # --- a file written below it while hidden is the person's: it is not lost ------------------
 exec mkdir -p skills
-exec sh -c 'echo agent > skills/new.md'
+# git would call that path "expected outside the patterns" and delete the file on a checkout, so every
+# sync saves a copy and says so (exit 3) until it is moved
+exec sh -c 'echo agent-data > skills/b.md'
+! outfit sync
+stderr 'skills/b.md is a file at a path the team tracks inside skills'
+exec sh -c 'cat .git/outfit/quarantine/*/file/skills/b.md'
+stdout 'agent-data'
+exec rm skills/b.md
+outfit sync
+exec sh -c 'echo agent > skills/b.md'
 ! outfit use base
-stderr 'are in skills'
-stderr 'skills/new.md'
-exists skills/new.md
+stderr 'settle the current profile first'
+stderr 'skills/b.md'
+exists skills/b.md
 ! outfit uninstall
-stderr 'skills/new.md'
-exists skills/new.md
-exec rm skills/new.md
+stderr 'skills/b.md'
+exists skills/b.md
+exec rm skills/b.md
+# a file at a path the team does not track is just an untracked file: it does not stop anything
+exec sh -c 'echo notes > skills/notes.md'
+outfit use base
+exists skills/notes.md
+exists skills/b.md
+exec rm skills/notes.md
+outfit use mine
+! exists skills/b.md
+outfit use base
 outfit use base
 exists skills/b.md
 
