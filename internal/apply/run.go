@@ -308,8 +308,8 @@ func unsetWorktree(ctx context.Context, in Input, keys ...string) {
 }
 
 // mkdirAllLike makes the directories above rel (below root) with the permissions of
-// the repository's own top directory (what the person chose; git checks files out
-// the same way); os.Root keeps every one of them inside root.
+// the repository's own top directory (unlike git, which applies the umask: a person
+// who keeps their checkout private keeps the new folders private); os.Root keeps every one of them inside root.
 func mkdirAllLike(root, rel string) error {
 	r, err := os.OpenRoot(root)
 	if err != nil {
@@ -321,7 +321,7 @@ func mkdirAllLike(root, rel string) error {
 		return nil
 	}
 	mode := os.FileMode(0o750)
-	if fi, err := os.Stat(root); err == nil {
+	if fi, err := r.Stat("."); err == nil {
 		mode = fi.Mode().Perm()
 	}
 	return r.MkdirAll(dir, mode)
