@@ -54,11 +54,16 @@ func (r *Repo) RunOutfitIn(dir, bin string, extraEnv []string, args ...string) O
 	if bin = filepath.Clean(bin); !filepath.IsAbs(bin) || filepath.Base(bin) != "outfit" {
 		r.T.Fatalf("RunOutfit: %q is not a built outfit binary", bin)
 	}
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = dir
-	cmd.Env = append(append([]string(nil), r.Env...), extraEnv...)
 	var stdout, stderr strings.Builder
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	// The validated absolute path is the program; nothing is looked up or split by a shell.
+	cmd := &exec.Cmd{
+		Path:   bin,
+		Args:   append([]string{bin}, args...),
+		Dir:    dir,
+		Env:    append(append([]string(nil), r.Env...), extraEnv...),
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
 	err := cmd.Run()
 	o := Outcome{Stdout: stdout.String(), Stderr: stderr.String()}
 	if err != nil {
