@@ -113,9 +113,10 @@ func stableExe() string {
 const usage = `usage: outfit <command> [flags]
 
 commands:
-  init [--agents] [--dry-run]
+  init [--agents] [--team] [--dry-run]
                          install the hook dispatcher (git hooks keep working); --agents also adds a
-                         Claude Code SessionStart entry that runs outfit sync
+                         Claude Code SessionStart entry that runs outfit sync; --team also adds a line
+                         to AGENTS.md and docs/outfit.md for teammates who do not use outfit
   uninstall [--purge]    remove everything init installed, in every worktree (your local and worktree
                          profiles stay; --purge deletes them)
   get <key>              print a toggle's value (exit 1 when unset)

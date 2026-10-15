@@ -14,6 +14,7 @@ import (
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 	"github.com/prosperity-solutions/outfit/internal/hooks"
 	"github.com/prosperity-solutions/outfit/internal/profiles"
+	"github.com/prosperity-solutions/outfit/internal/team"
 )
 
 // cmdInit installs the hook dispatcher: shims, per-worktree config and
@@ -22,6 +23,7 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 	fs := newFlags("init")
 	asJSON := fs.Bool("json", false, "print machine-readable output")
 	dry := fs.Bool("dry-run", false, "show what would change and write nothing")
+	teamFlag := fs.Bool("team", false, "also tell the people who do not use outfit: one line in AGENTS.md and docs/outfit.md (nothing is committed)")
 	agentsFlag := fs.Bool("agents", false, "also add a Claude Code SessionStart entry (.claude/settings.local.json) that runs `outfit sync`")
 	pos, code, stop := parseArgs(e, fs, args)
 	if stop {
@@ -98,14 +100,29 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 			}
 		}
 	}
+	// For the people of the repository who do not use outfit yet: a line in AGENTS.md and docs/outfit.md.
+	var teamOut *team.Result
+	var teamErr error
+	if *teamFlag {
+		if r, terr := team.Apply(l.Repo.WorkTree, *dry); terr != nil {
+			teamErr = terr
+		} else {
+			teamOut = &r
+		}
+	}
 	if *asJSON {
 		out := struct {
 			*hooks.InstallResult
-			Agents    *agentsJSON `json:"agents,omitempty"`
-			Sync      *syncJSON   `json:"sync,omitempty"`
-			SyncError string      `json:"sync_error,omitempty"`
-			Fix       string      `json:"fix,omitempty"`
-		}{InstallResult: res, Agents: agentsOut}
+			Team      *team.Result `json:"team,omitempty"`
+			TeamError string       `json:"team_error,omitempty"`
+			Agents    *agentsJSON  `json:"agents,omitempty"`
+			Sync      *syncJSON    `json:"sync,omitempty"`
+			SyncError string       `json:"sync_error,omitempty"`
+			Fix       string       `json:"fix,omitempty"`
+		}{InstallResult: res, Team: teamOut, Agents: agentsOut}
+		if teamErr != nil {
+			out.TeamError = teamErr.Error()
+		}
 		if syncRes != nil {
 			j := toJSON(syncRes)
 			out.Sync = &j
@@ -118,7 +135,7 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 		}
 		b, _ := json.Marshal(out)
 		fmt.Fprintln(e.Stdout, string(b))
-		return initExit(syncRes, syncErr, agentsOut)
+		return teamExit(initExit(syncRes, syncErr, agentsOut), teamErr, teamOut)
 	}
 	if syncErr != nil {
 		fmt.Fprintf(e.Stderr, "outfit: profile files were not set up: %v\n  fix: outfit sync\n", syncErr)
@@ -127,6 +144,12 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 	}
 	if agentsOut != nil {
 		printAgents(e, agentsOut, *dry)
+	}
+	if teamErr != nil {
+		fmt.Fprintf(e.Stderr, "outfit: could not write the team files: %v\n", teamErr)
+	}
+	if teamOut != nil {
+		printTeam(e, teamOut)
 	}
 	verb := map[bool]string{true: "would install", false: "installed"}[*dry]
 	switch {
@@ -152,7 +175,37 @@ func cmdInit(ctx context.Context, e Env, args []string) int {
 			fmt.Fprintf(e.Stdout, "  worktrees whose directory is gone (configured anyway; `git worktree prune` removes them): %s\n", strings.Join(res.MissingWorktrees, ", "))
 		}
 	}
-	return initExit(syncRes, syncErr, agentsOut)
+	return teamExit(initExit(syncRes, syncErr, agentsOut), teamErr, teamOut)
+}
+
+// teamExit is needs-a-person when `--team` could not write its files or the base AGENTS.md is behind a profile's link.
+func teamExit(code int, teamErr error, r *team.Result) int {
+	if (teamErr != nil || (r != nil && r.AgentsMD == team.Swapped)) && code == ExitOK {
+		return ExitNeedsHuman
+	}
+	return code
+}
+
+func printTeam(e Env, r *team.Result) {
+	switch r.AgentsMD {
+	case team.Added:
+		fmt.Fprintf(e.Stdout, "%s: %s the line for non-users: %q\n", team.AgentsPath, map[bool]string{true: "would add", false: "added"}[r.DryRun], team.AgentsLine)
+	case team.Present:
+		fmt.Fprintf(e.Stdout, "%s: already has the line for non-users\n", team.AgentsPath)
+	case team.Missing:
+		fmt.Fprintf(e.Stdout, "%s: there is none; put this line where your agents look: %s\n", team.AgentsPath, team.AgentsLine)
+	case team.Swapped:
+		fmt.Fprintf(e.Stderr, "outfit: %s is swapped by your active profile, so the team's file is not reachable; run `outfit use base`, then `outfit init --team` again\n", team.AgentsPath)
+	}
+	switch r.Doc {
+	case team.Created:
+		fmt.Fprintf(e.Stdout, "%s: %s (install command and the hook snippet)\n", team.DocPath, map[bool]string{true: "would create", false: "created"}[r.DryRun])
+	case team.Exists:
+		fmt.Fprintf(e.Stdout, "%s: exists, left as it is\n", team.DocPath)
+	}
+	if !r.DryRun && (r.AgentsMD == team.Added || r.Doc == team.Created) {
+		fmt.Fprintf(e.Stdout, "  nothing is committed: review with `git diff`, then `git add %s %s && git commit -m 'docs: optional outfit profiles'`\n", team.AgentsPath, team.DocPath)
+	}
 }
 
 // ignoreSettings keeps the personal settings file out of `git add -A`, unless git

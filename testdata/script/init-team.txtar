@@ -1,0 +1,62 @@
+# `outfit init --team` (docs/HANDOVER.md §3.0): the one-off for whoever introduces outfit. It adds
+# a line to the base AGENTS.md and writes docs/outfit.md (install command, the fallback snippet),
+# commits nothing, never edits a profile's file through a link, and is idempotent.
+fixture repo team
+cd repo
+outfit init
+exec cat AGENTS.md
+cp stdout $WORK/agents.before
+
+# --dry-run says what it would do and writes nothing.
+outfit init --team --dry-run
+stdout 'would add the line for non-users'
+stdout 'docs/outfit.md: would create'
+exec cat AGENTS.md
+cmp stdout $WORK/agents.before
+! exists docs/outfit.md
+
+# For real: the line and the document; nothing is committed.
+outfit init --team
+stdout 'AGENTS.md: added the line for non-users'
+stdout 'docs/outfit.md: created'
+stdout 'nothing is committed'
+grep 'Optional: this repo supports outfit profiles; see docs/outfit.md to install.' AGENTS.md
+grep 'install.sh \| sh' docs/outfit.md
+grep 'git config -f .outfit/config --get outfit.biome' docs/outfit.md
+exec git status --short
+stdout '^ M AGENTS.md'
+stdout '^\?\? docs/outfit.md'
+exec git log --oneline
+! stdout 'outfit profiles'
+
+# Twice changes nothing; a document the team edited is left as it is.
+exec cp AGENTS.md $WORK/agents.once
+exec sh -c 'echo "our own words" > docs/outfit.md'
+outfit init --team --json
+stdout '"agents_md":"present"'
+stdout '"doc":"exists"'
+exec cat AGENTS.md
+cmp stdout $WORK/agents.once
+grep 'our own words' docs/outfit.md
+
+# The snippet in the document works the way it says: the committed team default, with and
+# without outfit (the fallback half reads only .outfit/config).
+exec git add AGENTS.md docs/outfit.md
+exec git commit -qm 'docs: optional outfit profiles'
+exec git config -f .outfit/config --get outfit.secrets-scan
+stdout '^on$'
+
+# A swapped AGENTS.md is the profile's, not the team's: nothing is written through the link.
+outfit use yolo
+exec cat .outfit/profiles/yolo/AGENTS.md
+cp stdout $WORK/yolo.before
+exec git rm -q --cached docs/outfit.md
+exec rm docs/outfit.md
+! outfit init --team
+stderr 'swapped by your active profile'
+! exists docs/outfit.md
+exec cat .outfit/profiles/yolo/AGENTS.md
+cmp stdout $WORK/yolo.before
+outfit use base
+outfit init --team
+stdout 'docs/outfit.md: created'

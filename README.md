@@ -2,6 +2,13 @@
 
 Your own setup of a git repository, without touching anyone else's.
 
+```sh
+curl -fsSL -H "Authorization: Bearer $(gh auth token)" https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
+```
+
+(One line, while the repository is private: it needs a GitHub login that can read it. No token once it
+is public. More below.)
+
 A **profile** changes two things, only on your machine:
 
 - **which hook checks run** (turn the heavy one off, skip them all, add your own), and
@@ -10,6 +17,24 @@ A **profile** changes two things, only on your machine:
 Teammates never notice, `git status` stays truthful, and the repository itself is
 never modified. outfit works with any git repository and any hook setup (husky,
 lefthook, plain `.git/hooks`).
+
+## Try it in 60 seconds
+
+```sh
+cd your-repo
+outfit init                          # put outfit in front of your git hooks (they keep running)
+outfit set hook.pre-commit=off       # skip the slow pre-commit hook, only for you
+outfit use yolo                      # swap in a profile's files (your AGENTS.md instead of the team's)
+git status                           # clean: nothing to commit, nothing for teammates to see
+outfit uninstall                     # put everything back as it was
+```
+
+No repository of your own handy? `scripts/demo.sh` in a clone of this one
+(`gh repo clone prosperity-solutions/outfit`) builds a throwaway repository with a husky hook and
+walks through all of it in about two minutes, printing each step before it runs and checking what
+it claims: init, switching a hook off, a shared profile, editing through the link, an editor's atomic
+save, a new worktree, your own profile and `promote`, showing hidden profiles, the line for teammates
+without outfit, and `uninstall`.
 
 ## What it is for
 
@@ -76,6 +101,7 @@ outfit status                    # the active profile, where every value comes f
 outfit diff AGENTS.md            # the base file differs from when it was swapped (a pull, a checkout): what changed
 outfit ack AGENTS.md             # ...and that is fine: the profile's copy stays
 outfit init --agents             # a Claude Code SessionStart entry that runs outfit sync
+outfit init --team               # once, for the repository: a line in AGENTS.md and docs/outfit.md for teammates without outfit (commits nothing)
 outfit sync                      # put the files right again (hooks run it after checkout and merge)
 outfit author on                 # all profiles on disk, to edit side by side (author off hides them)
 outfit uninstall                 # put the repository back as it was (--purge also deletes your own profiles)
@@ -116,13 +142,14 @@ profile, then the team's committed defaults in `.outfit/config`. Keys the team
 
 ## Status
 
-Under construction, one pull request at a time: toggles, the hook dispatcher and
-the release pipeline, `outfit update` and profile file swaps (`use`, `sync`, `show`,
-`author`), conflict and stale-base detection (`diff`, `ack`), `init --agents`, personal
-profiles (`new`, `promote`) and the agent skills (`skills`) are in; the property tests and the final polish are next. Swaps: [docs/profiles.md](docs/profiles.md). How a
-release is built and checked: [docs/release.md](docs/release.md); what protects the build: [docs/security.md](docs/security.md). The plan is
-[docs/HANDOVER.md](docs/HANDOVER.md); how git actually behaves, pinned by tests, is
-[docs/git-behavior.md](docs/git-behavior.md).
+Everything in the plan is in: toggles, the hook dispatcher, the release pipeline and
+`outfit update`, profile file swaps (`use`, `sync`, `show`, `author`), conflict and stale-base
+detection (`diff`, `ack`), `init --agents` and `init --team`, personal profiles (`new`,
+`promote`), the agent skills (`skills`), and the property, fault-injection and fuzz tests.
+Swaps: [docs/profiles.md](docs/profiles.md). How a release is built and checked:
+[docs/release.md](docs/release.md); what protects the build: [docs/security.md](docs/security.md).
+The plan is [docs/HANDOVER.md](docs/HANDOVER.md); how git actually behaves, pinned by tests, is
+[docs/git-behavior.md](docs/git-behavior.md); how it is tested: [docs/testing.md](docs/testing.md).
 
 ## Develop
 

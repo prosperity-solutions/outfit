@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# A walkthrough of outfit in a throwaway git repository, about a minute long.
+# A walkthrough of outfit in a throwaway git repository, about two minutes long (a few
+# seconds with --quick).
 # Every step is printed before it runs, and the script checks what it claims, so
 # CI runs it too (`scripts/demo.sh --quick`).
 #
@@ -107,12 +108,78 @@ git add -A
 run git commit -m "fourth commit (biome is back)"
 [ "$(runs)" = 3 ] || fail "the hook should run again once the override is gone"
 
+step "A profile the team shares: files that replace yours, and its own switches (committed in .outfit/)"
+mkdir -p .outfit/profiles/yolo
+printf '# Agents\nThe team'"'"'s instructions.\n' >AGENTS.md
+printf '[outfit]\n    secrets-scan = on\n    locked = secrets-scan\n' >.outfit/config
+printf '[outfit]\n    biome = off\n[outfit "hook"]\n    pre-commit = off\n' >.outfit/profiles/yolo/profile.config
+printf '# Agents\nMy own instructions: be brief.\n' >.outfit/profiles/yolo/AGENTS.md
+git add -A
+git add --sparse -f .outfit
+run git commit -m "add a shared yolo profile"
+[ "$(runs)" = 4 ] || fail "the hook should have run for that commit (no profile yet)"
+run outfit ls
+
+step "Use it: AGENTS.md is now YOUR copy, and git status stays clean"
+run outfit use yolo
+run cat AGENTS.md
+run git status --short
+[ -z "$(git status --short)" ] || fail "git status should be clean with a profile active"
+[ -L AGENTS.md ] || fail "AGENTS.md should be a link to the profile's file"
+echo "more" >>file.txt
+git add -A
+run git commit -m "commit while yolo is active (the profile turns the hook off)"
+[ "$(runs)" = 4 ] || fail "yolo turns the pre-commit hook off: biome must not have run"
+
+step "Edit through the link: the edit goes to the profile's file, which git sees as an edit of the profile"
+echo "- and kind" >>AGENTS.md
+run git status --short
+grep -q 'and kind' .outfit/profiles/yolo/AGENTS.md || fail "the edit should have gone into the profile"
+git checkout -q -- .outfit/profiles/yolo/AGENTS.md
+
+step "An editor's atomic save replaces the link by a file; outfit sync takes the new bytes into the profile and relinks"
+printf '# Agents\nSaved by an editor.\n' >AGENTS.md.tmp
+mv AGENTS.md.tmp AGENTS.md
+run outfit sync
+[ -L AGENTS.md ] || fail "sync should have relinked AGENTS.md"
+grep -q 'Saved by an editor' .outfit/profiles/yolo/AGENTS.md || fail "the save should be in the profile"
+git checkout -q -- .outfit/profiles/yolo/AGENTS.md
+run outfit sync
+
+step "A new worktree follows the clone's profile with nothing to do"
+run git worktree add -q ../demo-wt
+[ -L ../demo-wt/AGENTS.md ] || fail "the new worktree should have the profile's AGENTS.md too"
+
+step "A profile of your own, never versioned: new, edit, and promote it when you want the team to have it"
+run outfit new mine --from yolo
+run outfit status
+run outfit promote mine
+git add --sparse -f .outfit/profiles/mine
+run git commit -m "share the mine profile"
+
+step "Inactive profiles are hidden from the working tree (agents would find them in every search); show one when you need to edit it"
+[ ! -e .outfit/profiles/mine ] || echo "(mine is on disk because it was just promoted)"
+run outfit author on mine
+run outfit author
+run outfit author off mine
+
+step "Teammates who do not use outfit: one line and one document, nothing committed for you"
+run outfit use base
+run outfit init --team --dry-run
+
+step "Documentation for coding agents is carried by the binary"
+run outfit skills basics | head -n 5 || true
+
+step "Is there a newer release? (needs the network and, while the repository is private, a GitHub token)"
+(outfit update --check 2>&1 || true) | sed 's/^/    /'
+
 step "outfit uninstall: everything init added is removed"
 run outfit uninstall
 [ "$(git config core.hooksPath)" = .husky ] || fail "core.hooksPath should be back to .husky"
+[ ! -L AGENTS.md ] || fail "uninstall should put the team's AGENTS.md back"
 echo "last" >>file.txt
 git add -A
 run git commit -m "fifth commit (husky directly)"
-[ "$(runs)" = 4 ] || fail "husky should keep working without outfit"
+[ "$(runs)" = 5 ] || fail "husky should keep working without outfit"
 
 printf '\n\033[32m✓ The demo checked everything it showed.\033[0m\n'
