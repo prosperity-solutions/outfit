@@ -51,7 +51,7 @@ jobs:
       # No build cache in release jobs: it is shared with every job that runs on a
       # push to main, and the build job holds the signing keys. Whatever wrote the
       # cache first would decide what we compile and sign.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version-file: go.mod
           cache: false
@@ -130,7 +130,7 @@ jobs:
       # No build cache in release jobs: it is shared with every job that runs on a
       # push to main, and the build job holds the signing keys. Whatever wrote the
       # cache first would decide what we compile and sign.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version-file: go.mod
           cache: false
@@ -396,7 +396,7 @@ jobs:
         with:
           name: release-notes
           path: notes
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version-file: go.mod
           cache: false
