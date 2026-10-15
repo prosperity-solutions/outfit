@@ -27,11 +27,33 @@ type State struct {
 	// Swaps are the paths currently swapped by the active profile (filled by
 	// sync). The pre-commit guard protects exactly these.
 	Swaps []Swap `json:"swaps"`
+	// Profile is the profile sync last made real in this worktree ("" = base).
+	Profile string `json:"profile,omitempty"`
+	// Author is author mode (`outfit author on`): every committed profile is on
+	// disk for editing side by side, instead of only the active one.
+	Author bool `json:"author,omitempty"`
+	// CommittedProfiles remembers that the repository has committed profiles, so
+	// the no-op sync path can keep inactive ones hidden without asking git.
+	CommittedProfiles bool `json:"committed_profiles,omitempty"`
+	// SparseSet and ExpectFilesSet record that OUTFIT turned sparse checkout and
+	// sparse.expectFilesOutsideOfPatterns on in this worktree, so uninstall undoes
+	// exactly that and nothing a person configured.
+	SparseSet      bool `json:"sparse_set,omitempty"`
+	ExpectFilesSet bool `json:"expect_files_set,omitempty"`
 }
 
 // Swap is one swapped path.
 type Swap struct {
 	Path string `json:"path"`
+	// Target is the symlink text sync made, so a link someone else replaced is
+	// told apart from ours.
+	Target string `json:"target,omitempty"`
+	// VariantHash is the SHA-256 of the variant file when sync last looked at it:
+	// "unchanged since linking" is what lets an editor's atomic save be absorbed.
+	VariantHash string `json:"variant_hash,omitempty"`
+	// BaseBlob is the blob of the committed (base) file at link time: when HEAD's
+	// blob for the path differs, the base moved under the swap (a stale base).
+	BaseBlob string `json:"base_blob,omitempty"`
 }
 
 // Setting is one outfit.* git config value.

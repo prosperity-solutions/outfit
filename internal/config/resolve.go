@@ -75,7 +75,7 @@ type Result struct {
 func ChooseProfile(gc GitConfig) (ProfileChoice, []Warning) {
 	var warns []Warning
 	if _, ok := gc.last(ScopeGlobal, KeyProfile); ok {
-		warns = append(warns, Warning{Source: "global git config", Message: "outfit.profile is set globally and ignored: profile names are per repo (choose one inside a repo with `git config --local outfit.profile <name>`, then run `git config --global --unset outfit.profile`)"})
+		warns = append(warns, Warning{Source: "global git config", Message: "outfit.profile is set globally and ignored: profile names are per repo (choose one inside a repo with `outfit use <name>`, then run `git config --global --unset outfit.profile`)"})
 	}
 	wt, hasWT := gc.last(ScopeWorktree, KeyProfile)
 	lc, hasLC := gc.last(ScopeLocal, KeyProfile)
@@ -138,7 +138,7 @@ func Resolve(in Input) Result {
 		res.Warnings = append(res.Warnings, Warning{Source: "system git config", Message: "outfit.* values in the system git config are ignored: set them with `outfit set`"})
 	}
 	if _, ok := in.Git.last(ScopeCommand, KeyProfile); ok {
-		res.Warnings = append(res.Warnings, Warning{Source: "command line", Message: "outfit.profile given with `git -c` is ignored: choose a profile with `git config --local outfit.profile <name>`"})
+		res.Warnings = append(res.Warnings, Warning{Source: "command line", Message: "outfit.profile given with `git -c` is ignored: choose a profile with `outfit use <name>`"})
 	}
 	for _, sc := range []string{ScopeCommand, ScopeWorktree, ScopeLocal, ScopeGlobal} {
 		if _, ok := in.Git.last(sc, KeyLocked); ok {

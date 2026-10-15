@@ -1,0 +1,89 @@
+# Scenario 10 (docs/HANDOVER.md §7.4): uninstall restores `git config --list`, the
+# sparse state and the working tree, in the order that matters (links first, then
+# sparse checkout off, then the rest). Also 18: inactive profiles are not on disk,
+# author mode round-trips.
+fixture repo team
+cd repo
+exec git config --list
+cp stdout $WORK/config-before.txt
+exec git status --short --ignored
+cp stdout $WORK/status-before.txt
+exec git ls-files -t
+cp stdout $WORK/ls-before.txt
+exec find . -path ./.git -prune -o -print
+cp stdout $WORK/tree-before.txt
+exec cat .git/info/exclude
+cp stdout $WORK/exclude-before.txt
+
+outfit init
+outfit use yolo
+exec sh -c 'echo "kept" >> AGENTS.md'
+# 18. Inactive profiles are not on disk; search tools do not see .outfit.
+exists .outfit/profiles/yolo
+! exists .outfit/profiles/lean
+! exec grep -r --exclude-dir=.git -l 'lean web rules' .
+# grep -r does not follow the link: the hits are in the real files (GNU grep -R also
+# lists the link: the documented, accepted residual risk).
+exec sh -c 'grep -rl "yolo rules" --exclude-dir=.git . | sort'
+stdout '^\./\.outfit/profiles/yolo/AGENTS.md$'
+! stdout '^\./AGENTS.md$'
+
+# author mode round-trips: all profiles on disk, then hidden again.
+outfit author on
+exists .outfit/profiles/lean/apps/web/AGENTS.md
+exists .outfit/profiles/yolo/AGENTS.md
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec git status --short
+stdout '^ M \.outfit/profiles/yolo/AGENTS.md$'
+! stdout 'lean'
+outfit sync --json
+stdout '"in_sync":true'
+outfit author off
+! exists .outfit/profiles/lean
+exists .outfit/profiles/yolo
+exec git checkout -q -- .outfit/profiles/yolo/AGENTS.md
+
+# A hand edit of the profile files persists through uninstall: the variant is in
+# the committed profile, the base file comes back untouched.
+exec sh -c 'echo "kept" >> AGENTS.md'
+exec git config --worktree --get core.sparseCheckout
+stdout '^true$'
+
+outfit uninstall
+stdout 'uninstalled'
+! islink AGENTS.md
+! islink CLAUDE.md
+exec cat AGENTS.md
+! stdout 'yolo rules'
+stdout 'base rules'
+exists .outfit/profiles/lean/profile.config
+exists .outfit/profiles/yolo/profile.config
+exec git config --list
+cmp stdout $WORK/config-before.txt
+exec git ls-files -t
+cmp stdout $WORK/ls-before.txt
+exec find . -path ./.git -prune -o -print
+cmp stdout $WORK/tree-before.txt
+exec cat .git/info/exclude
+cmp stdout $WORK/exclude-before.txt
+! exists .git/info/sparse-checkout
+! exists .git/outfit
+# The only difference left from the start is the variant edit.
+exec git status --short
+stdout '^ M \.outfit/profiles/yolo/AGENTS.md$'
+exec git checkout -q -- .outfit/profiles/yolo/AGENTS.md
+exec git status --short --ignored
+cmp stdout $WORK/status-before.txt
+
+# Twice is fine.
+outfit uninstall
+stdout 'nothing to uninstall'
+
+# A regular file where a link was is the person's: uninstall leaves its bytes alone.
+outfit init
+outfit use yolo
+atomicsave AGENTS.md 'my own bytes\n'
+! outfit uninstall
+stderr 'regular file where outfit.s link was'
+exec cat AGENTS.md
+stdout 'my own bytes'

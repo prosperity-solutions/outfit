@@ -42,6 +42,10 @@ type GitConfig struct {
 	// SparseCheckout reports core.sparseCheckout=true in the repo's own or the
 	// worktree's config.
 	SparseCheckout bool
+	// ExpectFiles reports sparse.expectFilesOutsideOfPatterns=true (any scope, the
+	// last value wins as in git): without it git clears skip-worktree on a swapped
+	// path and `git status` shows the link as a type change.
+	ExpectFiles bool
 	// Warnings lists outfit.* keys that were not valid.
 	Warnings []Warning
 }
@@ -75,6 +79,10 @@ func ParseGitList(out []byte) GitConfig {
 		}
 		if lk == "core.sparsecheckout" && (string(scope) == ScopeLocal || string(scope) == ScopeWorktree) {
 			gc.SparseCheckout = gitBool(val)
+			continue
+		}
+		if lk == "sparse.expectfilesoutsideofpatterns" {
+			gc.ExpectFiles = gitBool(val)
 			continue
 		}
 		if lk == "extensions.worktreeconfig" {

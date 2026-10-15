@@ -66,8 +66,11 @@ outfit set hook.pre-commit=off            # ...this clone only
 outfit set hook.pre-commit=off --here     # ...this worktree only
 outfit set hook.pre-commit=               # take the override away again
 outfit set biome=off --global             # a free-form toggle (only hooks that ask for it)
-outfit status                    # the active profile, and where every value comes from
 outfit ls                        # the profiles you can switch to
+outfit use yolo                  # swap in the yolo profile's files (and toggles)
+outfit use base                  # back to exactly the committed files
+outfit show lean                 # a profile's toggles and files, without switching
+outfit status                    # the active profile, where every value comes from, in sync or not
 outfit update                    # install the latest release (--check only looks)
 ```
 
@@ -95,7 +98,9 @@ profile, then the team's committed defaults in `.outfit/config`. Keys the team
 ## Status
 
 Under construction, one pull request at a time: toggles, the hook dispatcher and
-the release pipeline and `outfit update` are in; profile file swaps are next. How a
+the release pipeline, `outfit update` and profile file swaps (`use`, `sync`, `show`,
+`author`) are in; local and worktree profiles (`new`, `promote`), conflict and stale
+detection are next. Swaps: [docs/profiles.md](docs/profiles.md). How a
 release is built and checked: [docs/release.md](docs/release.md). The plan is
 [docs/HANDOVER.md](docs/HANDOVER.md); how git actually behaves, pinned by tests, is
 [docs/git-behavior.md](docs/git-behavior.md).

@@ -1,0 +1,40 @@
+# Scenario 8 (docs/HANDOVER.md §7.4): ten parallel syncs across a farm of worktrees
+# are serialized per worktree (a lock, not a skip) and end valid.
+fixture repo team worktrees=2
+cd repo
+outfit init
+outfit use yolo
+# `use` syncs the worktree it runs in; the others (which follow the clone default)
+# catch up on their next trigger or sync.
+exec sh -c 'cd ../repo-wt1 && outfit sync && cd ../repo-wt2 && outfit sync'
+islink ../repo-wt1/AGENTS.md .outfit/profiles/yolo/AGENTS.md
+islink ../repo-wt2/AGENTS.md .outfit/profiles/yolo/AGENTS.md
+
+# Break every link in every worktree, then hammer sync from ten processes at once.
+exec sh -c 'for d in . ../repo-wt1 ../repo-wt2; do rm -f $d/AGENTS.md $d/CLAUDE.md; done'
+exec sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do for d in . ../repo-wt1 ../repo-wt2; do (cd $d && outfit sync >> $WORK/sync-$i.log 2>&1 || echo "exit $?" >> $WORK/sync-$i.log) & done; done; wait'
+exec sh -c 'cat $WORK/sync-*.log'
+! stdout 'exit'
+! stdout 'another outfit sync'
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+islink CLAUDE.md .outfit/profiles/yolo/CLAUDE.md
+islink ../repo-wt1/AGENTS.md .outfit/profiles/yolo/AGENTS.md
+islink ../repo-wt2/CLAUDE.md .outfit/profiles/yolo/CLAUDE.md
+exec git status --short
+! stdout .
+exec git -C ../repo-wt1 status --short
+! stdout .
+outfit sync --json
+stdout '"in_sync":true'
+exec git -C ../repo-wt2 ls-files -t -- AGENTS.md
+stdout '^S AGENTS.md$'
+# No lock is left behind.
+! exists .git/outfit/sync.lock
+! exists .git/worktrees/repo-wt1/outfit/sync.lock
+
+# A stale lock (its owner was killed) is taken over, not waited on.
+exec sh -c 'echo 99999999 > .git/outfit/sync.lock'
+exec rm AGENTS.md
+outfit sync
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+! exists .git/outfit/sync.lock

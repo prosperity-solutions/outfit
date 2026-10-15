@@ -68,7 +68,7 @@ func wantsJSON(args []string) bool {
 }
 
 // usageTail is each command's positional arguments, for `-h`.
-var usageTail = map[string]string{"get": " <key>", "set": " <key>=<val>…", "ls": "", "status": "", "version": "", "update": ""}
+var usageTail = map[string]string{"get": " <key>", "set": " <key>=<val>…", "ls": "", "status": "", "version": "", "update": "", "sync": "", "use": " <profile>", "show": " <profile> [path]", "author": " on|off"}
 
 // newFlags makes a FlagSet that prints nothing itself: errors go through report
 // (so --json callers get JSON) and -h through parseArgs.

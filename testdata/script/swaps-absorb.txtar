@@ -1,0 +1,81 @@
+# Scenarios 1 and 2 (docs/HANDOVER.md §7.4): an editor's atomic save replaces the
+# link with a regular file that git cannot see. sync absorbs it byte for byte when
+# the profile's copy is unchanged; when both changed, both are quarantined, nothing
+# is overwritten, and the exit is 3.
+fixture repo team
+cd repo
+outfit init
+outfit use yolo
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+
+# 1. Atomic save: absorbed, byte-identical, relinked, status shows the profile edit.
+atomicsave AGENTS.md 'written by an editor\nwith two lines\n'
+! islink AGENTS.md
+outfit sync
+! stderr .
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec cat .outfit/profiles/yolo/AGENTS.md
+stdout 'written by an editor'
+stdout 'with two lines'
+exec cat AGENTS.md
+stdout 'written by an editor'
+exec git status --short
+stdout '^ M \.outfit/profiles/yolo/AGENTS.md$'
+! exists .git/outfit/quarantine
+# Twice: nothing changes the second time.
+outfit sync --json
+stdout '"changed":false'
+stdout '"in_sync":true'
+
+# An absorb of bytes that are not text is just as exact.
+exec git checkout -q -- .outfit/profiles/yolo/AGENTS.md
+outfit sync
+exec sh -c 'printf "\000\001\002 binary \377" > blob.bin'
+exec cp blob.bin AGENTS.md.new
+exec mv AGENTS.md.new AGENTS.md
+outfit sync
+exec cmp blob.bin .outfit/profiles/yolo/AGENTS.md
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec git checkout -q -- .outfit/profiles/yolo/AGENTS.md
+outfit sync
+
+# 2. Both changed: the variant is edited through the link, THEN an editor replaces
+# the link without sync having run in between.
+exec sh -c 'echo "edited through the link" >> AGENTS.md'
+atomicsave AGENTS.md 'the editor does not know\n'
+! outfit sync
+stderr 'AGENTS.md was replaced by a regular file AND the profile.s copy changed'
+stderr 'copies saved in'
+stderr 'fix: compare them'
+# Nothing was overwritten or relinked: the file stays, the variant keeps its edit.
+! islink AGENTS.md
+exec cat AGENTS.md
+stdout 'the editor does not know'
+exec cat .outfit/profiles/yolo/AGENTS.md
+stdout 'edited through the link'
+# Both versions are in quarantine, whole.
+exec sh -c 'cat .git/outfit/quarantine/*/file/AGENTS.md'
+stdout 'the editor does not know'
+exec sh -c 'cat .git/outfit/quarantine/*/variant/AGENTS.md'
+stdout 'edited through the link'
+# Running sync again finds the same thing, exits 3 again and saves nothing new.
+exec sh -c 'ls .git/outfit/quarantine | wc -l | tr -d " "'
+cp stdout $WORK/q1.txt
+! outfit sync
+exec sh -c 'ls .git/outfit/quarantine | wc -l | tr -d " "'
+cmp stdout $WORK/q1.txt
+! outfit status --json
+stdout '"needs_human":true'
+stdout '"fixes":\["compare them'
+! outfit status
+stderr 'fix: compare them'
+# The person resolves it: they put the content where they want it (here: the file
+# wins, written into the profile) and relink by removing the file.
+exec cp AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec rm AGENTS.md
+outfit sync
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec cat AGENTS.md
+stdout 'the editor does not know'
+outfit sync --json
+stdout '"in_sync":true'

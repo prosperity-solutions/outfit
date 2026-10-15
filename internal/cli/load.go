@@ -77,9 +77,13 @@ func load(ctx context.Context, e Env) (*loaded, error) {
 			if pcfg, err = profiles.ReadConfig(p); err != nil {
 				return nil, Errorf("cannot read the profile config of %q: %v", choice.Name, err)
 			}
+		} else if p, hc, ok := profiles.LocateHead(ctx, l.Git, r, choice.Name); ok {
+			// A committed profile that git has but the disk does not (hidden until the
+			// next sync): its toggles still apply, read from HEAD.
+			l.Profile, pcfg = &p, hc
 		} else {
 			warns = append(warns, config.Warning{Source: "profile " + choice.Name,
-				Message: "the active profile does not exist on disk; treating it as base. Fix: outfit ls, then git config --local outfit.profile <name>"})
+				Message: "the active profile does not exist (on disk or at HEAD); treating it as base. Fix: outfit ls, then outfit use <name>"})
 		}
 	}
 

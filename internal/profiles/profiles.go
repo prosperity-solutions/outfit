@@ -165,6 +165,29 @@ func Locate(r repo.Repo, name string) (Profile, bool) {
 	return Profile{}, false
 }
 
+// LocateHead finds a COMMITTED profile that exists at HEAD but is not on disk (an
+// inactive profile is hidden; so is the active one in the moment between
+// `git config outfit.profile <name>` and the sync that brings it back). It returns
+// the profile and its profile.config as committed. It costs git calls, so it is
+// only for that rare mismatch, never the hot path.
+func LocateHead(ctx context.Context, g gitx.Client, r repo.Repo, name string) (Profile, *config.File, bool) {
+	if ValidName(name) != nil {
+		return Profile{}, nil, false
+	}
+	res, err := g.Read(ctx, "ls-tree", "-r", "--name-only", "-z", "HEAD", "--", CommittedRoot+"/"+name+"/")
+	if err != nil || len(res.Stdout) == 0 {
+		return Profile{}, nil, false
+	}
+	p := Profile{Name: name, Tier: Committed, Dir: filepath.Join(TierDir(r, Committed), name)}
+	cfg := &config.File{Source: CommittedRoot + "/" + name + "/" + ProfileConfig, Keys: map[string]string{}}
+	for _, f := range strings.Split(string(res.Stdout), "\x00") {
+		if f == CommittedRoot+"/"+name+"/"+ProfileConfig {
+			cfg = HeadConfig(ctx, g, name)
+		}
+	}
+	return p, cfg, true
+}
+
 // ReadConfig parses the profile's profile.config from disk. A missing file is
 // an empty config, not an error.
 func ReadConfig(p Profile) (*config.File, error) {

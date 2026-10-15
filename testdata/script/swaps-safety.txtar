@@ -1,0 +1,96 @@
+# Scenarios 5 and 6 (docs/HANDOVER.md §7.4): no git command can commit a swapped
+# path or a symlink (mode 120000), and none destroys the variant's bytes.
+fixture repo team
+cd repo
+outfit init
+outfit use yolo
+exec sh -c 'echo "only mine" >> CLAUDE.md'
+exec git add -u .outfit
+exec git commit -qm 'docs: my claude rules'
+exec cat .outfit/profiles/yolo/CLAUDE.md
+cp stdout $WORK/claude-variant.txt
+
+# commit -a and add -A never stage the link (the variant's own edit is fine).
+exec sh -c 'echo "another" >> AGENTS.md'
+exec git add -A
+exec git diff --cached --name-status
+stdout '^M\t\.outfit/profiles/yolo/AGENTS.md$'
+! stdout '^[A-Z]\s+AGENTS.md$'
+exec git reset -q
+exec git commit -a -qm 'docs: another line'
+exec git show --name-status --format=%s HEAD
+! stdout '^T'
+! stdout '(^|\s)AGENTS.md$'
+exec git ls-tree HEAD -- AGENTS.md
+stdout '^100644 blob'
+
+# `git add` on the path itself is refused by git (sparse); `git add --sparse` has no
+# effect on a path git is told to expect outside the patterns (git versions differ
+# on this, so assert the outcome, not the mechanism).
+! exec git add AGENTS.md
+stderr 'sparse'
+exec git add --sparse AGENTS.md
+exec git diff --cached --name-status
+! stdout '^T\s+AGENTS.md'
+exec git reset -q
+# Forcing the symlink into the index by hand is what the pre-commit guard is for.
+exec sh -c 'h=$(printf "x" | git hash-object -w --stdin) && git update-index --add --cacheinfo 120000,$h,AGENTS.md'
+exec git diff --cached --raw
+stdout ' 120000 '
+! exec git commit -qm 'feat: the link'
+stderr 'AGENTS.md is staged as a symlink'
+stderr 'fix: git reset -q -- AGENTS.md'
+exec git reset -q -- AGENTS.md
+exec git ls-tree HEAD -- AGENTS.md
+stdout '^100644 blob'
+# `git reset -- <path>` also dropped git's skip-worktree bit, so the link would show
+# as a type change: sync notices and puts the bit back.
+exec git ls-files -t -- AGENTS.md
+stdout '^H AGENTS.md$'
+! outfit status
+stdout 'state    out of sync'
+outfit sync
+exec git ls-files -t -- AGENTS.md
+stdout '^S AGENTS.md$'
+exec git status --short
+! stdout .
+
+# sparse-checkout disable then commit -a: the real danger (verified): it would
+# commit the symlink. The guard refuses it and says why.
+exec git sparse-checkout disable
+exec sh -c 'echo "again" >> CLAUDE.md'
+! exec git commit -a -qm 'feat: committed with sparse off'
+stderr 'sparse checkout is off'
+stderr 'fix: outfit sync'
+exec git reset -q
+outfit sync
+exec git config core.sparseCheckout
+stdout '^true$'
+exec git status --short
+exec git checkout -q -- .outfit/profiles/yolo/CLAUDE.md
+
+# Nothing destroys the variant's bytes: reset --hard, checkout -f, clean -fdx,
+# stash -u and pop, rebase -i with an edit in flight.
+exec sh -c 'echo "precious" >> AGENTS.md'
+exec git stash push -u -q
+exec git stash pop -q
+exec cat AGENTS.md
+stdout 'precious'
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec git add -A
+exec git commit -qm 'docs: precious'
+exec git clean -fdxq
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec git reset -q --hard HEAD
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec git checkout -q -f HEAD
+islink CLAUDE.md .outfit/profiles/yolo/CLAUDE.md
+exec cat AGENTS.md
+stdout 'precious'
+env GIT_SEQUENCE_EDITOR=true GIT_EDITOR=true
+exec git rebase -i HEAD~2
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec cat AGENTS.md
+stdout 'precious'
+exec git status --short
+! stdout .

@@ -15,9 +15,9 @@ import (
 // BannerCommands are the human-facing commands that may print the update banner
 // (HANDOVER.md §5). Never sync, get, hook or diff: those run inside git hooks and
 // must stay fast, so this is an allowlist.
-// The spec's list also has use, show and new; add each here when the command exists
-// (a name listed before it exists would start a network check for "unknown command").
-var BannerCommands = map[string]bool{"status": true, "ls": true, "set": true, "init": true}
+// The spec's list also has new; add it here when the command exists (a name listed
+// before it exists would start a network check for "unknown command").
+var BannerCommands = map[string]bool{"status": true, "ls": true, "set": true, "init": true, "use": true, "show": true}
 
 // CacheDir is where outfit keeps update.json and update.lock: the user cache
 // directory, derived from the given environment so tests can point it anywhere.

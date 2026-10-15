@@ -18,7 +18,7 @@ stdout 'hook=pre-commit'
 cp $WORK/edited.md AGENTS.md
 ! exec git add AGENTS.md
 stderr 'sparse'
-exec git restore AGENTS.md
+exec sh -c 'git show HEAD:AGENTS.md > AGENTS.md'
 
 # A swapped path, staged on purpose with --sparse, is refused with the exact fix.
 cp $WORK/edited.md AGENTS.md

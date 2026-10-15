@@ -1,0 +1,54 @@
+# Scenario 21 (docs/HANDOVER.md §3.0): a clone with .outfit/ committed, on a machine
+# WITHOUT outfit, gets exactly the committed repository: every hook runs, the files
+# are the base files, `git status` is clean, and the fallback snippet returns the
+# committed toggle value. Then the same clone WITH outfit installed but no profile
+# chosen is just as plain (base means no swaps).
+fixture repo team husky upstream
+cd repo
+env WITHOUTFIT=$PATH
+env PATH=$PATHNOOUTFIT
+! exec sh -c 'command -v outfit'
+
+# Files: the committed ones, as regular files.
+! islink AGENTS.md
+! islink CLAUDE.md
+! islink apps/web/AGENTS.md
+exec cat AGENTS.md
+stdout 'base rules'
+exists .outfit/profiles/yolo/AGENTS.md
+exists .outfit/profiles/lean/apps/web/AGENTS.md
+exec git status --short
+! stdout .
+exec git ls-files -t -- AGENTS.md
+stdout '^H AGENTS.md$'
+
+# Hooks: every one runs, with git's own arguments.
+exec git commit --allow-empty -qm 'feat: a commit'
+hooklog
+stdout 'hook=pre-commit'
+stdout 'hook=commit-msg'
+
+# Toggles: the committed default, with plain git.
+exec sh -c 'v=$(outfit get biome 2>/dev/null || git config -f .outfit/config --get outfit.biome); echo "$v"'
+stdout '^on$'
+
+# With outfit installed and no profile chosen: still nothing swapped, nothing hidden
+# from `git status`, no git processes beyond the two budgeted ones on base.
+env PATH=$WITHOUTFIT
+outfit init
+! islink AGENTS.md
+exec cat AGENTS.md
+stdout 'base rules'
+exec git status --short
+! stdout .
+outfit status
+stdout 'profile  base'
+stdout 'files    \(no swaps\)'
+stdout 'state    in sync'
+gitcalls reset
+outfit sync
+gitcalls 2
+outfit uninstall
+exists .outfit/profiles/yolo/AGENTS.md
+exec git status --short
+! stdout .

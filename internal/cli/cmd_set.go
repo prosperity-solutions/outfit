@@ -66,7 +66,7 @@ func cmdSet(ctx context.Context, e Env, args []string) int {
 			return fail(Usagef("%q is a git hook name, not a toggle: to skip that hook write hook.%s=off", nk, nk).WithFix("outfit set hook." + nk + "=off"))
 		}
 		if config.IsReserved(nk) {
-			fix := "git config --local outfit.profile <name>"
+			fix := "outfit use <name>"
 			if nk == config.KeyLocked {
 				fix = "edit .outfit/config in a PR"
 			}

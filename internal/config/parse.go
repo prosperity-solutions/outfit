@@ -142,7 +142,7 @@ func ParseFile(r io.Reader, source string, kind Kind) *File {
 
 		switch key {
 		case KeyProfile:
-			warn(start, "`profile` is not allowed in committed config (the active profile is personal; choose one with `git config --local outfit.profile <name>`): ignored")
+			warn(start, "`profile` is not allowed in committed config (the active profile is personal; choose one with `outfit use <name>`): ignored")
 		case KeyLocked:
 			if kind != KindTeam {
 				warn(start, "`locked` is only valid in .outfit/config: ignored")

@@ -1,0 +1,128 @@
+# docs/HANDOVER.md §3.4: a profile swaps files with a sparse-checkout hide plus a
+# relative symlink. Switching, hiding inactive profiles, the no-op sync budget,
+# `git status` staying clean, and base restoring everything.
+fixture repo team
+cd repo
+exec cat AGENTS.md
+cp stdout $WORK/agents-base.txt
+exec cat apps/web/AGENTS.md
+cp stdout $WORK/web-base.txt
+
+# Nothing works before init: there would be no pre-commit guard.
+! outfit use yolo
+stderr 'not installed'
+stderr 'fix: outfit init'
+! outfit sync
+stderr 'fix: outfit init'
+
+outfit init
+# Committed profiles are hidden from disk from the first moment, on base too
+# (inactive ones are only ever in git), and .outfit stays out of search tools.
+! exists .outfit/profiles
+exists .outfit/config
+exec cat .git/info/exclude
+stdout '^/\.outfit/$'
+exec git status --short
+! stdout .
+exec git config --worktree --get sparse.expectFilesOutsideOfPatterns
+stdout '^true$'
+exec cat .git/info/sparse-checkout
+stdout 'outfit-managed'
+stdout '^!/\.outfit/profiles/\*$'
+
+# use yolo: relative links into the committed variant, edits show as plain git
+# status of the profile, and only the active profile is on disk.
+outfit use yolo
+stdout 'using yolo for this clone'
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+islink CLAUDE.md .outfit/profiles/yolo/CLAUDE.md
+exec cat AGENTS.md
+stdout 'yolo rules'
+exists .outfit/profiles/yolo/profile.config
+! exists .outfit/profiles/lean
+exec git status --short
+! stdout .
+exec git ls-files -t -- AGENTS.md CLAUDE.md
+stdout '^S AGENTS.md$'
+stdout '^S CLAUDE.md$'
+outfit status
+stdout 'AGENTS.md ← yolo \(committed\)'
+stdout 'state    in sync'
+outfit status --json
+stdout '"in_sync":true'
+
+# The no-op sync: two git processes (config, ls-files) and no writes.
+exec sh -c 'ls -l --time-style=+%s.%N .git/outfit/state.json AGENTS.md > $WORK/m1.txt 2>/dev/null || stat -f "%m %N" .git/outfit/state.json AGENTS.md > $WORK/m1.txt'
+gitcalls reset
+outfit sync
+! stdout .
+! stderr .
+gitcalls 2
+exec sh -c 'ls -l --time-style=+%s.%N .git/outfit/state.json AGENTS.md > $WORK/m2.txt 2>/dev/null || stat -f "%m %N" .git/outfit/state.json AGENTS.md > $WORK/m2.txt'
+cmp $WORK/m1.txt $WORK/m2.txt
+
+# Edits through the link land in the committed variant, visibly.
+exec sh -c 'echo "extra line" >> AGENTS.md'
+exec git status --short
+stdout '^ M \.outfit/profiles/yolo/AGENTS.md$'
+! stdout 'AGENTS.md$.*AGENTS.md'
+# Settling it into history leaves the link out of the commit.
+exec git add -A
+exec git commit -qm 'docs: refine the yolo agents file'
+exec git show --stat --format=%s HEAD
+stdout '\.outfit/profiles/yolo/AGENTS.md'
+! stdout ' AGENTS.md '
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+
+# Switching to lean: the yolo-only files return to base, the new one is swapped.
+outfit use lean
+islink apps/web/AGENTS.md ../../.outfit/profiles/lean/apps/web/AGENTS.md
+! islink AGENTS.md
+! islink CLAUDE.md
+exec cat AGENTS.md
+cmp stdout $WORK/agents-base.txt
+exists .outfit/profiles/lean
+! exists .outfit/profiles/yolo
+exec git status --short
+! stdout .
+outfit status
+stdout 'profile  lean'
+
+# Switching between two profiles that swap the same file relinks it.
+exec git config --local --unset-all outfit.profile
+outfit use yolo
+outfit use lean
+! exists .outfit/profiles/yolo
+
+# base: every file is the committed one again, nothing is left hidden but the
+# inactive profiles, and the clone default is gone.
+outfit use base
+! islink apps/web/AGENTS.md
+exec cat apps/web/AGENTS.md
+cmp stdout $WORK/web-base.txt
+! exists .outfit/profiles
+exec git status --short
+! stdout .
+! exec git config --local --get outfit.profile
+outfit status
+stdout 'state    in sync'
+
+# Unknown profiles are a usage error that names the fix.
+! outfit use nosuch
+stderr 'no profile called "nosuch"'
+stderr 'fix: outfit ls'
+! outfit use ../evil
+stderr 'invalid profile name'
+
+# show: any profile, active or not, without switching.
+outfit show lean
+stdout 'profile  lean \(committed\)'
+stdout 'toggles  biome=off'
+stdout 'files    apps/web/AGENTS.md'
+outfit show yolo AGENTS.md
+stdout 'yolo rules'
+outfit show yolo --json
+stdout '"files":\["AGENTS.md","CLAUDE.md"\]'
+! outfit show yolo nosuch.md
+stderr 'has no file'
+! exists .outfit/profiles

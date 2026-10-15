@@ -1,0 +1,72 @@
+# docs/HANDOVER.md §3.5 triggers: post-checkout, post-merge and post-rewrite run
+# sync, so what git just did (a checkout, a pull, an amend) never leaves the
+# swapped files out of step. A failing sync never changes git's exit code
+# (scenario 17). `reset --hard` fires nothing: the next trigger catches up.
+fixture repo team husky upstream
+cd repo
+outfit init
+outfit use yolo
+exec git status --short
+! stdout .
+
+# post-checkout: a missing link is back after any checkout.
+exec rm AGENTS.md
+! exists AGENTS.md
+exec git checkout -q main
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+# ...and the team's own husky hook still ran with the right arguments.
+hooklog
+stdout 'hook=post-checkout'
+
+# post-merge: a fast-forward pull of something upstream added. A regular file
+# replaced the link first (an editor's save): the pull's sync absorbs it.
+cd ..
+exec git clone -q repo-upstream.git other
+cd other
+exec git config user.email a@b
+exec git config user.name a
+exec sh -c 'echo "docs change" >> docs/guide.md'
+exec git commit -aqm 'docs: upstream change'
+exec git push -q origin HEAD:main
+cd ../repo
+atomicsave AGENTS.md 'saved while the pull was coming\n'
+exec git pull -q --ff-only origin main
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec cat AGENTS.md
+stdout 'saved while the pull was coming'
+exec git diff --quiet HEAD -- docs/guide.md
+exec git log -1 --format=%s
+stdout 'upstream change'
+
+# post-rewrite: an amend (after the pull, which needed the same history as upstream).
+exec rm CLAUDE.md
+exec git commit -q --amend --no-edit --allow-empty
+islink CLAUDE.md .outfit/profiles/yolo/CLAUDE.md
+
+# reset --hard fires nothing; the next trigger catches up.
+exec git checkout -q -- .outfit/profiles/yolo/AGENTS.md
+exec rm AGENTS.md
+exec git reset -q --hard HEAD
+! islink AGENTS.md
+exec git checkout -q main
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+
+# 17. A failing sync inside post-checkout does not change git's exit code: the
+# checkout succeeds, the failure is on stderr with its fix.
+exec sh -c 'echo "{ not json" > .git/outfit/state.json'
+exec git checkout -q main
+stderr 'sync after post-checkout failed'
+exec git status --short
+! stdout .
+# status says what is wrong; init rewrites the state file and sync converges.
+outfit init
+outfit sync
+outfit sync --json
+stdout '"in_sync":true'
+
+# A sync inside a hook does not call sync again (the nested git command fires hooks
+# of its own): bounded work, no lock deadlock.
+gitcalls reset
+exec rm AGENTS.md
+exec git checkout -q main
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md

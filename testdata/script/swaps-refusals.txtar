@@ -1,0 +1,67 @@
+# Refusals: outfit never takes over a sparse checkout it did not make, never hides
+# uncommitted edits, and never switches over uncommitted profile edits (scenarios 14
+# foreign sparse, 20 uncommitted edits). Each refusal names the exact fix and
+# changes nothing.
+fixture repo team
+cd repo
+
+# A foreign sparse checkout (cone mode, somebody's own) is refused.
+exec git sparse-checkout init --cone
+exec git sparse-checkout set apps/web
+outfit init
+stderr 'sparse checkout is already on and was not set up by outfit'
+stderr 'fix: git sparse-checkout disable'
+! outfit use yolo
+stderr 'not applied'
+stderr 'fix: git sparse-checkout disable'
+! islink AGENTS.md
+exec git sparse-checkout disable
+outfit sync
+outfit use yolo
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+
+# 20. use with uncommitted edits in the ACTIVE committed variant: refused, nothing half-switched.
+exec sh -c 'echo "draft" >> AGENTS.md'
+! outfit use lean
+stderr 'has uncommitted edits'
+stderr 'fix: git add -u .outfit'
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec cat AGENTS.md
+stdout 'draft'
+exists .outfit/profiles/yolo
+! exists .outfit/profiles/lean
+exec git config --local --get outfit.profile
+stdout '^yolo$'
+! outfit use base
+exec git config --local --get outfit.profile
+stdout '^yolo$'
+# Committed (or stashed), the switch goes through and keeps the bytes.
+exec git add -u .outfit
+exec git commit -qm 'docs: draft'
+outfit use lean
+! islink AGENTS.md
+outfit use yolo
+exec cat AGENTS.md
+stdout 'draft'
+
+# author off over uncommitted edits in a hidden profile: refused.
+outfit author on
+exec sh -c 'echo "lean draft" >> .outfit/profiles/lean/profile.config'
+! outfit author off
+stderr 'uncommitted edits'
+exists .outfit/profiles/lean
+exec git checkout -q -- .outfit/profiles/lean/profile.config
+outfit author off
+! exists .outfit/profiles/lean
+
+# A base file with uncommitted edits is never hidden under a link: the switch is
+# refused and the file keeps its bytes. (apps/web/AGENTS.md is lean's file.)
+outfit use base
+exec sh -c 'echo "my local notes" >> apps/web/AGENTS.md'
+! outfit use lean
+stderr 'apps/web/AGENTS.md has uncommitted changes'
+stderr 'fix: git stash push -- apps/web/AGENTS.md'
+! islink apps/web/AGENTS.md
+exec cat apps/web/AGENTS.md
+stdout 'my local notes'
+! exec git config --local --get outfit.profile

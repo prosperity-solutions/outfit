@@ -147,6 +147,13 @@ additions working.
   which makes git skip every hook. `outfit status` says so (exit 4) and `outfit init`
   fixes it; `outfit sync` will repair it automatically in a later release.
 
+## Syncing swapped files
+
+After `post-checkout`, `post-merge` and `post-rewrite` the dispatcher runs `outfit sync`
+(see [profiles.md](profiles.md)) so the swapped files follow what git just did. It runs
+after the team's own hook, and its result never changes the hook's exit code: a failing
+sync prints one line on stderr and git carries on.
+
 ## Environment variables
 
 - `OUTFIT_HOOK_ACTIVE=<hook>@<common-dir>`: set by `outfit hook` while it runs the

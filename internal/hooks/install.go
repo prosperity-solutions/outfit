@@ -297,7 +297,9 @@ func Install(ctx context.Context, g gitx.Client, r repo.Repo, gc config.GitConfi
 		}
 		st := &state.State{GitVersion: opt.GitVersion}
 		if prev, err := state.Read(w.GitDir); err == nil {
-			st.Swaps = prev.Swaps
+			// Keep everything sync recorded; init only refreshes the git version.
+			*st = *prev
+			st.GitVersion = opt.GitVersion
 		}
 		if opt.DryRun {
 			if prev, err := state.Read(w.GitDir); err != nil || prev.GitVersion != st.GitVersion {
