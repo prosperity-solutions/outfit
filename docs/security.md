@@ -70,4 +70,22 @@ Settings of `prosperity-solutions/outfit` (all were **disabled** when checked):
 | Secret scanning and push protection | Code security | a committed key is blocked at push |
 | Dependabot security updates | Code security | pull requests for vulnerable dependencies |
 | **First:** the `release` environment (it exists after the first release run): deployment branches = `main`, then move the seven signing secrets from the repository into it | Environments | until then they are repository secrets, which a pull request from a branch of this repository can read by editing a workflow (a fork's pull request cannot). After, only a run on `main` can |
-| Branch ruleset on `main` (pull request, `ship`, `commits`, `all-green`), optionally "require review from code owners" | Rules | nothing lands unreviewed by CI; `.github/CODEOWNERS` names who must look at workflows, `install.sh`, the update keys and the release scripts. Set up at the end of the build |
+| "Require review from code owners" on the `main` ruleset (the ruleset itself exists, see below) | Rules | `.github/CODEOWNERS` names who must look at workflows, `install.sh`, the update keys and the release scripts; with the setting on, a change to them waits for that person |
+
+## The ruleset on `main`
+
+One repository ruleset (named `main`, id 25160433, created at the end of the first build) applies to the
+default branch:
+
+- the branch cannot be deleted, and its history cannot be rewritten (no force-push);
+- a change comes by **pull request**, with no approval count required (CODEOWNERS review is the owner's
+  choice, see above);
+- the status checks **`all-green`**, **`Ship Workflow`** and **`Conventional Commits`** must pass.
+  `all-green` already needs the other two, so they are named twice on purpose: a run in which one of them
+  was skipped must not satisfy the rule;
+- repository admins can bypass it (`gh pr merge --admin`): the ship workflow allows that only after reading
+  the `ship` job's own conclusion (`docs/ship.md`, Step 6.3).
+
+Releases push **tags** only, so the ruleset does not touch them. Change it under Settings > Rules; to
+recreate it, `gh api -X POST repos/<owner>/<repo>/rulesets` with the JSON of the existing one
+(`gh api repos/<owner>/<repo>/rulesets/<id>`).

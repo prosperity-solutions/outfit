@@ -62,7 +62,7 @@ gofmt -l . && go vet ./... && golangci-lint run && go test -race ./...
   Nothing global changes, and nothing here touches the repo's visibility.
 - **Direct pushes to `main`:** the one bootstrap commit was the only one. Every
   other change is a PR, merged with `gh pr merge --squash --delete-branch`. Once
-  the `main` ruleset exists (PR 11 of `docs/HANDOVER.md`), a direct push needs an
+  the `main` ruleset exists (it does: `docs/security.md`), a direct push needs an
   admin bypass: don't.
 - Never force-push `main`. Releases push **tags** only; nothing is committed to
   `main` by CI.
@@ -89,7 +89,8 @@ gofmt -l . && go vet ./... && golangci-lint run && go test -race ./...
   `unit`, one `e2e` leg and the short `signing` smoke job (it must run on macOS: the
   release signs with the native `codesign`); the full macOS matrix runs on push to
   `main` and in `release.yml`, which waits for that run before it publishes.
-- `all-green` is the single check the ruleset requires. Matrix jobs report
+- `all-green` is the check that stands for every job; the ruleset also names `Ship Workflow` and
+  `Conventional Commits` (`docs/security.md`). Matrix jobs report
   expanded names (`e2e (ubuntu-24.04, 2.36)`), so a check called `e2e` never
   reports.
 
