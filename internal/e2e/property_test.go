@@ -349,7 +349,17 @@ func (m *model) check(after string) {
 	if out, _ := m.r.GitErr("ls-tree", "-r", "HEAD"); strings.Contains(out, "120000 ") {
 		m.rt.Fatalf("after %s: a symlink is committed (invariant: no symlink in history):\n%s\n%s", after, out, m.dump())
 	}
-	if out, _ := m.r.GitErr("diff", "--cached", "--raw"); strings.Contains(out, " 120000 ") {
+	// (git 2.36 moves outfit's link to `<path>~cruft` on a conflicting merge, and a later
+	// `git add -A` stages it: that is git acting on a leftover, the commit guard refuses it
+	// (swaps-cruft-guard.txtar) and history stays link-free above.)
+	stagedRaw, _ := m.r.GitErr("diff", "--cached", "--raw")
+	var staged120 []string
+	for _, l := range strings.Split(stagedRaw, "\n") {
+		if strings.Contains(l, " 120000 ") && !strings.HasSuffix(strings.TrimSpace(l), "~cruft") {
+			staged120 = append(staged120, l)
+		}
+	}
+	if out := strings.Join(staged120, "\n"); out != "" {
 		m.rt.Fatalf("after %s: a symlink is staged (invariant: none ever):\n%s\n%s", after, out, m.dump())
 	}
 	// No swapped path staged (paths in the middle of a merge are unmerged, not staged by anyone).

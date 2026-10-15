@@ -1,0 +1,22 @@
+# git 2.36 moves outfit's link aside to `<path>~cruft` when a merge conflicts on a swapped
+# path (docs/git-behavior.md row 42), and `merge --abort` runs no hook to clean it up, so a
+# following `git add -A` would stage a symlink. The pre-commit guard refuses it. (The
+# property test found this on the git floor; here the leftover is made by hand so the guard
+# is checked on every git version.)
+fixture repo team
+cd repo
+outfit init
+outfit use yolo
+symlink AGENTS.md~cruft -> .outfit/profiles/yolo/AGENTS.md
+exec git add -A
+! exec git commit -qm 'feat: everything'
+stderr 'AGENTS.md~cruft is outfit.s own link for AGENTS.md'
+stderr 'fix: git reset'
+# the printed fix works, and then the commit goes through with nothing of ours in it
+exec git reset -q -- AGENTS.md~cruft
+exec rm -f AGENTS.md~cruft
+outfit sync
+exec git add -A
+exec git commit -qm 'feat: nothing of outfit' --allow-empty
+exec git ls-tree -r HEAD
+! stdout '^120000'

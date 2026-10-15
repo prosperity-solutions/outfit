@@ -38,7 +38,8 @@ func (v Violation) String() string {
 //
 //   - the expected sparse config is missing (then git would happily commit the
 //     symlink: `git sparse-checkout disable` followed by `commit -a` did, verified);
-//   - any swapped path is staged as mode 120000 (never allowed);
+//   - any swapped path, or the `<path>~cruft` git 2.36 moves our link to during a merge
+//     conflict, is staged as mode 120000 (never allowed);
 //   - any swapped path is staged at all, unless OUTFIT_ALLOW=1 or a merge is in
 //     progress and a regular-file blob is staged (resolving a conflict on a swapped
 //     path is legitimate).
@@ -80,6 +81,15 @@ func Guard(ctx context.Context, g gitx.Client, gitDir string, gc config.GitConfi
 	allow := getenv("OUTFIT_ALLOW") == "1"
 	merging := exists(filepath.Join(gitDir, "MERGE_HEAD"))
 	for _, e := range parseRaw(res.Stdout) {
+		// git 2.36 moves our link aside to `<path>~cruft` when a merge conflicts on a swapped
+		// path, and `merge --abort` runs no hook to put things right: `git add -A` would stage
+		// that symlink. (Found by the property test.)
+		if base, ok := strings.CutSuffix(e.path, "~cruft"); ok && swapped[base] && e.newMode == "120000" {
+			out = append(out, Violation{Path: e.path,
+				Message: fmt.Sprintf("%s is outfit's own link for %s, moved aside by git during a merge: committing it would put a link into history", e.path, base),
+				Fix:     fmt.Sprintf("git reset -q -- %s && rm -f %s && outfit sync", shArg(e.path), shArg(e.path))})
+			continue
+		}
 		if !swapped[e.path] {
 			continue
 		}
