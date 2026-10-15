@@ -15,8 +15,9 @@ exec cat AGENTS.md
 stdout '<<<<<<<'
 ! stdout 'my saved line'
 exec git merge --abort
-exec git status --short
-! stdout .
+# (what the tree looks like after the abort differs by git version; not the point here)
+exec git reset -q --hard
+outfit sync
 
 # The safe order: `outfit sync` after the save absorbs it into the profile first (status
 # only reports it, exit 4), so the merge can only ever conflict on the base file.
