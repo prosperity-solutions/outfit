@@ -120,7 +120,7 @@ Under construction, one pull request at a time: toggles, the hook dispatcher and
 the release pipeline, `outfit update` and profile file swaps (`use`, `sync`, `show`,
 `author`), conflict and stale-base detection (`diff`, `ack`), `init --agents`, personal
 profiles (`new`, `promote`) and the agent skills (`skills`) are in; the property tests and the final polish are next. Swaps: [docs/profiles.md](docs/profiles.md). How a
-release is built and checked: [docs/release.md](docs/release.md). The plan is
+release is built and checked: [docs/release.md](docs/release.md); what protects the build: [docs/security.md](docs/security.md). The plan is
 [docs/HANDOVER.md](docs/HANDOVER.md); how git actually behaves, pinned by tests, is
 [docs/git-behavior.md](docs/git-behavior.md).
 

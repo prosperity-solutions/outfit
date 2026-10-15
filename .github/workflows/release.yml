@@ -8,8 +8,11 @@ name: Release
 #         \-> ci (waits for main's all-green) ----+-> publish -> verify (4 runners)
 #                                                           \-> verify-signing
 #
-# This is the ONLY workflow that references the MINISIGN_* and MACOS_* secrets,
-# and it only runs on pushes to main, so a pull request can never reach them.
+# This is the ONLY workflow that references the MINISIGN_* and MACOS_* secrets, and only
+# its `build` job does, in the `release` environment, on a push to main. Until the owner
+# scopes the secrets to that environment with deployment branches = main (docs/security.md),
+# they are still repository secrets, which a pull request from a branch of this repository
+# can read by editing a workflow: review and the ruleset are what stop that today.
 on:
   push:
     branches: [main]
@@ -37,6 +40,7 @@ jobs:
   version:
     name: Next version
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     env:
       GH_TOKEN: ${{ github.token }}
     outputs:
@@ -45,13 +49,14 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       previous: ${{ steps.v.outputs.previous }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       # No build cache in release jobs: it is shared with every job that runs on a
       # push to main, and the build job holds the signing keys. Whatever wrote the
       # cache first would decide what we compile and sign.
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
@@ -117,6 +122,15 @@ jobs:
     needs: version
     if: needs.version.outputs.releasable == 'true'
     runs-on: macos-latest
+    # The one job that holds the signing secrets, and only on a push to main. It runs in
+    # the `release` environment so GitHub records each use of them, and so the owner can
+    # restrict the secrets to main (Settings > Environments > release) without touching
+    # this file. Repository-level secrets keep working until then.
+    environment: release
+    outputs:
+      signed: ${{ steps.cfg.outputs.signed }}
+      notary: ${{ steps.cfg.outputs.notary }}
+      notes_sha256: ${{ steps.notes.outputs.sha256 }}
     # Notarization alone may wait 20 minutes; nothing else here should take long.
     timeout-minutes: 60
     env:
@@ -124,13 +138,14 @@ jobs:
       PREVIOUS: ${{ needs.version.outputs.previous }}
       ALLOW_UNTRUSTED_PREVIOUS_KEYS: ${{ vars.ALLOW_UNTRUSTED_PREVIOUS_KEYS }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       # No build cache in release jobs: it is shared with every job that runs on a
       # push to main, and the build job holds the signing keys. Whatever wrote the
       # cache first would decide what we compile and sign.
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
@@ -138,6 +153,7 @@ jobs:
       # Fail early, naming the thing, rather than building for ten minutes and
       # failing at the signing step.
       - name: Check the signing configuration
+        id: cfg
         env:
           MINISIGN_PUBLIC_KEY: ${{ vars.MINISIGN_PUBLIC_KEY }}
           HAVE_MINISIGN_SECRET: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
@@ -177,6 +193,10 @@ jobs:
             echo "::warning::MACOS_SIGN_P12 is not set: the macOS binary ships UNSIGNED. That is fine for curl installs (docs/macos-signing.md)."
             echo "macOS: unsigned (no MACOS_SIGN_P12)" >> "$GITHUB_STEP_SUMMARY"
           fi
+          # The later jobs learn whether macOS is signed from here, not by reading the secrets
+          # themselves: the secrets stay in this one job.
+          echo "signed=$HAVE_P12" >> "$GITHUB_OUTPUT"
+          echo "notary=$HAVE_NOTARY_KEY" >> "$GITHUB_OUTPUT"
           exit "$fail"
 
       - name: Install the signing tool
@@ -206,7 +226,7 @@ jobs:
           gobin=$(go env GOPATH)/bin
           export PATH="$PATH:$gobin"
           git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || git tag "$TAG"
-          go run github.com/goreleaser/goreleaser/v2@v2.18.3 release --clean --skip=publish
+          go run github.com/goreleaser/goreleaser/v2@v2.18.2 release --clean --skip=publish
 
       - name: Remove the signing key
         if: always()
@@ -237,6 +257,7 @@ jobs:
           exit 1
 
       - name: Gather the release files
+        id: notes
         run: |
           set -e
           # A new kind of asset (an SBOM, another archive format) must be added here,
@@ -254,14 +275,18 @@ jobs:
           ls -l out
           [ "$(find out -type f | wc -l)" -eq 5 ] || { echo "::error::expected 3 archives, checksums.txt and its signature in out/"; exit 1; }
           if [ -f dist/CHANGELOG.md ]; then cp dist/CHANGELOG.md notes.md; else printf 'Release %s\n' "$TAG" > notes.md; fi
+          # The release text travels as an artifact too: publish checks it against this hash.
+          notes_hash=$(shasum -a 256 notes.md | awk '{print $1}')
+          [ -n "$notes_hash" ] || { echo "::error::could not hash notes.md"; exit 1; }
+          echo "sha256=$notes_hash" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-files
           path: out/
           if-no-files-found: error
           retention-days: 7
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-notes
           path: notes.md
@@ -273,17 +298,20 @@ jobs:
     name: Smoke (${{ matrix.os }})
     needs: [version, build]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest, macos-15-intel]
     env:
       VERSION: ${{ needs.version.outputs.version }}
-      HAVE_P12: ${{ secrets.MACOS_SIGN_P12 != '' }}
+      HAVE_P12: ${{ needs.build.outputs.signed }}
       TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-files
           path: out
@@ -357,7 +385,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-      checks: read
+      checks: read # the all-green check run of this commit
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -379,27 +407,29 @@ jobs:
   # ── 4. Publish: tag, then a verified draft-first release ──────────────────
   publish:
     name: Publish
-    needs: [version, smoke, ci]
+    needs: [version, build, smoke, ci]
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
-      contents: write
+      contents: write # create the tag and the release; the only job that can write
     env:
       TAG: ${{ needs.version.outputs.tag }}
-      GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      NOTES_SHA256: ${{ needs.build.outputs.notes_sha256 }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-files
           path: out
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-notes
           path: notes
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
@@ -411,20 +441,31 @@ jobs:
         run: |
           set -e
           (cd out && sha256sum -c checksums.txt)
+          # The release text came through the same artifact storage: it must be what build wrote.
+          [ "$(sha256sum notes/notes.md | awk '{print $1}')" = "$NOTES_SHA256" ] || { echo "::error::notes.md is not the release text the build job wrote"; exit 1; }
           go run ./internal/tools/verifysig out/checksums.txt out/checksums.txt.minisig
+      # The tag is created through the API with the job's token, so no git credential is stored
+      # in the checkout (persist-credentials: false) for a later step to find.
       - name: Push the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -e
           sha=$(git rev-parse HEAD)
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            git fetch --quiet origin "refs/tags/$TAG:refs/tags/$TAG"
-            [ "$(git rev-list -n1 "$TAG")" = "$sha" ] || { echo "::error::$TAG already exists on a different commit"; exit 1; }
+          # Only a 404 means "no such tag"; anything else (a 403, a 5xx) stops here with its message.
+          if out=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --silent 2>&1); then
+            # Whatever kind of tag it is, ask what commit it resolves to.
+            have=$(gh api "repos/$GH_REPO/commits/refs/tags/$TAG" --jq '.sha')
+            [ "$have" = "$sha" ] || { echo "::error::$TAG already exists on a different commit"; exit 1; }
             echo "$TAG is already pushed at this commit (re-run)."
+          elif printf '%s' "$out" | grep -q 'HTTP 404'; then
+            gh api "repos/$GH_REPO/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$sha" --silent
           else
-            git tag "$TAG" "$sha"
-            git push origin "refs/tags/$TAG"
+            echo "::error::could not look up $TAG: $out"; exit 1
           fi
       - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: scripts/release/publish.sh "$TAG" out notes/notes.md
 
   # ── 5. The real install, exactly as a teammate does it ────────────────────
@@ -432,6 +473,7 @@ jobs:
     name: Verify (${{ matrix.os }})
     needs: [version, publish]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     permissions:
       contents: read
     strategy:
@@ -508,19 +550,22 @@ jobs:
   # ── 6. macOS signature, when there is one ─────────────────────────────────
   verify-signing:
     name: Verify macOS signing
-    needs: [version, publish]
+    needs: [version, build, publish]
     runs-on: macos-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
       TAG: ${{ needs.version.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      HAVE_P12: ${{ secrets.MACOS_SIGN_P12 != '' }}
-      HAVE_NOTARY: ${{ secrets.MACOS_NOTARY_KEY != '' }}
+      HAVE_P12: ${{ needs.build.outputs.signed }}
+      HAVE_NOTARY: ${{ needs.build.outputs.notary }}
       TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Check the published binary's signature
         run: |
           if [ "$HAVE_P12" != true ]; then

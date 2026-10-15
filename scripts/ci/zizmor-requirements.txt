@@ -1,0 +1,7 @@
+# zizmor, the GitHub Actions security linter, pinned by hash (pip --require-hashes).
+# 1.30.1 (2026-09-09) is the newest release older than the 7 days a new version waits
+# before outfit adopts it (1.31.0 shipped 2026-10-15). One hash per runner platform.
+zizmor==1.30.1 \
+    --hash=sha256:eee12266b793cb87ad4a7e3af2e72404f8a63e3de5eb099b80bf7b1cfd232a8e \
+    --hash=sha256:92906f448365672ebb657fb50d36f997290a3aaba8cac723214741ea9054845d \
+    --hash=sha256:f9eb092f089e35fa9fb3b70aeec0a19eca7dacf2ab161f1d50b18351895f085c
