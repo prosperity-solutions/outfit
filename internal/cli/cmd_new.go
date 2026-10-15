@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 	"github.com/prosperity-solutions/outfit/internal/hooks"
@@ -238,21 +235,26 @@ func worktreesUsing(ctx context.Context, l *loaded, name string) []uninstallWork
 	return out
 }
 
-// resyncWorktree runs `outfit sync` in another worktree, best effort and bounded.
+// resyncWorktree runs sync for another worktree in this process (no subprocess): the
+// same load-and-converge `outfit sync` does there. It reports whether that worked.
 func resyncWorktree(ctx context.Context, e Env, w uninstallWorktree) bool {
-	if w.Path == "" || e.Exe == "" {
+	if w.Path == "" {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, e.Exe, "sync")
-	cmd.Dir = w.Path
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "GIT_DIR=") && !strings.HasPrefix(kv, "GIT_WORK_TREE=") && !strings.HasPrefix(kv, "GIT_INDEX_FILE=") {
-			cmd.Env = append(cmd.Env, kv)
+	other := e
+	other.Dir = w.Path
+	other.Getenv = func(k string) string {
+		if k == "GIT_DIR" || k == "GIT_WORK_TREE" || k == "GIT_INDEX_FILE" {
+			return "" // the repository is found from the directory, not from this process's
 		}
+		return e.Getenv(k)
 	}
-	return cmd.Run() == nil
+	l, err := load(ctx, other)
+	if err != nil || requireInstalled(l) != nil {
+		return false
+	}
+	_, _, err = converge(ctx, other, l, false)
+	return err == nil
 }
 
 func worktreeLabels(ws []uninstallWorktree) []string {

@@ -50,7 +50,12 @@ func (w Worktree) Name() string {
 // coreWorktree reads `core.worktree` from the repository's config file ("" when it
 // has none), resolved against the common dir when relative.
 func coreWorktree(common string) string {
-	b, err := os.ReadFile(filepath.Join(common, "config"))
+	root, err := os.OpenRoot(common) // the config file is read from inside the common dir only
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = root.Close() }()
+	b, err := root.ReadFile("config")
 	if err != nil {
 		return ""
 	}
