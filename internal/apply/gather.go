@@ -15,6 +15,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -117,6 +118,9 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	if in.Profile != nil {
 		seen := map[string]bool{}
 		for _, f := range in.Files {
+			if IsJunk(pathpkg.Base(f)) {
+				continue // Finder, editor and merge leftovers are not profile files
+			}
 			if err := plan.ValidSwapPath(f); err != nil {
 				g.messages = append(g.messages, "profile file skipped: "+err.Error())
 				continue
@@ -192,6 +196,9 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		}
 		if in.Profile != nil {
 			pf.VariantHash = hashFile(in.variantPath(p))
+			if vi, err := os.Stat(in.variantPath(p)); err == nil {
+				pf.VariantExec = vi.Mode()&0o111 != 0
+			}
 		}
 		facts.Paths[p] = pf
 	}
@@ -229,8 +236,9 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		want.Sparse = plan.SparseText(plan.SparseOptions{Hidden: hidden, HideProfiles: hide, Active: active})
 		want.HidesProfiles = hide
 		if hide && want.Sparse != sparseNow(in.W.GitDir) {
-			// Only when the patterns are about to change. Compared with nothing but the index: a staged-only profile file is about
-			// to be taken off disk, and nothing else holds a copy.
+			// Only when the patterns are about to change: a profile file that is staged but
+			// not in HEAD is then about to leave the disk, and the index holds the only
+			// copy. `git diff --cached` is the index against HEAD.
 			res, err := in.Git.Read(ctx, "--literal-pathspecs", "diff", "--cached", "--name-only", "-z", "--", profiles.CommittedRoot)
 			if err != nil {
 				return want, facts, g, fmt.Errorf("cannot list staged profile files: %w", err)
@@ -249,6 +257,21 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	facts.SparseText = sparseNow(in.W.GitDir)
 	facts.ExcludeHas = excludeHas(filepath.Join(in.W.CommonDir, "info", "exclude"))
 	return want, facts, g, nil
+}
+
+// IsJunk reports a file the operating system or an editor leaves in a directory: never
+// a profile file, and never worth a note on every sync.
+func IsJunk(n string) bool {
+	switch n {
+	case ".DS_Store", "Thumbs.db", "desktop.ini":
+		return true
+	}
+	for _, suf := range []string{"~", ".swp", ".swo", ".swx", ".tmp", ".orig", ".rej", ".bak"} {
+		if strings.HasSuffix(n, suf) {
+			return true
+		}
+	}
+	return strings.HasPrefix(n, ".#") || (len(n) > 2 && strings.HasPrefix(n, "#") && strings.HasSuffix(n, "#"))
 }
 
 // sparseNow is the current info/sparse-checkout text ("" when absent).

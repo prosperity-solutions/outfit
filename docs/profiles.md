@@ -44,7 +44,9 @@ then puts a **relative symlink** at the path pointing into
 - `git status` stays clean, and `git add -A`, `git commit -a`, `reset --hard`,
   `clean -fdx`, `stash -u` and `rebase` leave the link alone;
 - an edit made through the link is an edit of the profile's file, and shows in plain
-  `git status` as ` M .outfit/profiles/<profile>/AGENTS.md`: that is where your edit went;
+  `git status` as ` M .outfit/profiles/<profile>/AGENTS.md`: that is where your edit went.
+  `git diff AGENTS.md` and `git restore AGENTS.md` do not see it; use
+  `git diff .outfit` and `git restore .outfit/profiles/<profile>/AGENTS.md`;
 - only the **active** profile is on disk. The others are in git; look at them with
   `outfit show`, or put them all on disk with `outfit author on`;
 - `.outfit/` is in `.git/info/exclude`, which keeps search tools like `rg` out of it.
@@ -55,6 +57,13 @@ then puts a **relative symlink** at the path pointing into
   `git add -f .outfit/profiles/<name>/…`, commit, and `outfit author off`. Files you
   staged but have not committed are never taken off disk: `outfit` refuses to hide them
   and says to commit first.
+
+A profile directory git does not have yet (made by hand, never committed) exists only
+in your working tree: `git clean -x` deletes it. `outfit use`/`status` warn while there are
+such files; commit them as described above. Finder and editor leftovers (`.DS_Store`,
+`*~`, `*.swp`, `*.orig`, …) are never profile files. If the base file is executable and the
+profile's copy is not (or the other way round), that path is not swapped and a note says
+how to make the two agree.
 
 The pre-commit guard refuses any commit that stages a swapped path or a symlink, and says
 how to fix it.

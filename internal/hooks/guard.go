@@ -71,9 +71,7 @@ func Guard(ctx context.Context, g gitx.Client, gitDir string, gc config.GitConfi
 	}
 
 	var out []Violation
-	if v := checkSparse(swapped, gitDir, gc); v != nil {
-		out = append(out, *v)
-	}
+	sparseViolation := checkSparse(swapped, gitDir, gc)
 
 	res, err := g.Read(ctx, "diff", "--cached", "--raw", "-z", "--no-renames", "--no-ext-diff")
 	if err != nil {
@@ -97,6 +95,17 @@ func Guard(ctx context.Context, g gitx.Client, gitDir string, gc config.GitConfi
 				Message: fmt.Sprintf("%s is swapped by your active profile and must not be committed from this checkout", e.path),
 				Fix:     fmt.Sprintf("git reset -q -- %s   (to commit it on purpose: OUTFIT_ALLOW=1 git commit …)", shArg(e.path))})
 		}
+	}
+	if sparseViolation != nil {
+		// `outfit sync` refuses while a swapped path is staged as a symlink, so the one
+		// command that works says both steps.
+		for _, v := range out {
+			if strings.Contains(v.Message, "staged as a symlink") {
+				sparseViolation.Fix = "git reset -q && outfit sync"
+				break
+			}
+		}
+		out = append([]Violation{*sparseViolation}, out...)
 	}
 	return out, nil
 }

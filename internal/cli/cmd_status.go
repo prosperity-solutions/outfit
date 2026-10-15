@@ -105,6 +105,9 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 		outOfSync = true
 		st.Warnings = append(st.Warnings, config.Warning{Source: "hook dispatcher", Message: st.Dispatcher.Problem + ": your team's hooks are NOT running. Fix: outfit init"})
 	}
+	if w := untrackedProfileWarning(ctx, l); w != "" {
+		st.Warnings = append(st.Warnings, config.Warning{Source: "profile", Message: w})
+	}
 	// A clash between a personal and a committed profile name is worth saying.
 	st.Warnings = append(st.Warnings, profiles.List(ctx, l.Git, l.Repo).Warnings...)
 
@@ -206,7 +209,10 @@ func cmdStatus(ctx context.Context, e Env, args []string) int {
 			fmt.Fprintf(e.Stderr, "note: %s\n", n)
 		}
 		for _, a := range syncRes.Refused {
-			fmt.Fprintf(e.Stderr, "note: %s\n  fix: %s\n", a.Reason, a.Fix)
+			fmt.Fprintf(e.Stderr, "note: %s\n", a.Reason)
+			if a.Fix != "" {
+				fmt.Fprintf(e.Stderr, "  fix: %s\n", a.Fix)
+			}
 		}
 	}
 	for _, wn := range st.Warnings {

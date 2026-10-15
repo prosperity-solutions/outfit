@@ -42,6 +42,8 @@ type PathFacts struct {
 	MatchesIndex bool   // when FS == File: git says the file is clean (not modified against the index)
 	FileHash     string // when FS == File and skip-worktree: SHA-256 of the file's content
 	VariantHash  string // SHA-256 of the variant file; "" when it is missing
+	// VariantExec says the variant file has an executable bit.
+	VariantExec bool
 }
 
 // Record is what sync remembered about a path the last time it linked it.
@@ -160,6 +162,8 @@ func Plan(w Want, f Facts) []Action {
 	var skips, conflicts []Action
 	for _, p := range paths {
 		pf := f.Paths[p]
+		// The ORDER of these cases is part of the behaviour: a refusal must come before
+		// any skip, or a switch could skip one file and change the tree around another.
 		switch {
 		case !pf.Tracked && !pf.Unmerged:
 			skips = append(skips, Action{Kind: Skip, Path: p, Reason: p + " is not tracked by git (a name must match the repository's exactly, case included), and outfit swaps only files the repository has"})
@@ -170,7 +174,8 @@ func Plan(w Want, f Facts) []Action {
 				Fix:    "resolve it, then: git add --sparse " + shq(p) + " && git commit, then outfit sync"})
 			delete(want, p)
 		case pf.Mode == "120000":
-			refuse = append(refuse, Action{Kind: Refuse, Path: p, Reason: p + " is a symlink in the repository itself; outfit swaps regular files only"})
+			refuse = append(refuse, Action{Kind: Refuse, Path: p, Reason: p + " is a symlink in the repository itself (or staged as one); outfit swaps regular files only",
+				Fix: "git reset -q -- " + shq(p) + "   (if the link is only staged), then: outfit sync"})
 		case pf.FS == Dir || pf.FS == Other:
 			refuse = append(refuse, Action{Kind: Refuse, Path: p, Reason: p + " is a directory or something that is not a file or link, where the profile wants a file"})
 		case pf.FS == File && !pf.SkipWorktree && !pf.MatchesIndex:
@@ -178,9 +183,14 @@ func Plan(w Want, f Facts) []Action {
 			// files are not on disk yet, and a refusal must come before anything changes.
 			refuse = append(refuse, Action{Kind: Refuse, Path: p,
 				Reason: p + " has uncommitted changes, and swapping it would hide them",
-				Fix:    "git stash push -- " + shq(p) + "   (or commit it), then rerun"})
+				Fix:    "git stash push -- " + shq(p) + "   (or commit it; do not `git stash pop` it back afterwards, put those edits in the profile's copy instead), then rerun"})
 		case pf.VariantHash == "":
 			skips = append(skips, Action{Kind: Skip, Path: p, Reason: "the profile's file for " + p + " is missing, so the base file stays"})
+			delete(want, p)
+		case pf.Mode == "100755" && !pf.VariantExec, pf.Mode == "100644" && pf.VariantExec:
+			skips = append(skips, Action{Kind: Skip, Path: p,
+				Reason: p + " and the profile's copy differ in the executable bit, which would break running it: the base file stays",
+				Fix:    "make them agree: chmod " + map[bool]string{true: "-x", false: "+x"}[pf.Mode == "100644"] + " .outfit/profiles/<profile>/" + p + " (then commit it), and run: outfit sync"})
 			delete(want, p)
 		}
 	}
@@ -212,6 +222,11 @@ func Plan(w Want, f Facts) []Action {
 		case Link:
 			out = append(out, Action{Kind: RemoveLink, Path: p})
 		case File:
+			if pf.Tracked && !pf.SkipWorktree && pf.MatchesIndex {
+				// Git already put the base file back (a sparse change that was cut short,
+				// or a checkout): it is the committed copy, there is nothing to save.
+				continue
+			}
 			out = append(out, Action{Kind: QuarantineFile, Path: p,
 				Reason: p + " is a regular file where outfit's link used to be, and the profile no longer swaps it: a copy is saved before the base file is restored"})
 		}

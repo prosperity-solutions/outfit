@@ -61,6 +61,9 @@ func Run(ctx context.Context, in Input) (*Result, error) {
 	if st, err = readState(in); err != nil {
 		return nil, err
 	}
+	// Author mode is a setting `outfit author` writes to state.json; one written while
+	// this sync waited for the lock must win over the value it was started with.
+	in.Author = st.Author
 	res, acts, err = in.planOnce(ctx, st)
 	if err != nil || len(res.Refused) > 0 || !actionable(acts) {
 		return res, err
@@ -134,89 +137,95 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 	next := *st
 	quarantined := map[string]bool{}
 
-	for _, a := range acts {
-		switch a.Kind {
-		case plan.Skip, plan.Conflict, plan.RecordHash:
-			// Nothing to run; RecordHash only changes the state written below.
-		case plan.SetExpectFiles:
-			if _, err := in.Git.Write(ctx, "config", "--worktree", "sparse.expectFilesOutsideOfPatterns", "true"); err != nil {
-				return res, fmt.Errorf("cannot set sparse.expectFilesOutsideOfPatterns: %w", err)
-			}
-			next.ExpectFilesSet = true
-			res.Changed = true
-		case plan.RemoveLink:
-			p := in.abs(a.Path)
-			if !realParents(in.W.WorkTree, a.Path) {
-				return res, fmt.Errorf("%s is below a symlinked directory: refusing to act through it", a.Path)
-			}
-			if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-				if err := os.Remove(p); err != nil {
-					return res, err
+	stepErr := func() error {
+		for _, a := range acts {
+			switch a.Kind {
+			case plan.Skip, plan.Conflict, plan.RecordHash:
+				// Nothing to run; RecordHash only changes the state written below.
+			case plan.SetExpectFiles:
+				if _, err := in.Git.Write(ctx, "config", "--worktree", "sparse.expectFilesOutsideOfPatterns", "true"); err != nil {
+					return fmt.Errorf("cannot set sparse.expectFilesOutsideOfPatterns: %w", err)
+				}
+				next.ExpectFilesSet = true
+				res.Changed = true
+			case plan.RemoveLink:
+				p := in.abs(a.Path)
+				if !realParents(in.W.WorkTree, a.Path) {
+					return fmt.Errorf("%s is below a symlinked directory: refusing to act through it", a.Path)
+				}
+				if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+					if err := os.Remove(p); err != nil {
+						return err
+					}
+					res.Changed = true
+				}
+			case plan.QuarantineFile:
+				if !realParents(in.W.WorkTree, a.Path) {
+					return fmt.Errorf("%s is below a symlinked directory: refusing to act through it", a.Path)
+				}
+				if _, err := in.quarantine(res, a.Path, true, false); err != nil {
+					return err
+				}
+				// The copy is saved (now or by an earlier run): the file may go.
+				if err := os.Remove(in.abs(a.Path)); err != nil {
+					return err
+				}
+				res.Changed = true
+			case plan.WriteSparse:
+				if err := in.writeSparse(ctx, a.Text); err != nil {
+					return err
+				}
+				next.SparseSet = true
+				res.Changed = true
+			case plan.DisableSparse:
+				if err := in.disableSparse(ctx, &next); err != nil {
+					return err
+				}
+				res.Changed = true
+			case plan.LinkPath:
+				if err := in.link(a.Path, a.Target, a.Replaces); err != nil {
+					return err
+				}
+				res.Changed = true
+			case plan.Absorb:
+				if err := in.absorb(a.Path, a.Target); err != nil {
+					return err
+				}
+				res.Changed = true
+			case plan.QuarantineBoth:
+				created, err := in.quarantine(res, a.Path, true, true)
+				if err != nil {
+					return err
+				}
+				quarantined[a.Path] = true
+				if created {
+					res.Changed = true
+				}
+			case plan.RepairSkip:
+				args := append([]string{"update-index", "--skip-worktree", "--"}, a.Paths...)
+				if _, err := in.Git.Write(ctx, args...); err != nil {
+					return fmt.Errorf("cannot restore git's skip-worktree bit on %s: %w", strings.Join(a.Paths, ", "), err)
+				}
+				res.Changed = true
+			case plan.AddExclude:
+				if err := addExclude(filepath.Join(in.W.CommonDir, "info", "exclude")); err != nil {
+					return err
 				}
 				res.Changed = true
 			}
-		case plan.QuarantineFile:
-			if !realParents(in.W.WorkTree, a.Path) {
-				return res, fmt.Errorf("%s is below a symlinked directory: refusing to act through it", a.Path)
-			}
-			if _, err := in.quarantine(res, a.Path, true, false); err != nil {
-				return res, err
-			}
-			// The copy is saved (now or by an earlier run): the file may go.
-			if err := os.Remove(in.abs(a.Path)); err != nil {
-				return res, err
-			}
-			res.Changed = true
-		case plan.WriteSparse:
-			if err := in.writeSparse(ctx, a.Text); err != nil {
-				return res, err
-			}
-			next.SparseSet = true
-			res.Changed = true
-		case plan.DisableSparse:
-			if err := in.disableSparse(ctx, &next); err != nil {
-				return res, err
-			}
-			res.Changed = true
-		case plan.LinkPath:
-			if err := in.link(a.Path, a.Target, a.Replaces); err != nil {
-				return res, err
-			}
-			res.Changed = true
-		case plan.Absorb:
-			if err := in.absorb(a.Path, a.Target); err != nil {
-				return res, err
-			}
-			res.Changed = true
-		case plan.QuarantineBoth:
-			created, err := in.quarantine(res, a.Path, true, true)
-			if err != nil {
-				return res, err
-			}
-			quarantined[a.Path] = true
-			if created {
-				res.Changed = true
-			}
-		case plan.RepairSkip:
-			args := append([]string{"update-index", "--skip-worktree", "--"}, a.Paths...)
-			if _, err := in.Git.Write(ctx, args...); err != nil {
-				return res, fmt.Errorf("cannot restore git's skip-worktree bit on %s: %w", strings.Join(a.Paths, ", "), err)
-			}
-			res.Changed = true
-		case plan.AddExclude:
-			if err := addExclude(filepath.Join(in.W.CommonDir, "info", "exclude")); err != nil {
-				return res, err
-			}
-			res.Changed = true
 		}
-	}
+		return nil
+	}()
 
 	// The new state records what is REALLY there now: every wanted path that is a
 	// link to its variant, with what it is made of. A quarantined path keeps its OLD
 	// record, so the next sync still finds the mismatch instead of absorbing over it.
+	// Also after a failed step: a record that still names a link the failed step (or
+	// an earlier killed run) already removed would make the next sync act on a
+	// world that is gone.
 	want, facts, g, err := in.gather(ctx, &state.State{})
 	if err != nil {
-		return res, err
+		return res, errors.Join(stepErr, err)
 	}
 	next.Swaps = nil
 	for _, sw := range want.Swaps {
@@ -239,12 +248,11 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 	}
 	next.Author = in.Author
 	next.CommittedProfiles = in.CommittedProfiles
-	if changed, err := state.Write(in.W.GitDir, &next); err != nil {
-		return res, err
-	} else if changed {
+	changed, werr := state.Write(in.W.GitDir, &next)
+	if werr == nil && changed {
 		res.Changed = true
 	}
-	return res, nil
+	return res, errors.Join(stepErr, werr)
 }
 
 // writeSparse hands the managed patterns to git, which updates the pattern file,
@@ -257,7 +265,7 @@ func (in Input) writeSparse(ctx context.Context, text string) error {
 		return fmt.Errorf("git sparse-checkout set failed: %w", err)
 	}
 	if strings.Contains(string(res.Stderr), "not up to date") || strings.Contains(string(res.Stderr), "left despite sparse patterns") {
-		return fmt.Errorf("git left files in place because they have uncommitted changes, so the switch is half done: %s\n  fix: commit or stash those changes, then: outfit sync", strings.TrimSpace(string(res.Stderr)))
+		return fmt.Errorf("git left files in place because they have uncommitted changes, so the switch is half done: %s\n  fix: commit those changes, or put them in the profile's copy, then: outfit sync", strings.TrimSpace(string(res.Stderr)))
 	}
 	b, err := os.ReadFile(filepath.Join(in.W.GitDir, "info", "sparse-checkout"))
 	if err != nil {
@@ -504,4 +512,19 @@ func (r *Result) Merge(earlier *Result) {
 
 // Pending reports whether the result still has work to do (the worktree is out of
 // sync) as opposed to only informational notes.
-func (r *Result) Pending() bool { return len(r.Refused) > 0 || actionable(r.Actions) }
+//
+// A RecordHash alone is bookkeeping, not a difference: the person edited the profile's
+// file through the link (no hook fires for that), and nothing in the tree needs fixing.
+func (r *Result) Pending() bool {
+	if len(r.Refused) > 0 {
+		return true
+	}
+	for _, a := range r.Actions {
+		switch a.Kind {
+		case plan.Skip, plan.Conflict, plan.RecordHash:
+		default:
+			return true
+		}
+	}
+	return false
+}

@@ -71,6 +71,9 @@ outfit use yolo                  # swap in the yolo profile's files (and toggles
 outfit use base                  # back to exactly the committed files
 outfit show lean                 # a profile's toggles and files, without switching
 outfit status                    # the active profile, where every value comes from, in sync or not
+outfit sync                      # put the files right again (hooks run it after checkout and merge)
+outfit author on                 # all profiles on disk, to edit side by side (author off hides them)
+outfit uninstall                 # put the repository back as it was
 outfit update                    # install the latest release (--check only looks)
 ```
 

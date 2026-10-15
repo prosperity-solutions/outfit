@@ -260,7 +260,7 @@ func cmdUse(ctx context.Context, e Env, args []string) int {
 	if l.Profile != nil && l.Profile.Tier == profiles.Committed && l.Profile.Name != name {
 		if dirty := dirtyPaths(ctx, l, profiles.CommittedRoot+"/"+l.Profile.Name+"/"); len(dirty) > 0 {
 			return fail((&Error{Code: ExitNeedsHuman, Msg: fmt.Sprintf("the active profile %q has uncommitted edits (%s): switching would leave the tree half-switched", l.Profile.Name, strings.Join(first(dirty, 3), ", "))}).
-				WithFix("git add -u .outfit && git commit -m 'update profile'   (or: git stash push -- .outfit)"))
+				WithFix("git add --sparse -u .outfit && git commit -m 'update profile'"))
 		}
 	}
 
@@ -361,7 +361,35 @@ func cmdUse(ctx context.Context, e Env, args []string) int {
 	if shadow != "" {
 		fmt.Fprintf(e.Stderr, "warning: %s\n", shadow)
 	}
+	if w := untrackedProfileWarning(ctx, l); w != "" {
+		fmt.Fprintf(e.Stderr, "warning: %s\n", w)
+	}
 	return syncExit(res)
+}
+
+// untrackedProfileWarning names the active committed profile's files git does not
+// know yet. Only the working tree holds them: `git clean -x` deletes them, and
+// `outfit` cannot bring them back. "" when there are none.
+func untrackedProfileWarning(ctx context.Context, l *loaded) string {
+	if l.Profile == nil || l.Profile.Tier != profiles.Committed {
+		return ""
+	}
+	dir := profiles.CommittedRoot + "/" + l.Profile.Name
+	res, err := l.Git.Read(ctx, "--literal-pathspecs", "ls-files", "--others", "-z", "--", dir)
+	if err != nil {
+		return ""
+	}
+	var files []string
+	for _, f := range strings.Split(string(res.Stdout), "\x00") {
+		if f != "" && !apply.IsJunk(filepath.Base(f)) {
+			files = append(files, f)
+		}
+	}
+	if len(files) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("profile %q has files git does not have yet (%s): `git clean -x` would delete them for good. Commit them: outfit author on && git add -f %s && git commit -m 'feat: add profile %s'",
+		l.Profile.Name, strings.Join(first(files, 3), ", "), dir, l.Profile.Name)
 }
 
 // syncExitJSON prints a blocked result in the caller's format and returns exit 3.
@@ -541,7 +569,7 @@ func cmdAuthor(ctx context.Context, e Env, args []string) int {
 		}
 		if len(dirty) > 0 {
 			return fail((&Error{Code: ExitNeedsHuman, Msg: fmt.Sprintf("profiles other than the active one have uncommitted edits (%s): hiding them would leave the tree half-switched", strings.Join(first(dirty, 3), ", "))}).
-				WithFix("git add -u .outfit && git commit -m 'update profiles'   (or: git stash push -- .outfit)"))
+				WithFix("git add --sparse -u .outfit && git commit -m 'update profiles'"))
 		}
 	}
 	prev := st.Author

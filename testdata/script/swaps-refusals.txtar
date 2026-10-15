@@ -24,7 +24,7 @@ islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
 exec sh -c 'echo "draft" >> AGENTS.md'
 ! outfit use lean
 stderr 'has uncommitted edits'
-stderr 'fix: git add -u .outfit'
+stderr 'fix: git add --sparse -u .outfit'
 islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
 exec cat AGENTS.md
 stdout 'draft'

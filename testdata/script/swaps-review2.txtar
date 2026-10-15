@@ -57,3 +57,78 @@ stdout 'outside'
 exec ls $WORK/elsewhere
 stdout '^AGENTS.md$'
 ! stdout 'outfit'
+rm apps/web
+exec mv $WORK/web-real apps/web
+outfit use base
+
+# --- an edit made THROUGH the link is bookkeeping, not "out of sync" ---
+# (no hook fires for it, so sync's record of the variant is stale; status must not
+# say "out of sync" for that: exit 4 has to mean something)
+outfit use yolo
+exec sh -c 'echo "through the link" >> AGENTS.md'
+outfit status
+stdout 'state    in sync'
+# An atomic save that follows an edit made through the link is a conflict (the spec's
+# scenario 2): both are saved, nothing is overwritten.
+exec sh -c 'cp AGENTS.md $WORK/t.md; echo "atomic save" >> $WORK/t.md; mv $WORK/t.md AGENTS.md'
+! outfit sync
+stderr 'AND the profile.s copy changed'
+exec cat .outfit/profiles/yolo/AGENTS.md
+stdout 'through the link'
+! stdout 'atomic save'
+# the printed fix: keep the profile's copy, remove the file, sync
+rm AGENTS.md
+outfit sync
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md
+exec git checkout -q -- .outfit/profiles/yolo/AGENTS.md
+outfit sync
+
+# --- a switch cut short must not lead to the base file being deleted ---
+# yolo's variant has an uncommitted edit, so git cannot hide yolo's directory: the
+# sparse change that also restores the base CLAUDE.md is half done. The record must
+# still say what is really there, or the next sync would "save and remove" the base
+# file git just put back.
+outfit use base
+outfit use yolo
+exec sh -c 'echo "edit" >> .outfit/profiles/yolo/CLAUDE.md'
+exec git config outfit.profile lean
+! outfit sync
+stderr 'half done'
+exec git add --sparse -u .outfit
+exec git commit -qm 'docs: yolo claude'
+outfit sync
+exec git status --short
+! stdout .
+exec git ls-files -t -- CLAUDE.md
+stdout '^S|^H'
+exists CLAUDE.md
+exec git commit --allow-empty -qm 'chore: nothing'
+exec git ls-tree HEAD -- CLAUDE.md
+stdout 'CLAUDE.md'
+exec git config --unset outfit.profile
+outfit sync
+
+# --- junk files in a profile directory are not profile files ---
+outfit use yolo
+exec sh -c 'echo junk > .outfit/profiles/yolo/.DS_Store'
+outfit sync
+! stderr .
+outfit status
+! stderr 'DS_Store'
+
+# --- a profile git does not have yet is flagged, not silently at risk ---
+exec sh -c 'mkdir -p .outfit/profiles/mine && echo mine > .outfit/profiles/mine/AGENTS.md'
+outfit use mine
+stderr 'git clean -x'
+outfit use base
+exec rm -r .outfit/profiles/mine
+
+# --- an executable base file is not swapped for a non-executable copy ---
+outfit author on
+exec sh -c 'echo "#!/bin/sh" > run.sh && chmod +x run.sh && cp run.sh .outfit/profiles/yolo/run.sh && chmod -x .outfit/profiles/yolo/run.sh && git add run.sh && git add --sparse -f .outfit/profiles/yolo/run.sh && git commit -qm "feat: run"'
+outfit author off
+outfit use yolo
+stderr 'executable bit'
+! islink run.sh .outfit/profiles/yolo/run.sh
+outfit status
+stdout 'state    in sync'

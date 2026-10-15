@@ -61,7 +61,7 @@ exec git sparse-checkout disable
 exec sh -c 'echo "again" >> CLAUDE.md'
 ! exec git commit -a -qm 'feat: committed with sparse off'
 stderr 'sparse checkout is off'
-stderr 'fix: outfit sync'
+stderr 'fix: git reset -q && outfit sync'
 exec git reset -q
 outfit sync
 exec git config core.sparseCheckout
