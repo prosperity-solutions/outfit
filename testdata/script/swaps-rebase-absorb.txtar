@@ -1,0 +1,24 @@
+# A pull that rebases ends with the post-rewrite hook, which runs while git's rebase
+# directory is still there. Sync holds an editor's save back while a rebase is OPEN (an abort
+# is a hard reset that would take the absorbed bytes with it), but this one is finished: the
+# save must be absorbed right then, not left as a bare file for a later rebase or merge to
+# overwrite (found by the property test: pull --rebase, then a stopped rebase and --abort).
+fixture repo team upstream
+cd repo
+outfit init
+outfit use yolo
+exec git commit -q --allow-empty -m 'chore: local'
+cd ..
+exec git clone -q repo-upstream.git other
+cd other
+exec git config user.email a@b
+exec git config user.name a
+exec sh -c 'echo "docs change" >> docs/guide.md'
+exec git commit -aqm 'docs: upstream change'
+exec git push -q origin HEAD:main
+cd ../repo
+atomicsave AGENTS.md 'my saved line\n'
+exec git pull -q --rebase origin main
+exec cat .outfit/profiles/yolo/AGENTS.md
+stdout 'my saved line'
+islink AGENTS.md .outfit/profiles/yolo/AGENTS.md

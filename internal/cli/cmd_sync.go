@@ -44,6 +44,8 @@ func syncInput(ctx context.Context, e Env, l *loaded, useHead bool) apply.Input 
 		Git:     l.Git,
 		Cfg:     l.Cfg,
 		Profile: l.Profile,
+
+		OperationDone: e.opDone,
 	}
 	// LC_ALL=C: sync recognises one git failure ("not up to date", a half-done
 	// checkout) by its text, which a translated git would not print.

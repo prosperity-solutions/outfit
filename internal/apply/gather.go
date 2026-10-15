@@ -51,6 +51,10 @@ type Input struct {
 	CommittedProfiles bool
 	// Author is author mode: every committed profile stays on disk.
 	Author bool
+	// OperationDone says the git operation that makes the worktree look busy has just
+	// finished: the post-rewrite hook of a rebase runs while git's rebase directory is
+	// still there, but nothing can abort it any more.
+	OperationDone bool
 	// Now is the clock for quarantine directory names (tests set it).
 	Now func() time.Time
 }
@@ -114,7 +118,9 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	var want plan.Want
 	facts := plan.Facts{Paths: map[string]plan.PathFacts{}, Recorded: map[string]plan.Record{}}
 	facts.SameProfile = in.Profile != nil && st.Profile == in.Profile.Name
-	facts.GitBusy = gitBusy(in.W.GitDir)
+	if !in.OperationDone {
+		facts.GitBusy = gitBusy(in.W.GitDir)
+	}
 
 	var candidates []string
 	if in.Profile != nil {

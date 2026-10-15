@@ -108,6 +108,7 @@ func cmdHook(ctx context.Context, e Env, args []string) int {
 		// Keep the swapped files in step with what git just did (a checkout, a pull,
 		// a rebase). Best effort: outfit's own result never changes a hook's exit code.
 		if lerr == nil && e.Getenv(syncActiveEnv) == "" {
+			e.opDone = name == "post-rewrite"
 			if res, _, serr := converge(ctx, e, l, false); serr != nil {
 				fmt.Fprintf(e.Stderr, "outfit: sync after %s failed: %v\n", name, serr)
 			} else {

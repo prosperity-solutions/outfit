@@ -46,6 +46,9 @@ type Env struct {
 	IsTTY bool
 	// GHToken returns the output of `gh auth token`, within ctx; nil means do not look.
 	GHToken func(context.Context) string
+	// opDone is set for the post-rewrite hook: the rebase it reports is over, so sync may
+	// absorb an editor's save that it would hold back while a rebase is open.
+	opDone bool
 	// HTTP and UpdateKeys are for tests of `update`; nil means the defaults (the
 	// system client, the keys compiled in from internal/update/keys.txt).
 	HTTP       *http.Client
