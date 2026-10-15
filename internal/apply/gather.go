@@ -668,11 +668,16 @@ func (in Input) dirtyUnder(ctx context.Context, d string) ([]string, error) {
 // what a hidden directory must not hold when it stops being hidden.
 func (in Input) strayFiles(d string) []string { return strayFilesIn(in.W.WorkTree, d) }
 
+// maxStrayWalk bounds the regular files strayFilesIn collects. Only the ones git tracks count
+// (onlyTracked filters afterwards), so the bound must be far above what a person has lying
+// around untracked in a directory the team keeps.
+const maxStrayWalk = 20000
+
 // strayFilesIn is strayFiles for a worktree path.
 func strayFilesIn(worktree, d string) []string {
 	var out []string
 	_ = filepath.WalkDir(filepath.Join(worktree, filepath.FromSlash(d)), func(path string, e fs.DirEntry, err error) error {
-		if err != nil || len(out) >= 20 {
+		if err != nil || len(out) >= maxStrayWalk {
 			return nil
 		}
 		if e.Type().IsRegular() {

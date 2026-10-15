@@ -201,7 +201,7 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 					res.Changed = true
 				}
 				if a.Unstage {
-					if _, err := in.Git.Write(ctx, "--literal-pathspecs", "rm", "--cached", "-q", "--ignore-unmatch", "--", a.Path); err != nil {
+					if _, err := in.Git.Write(ctx, "--literal-pathspecs", "update-index", "--force-remove", "--", a.Path); err != nil {
 						return fmt.Errorf("cannot take %s off the index: %w", a.Path, err)
 					}
 					res.Changed = true
@@ -244,7 +244,9 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 					return fmt.Errorf("%s is below a symlinked directory: refusing to act through it", a.Path)
 				}
 				if created, err := in.quarantine(res, a.Path, true, false); err != nil {
-					return err
+					// A file too big to copy must not stop the whole sync every time: say so, and
+					// leave it (exit 3 until a person moves it).
+					res.Notes = append(res.Notes, fmt.Sprintf("%s could not be saved (%v): move it somewhere safe yourself, git may remove it", a.Path, err))
 				} else if created {
 					res.Changed = true
 				}

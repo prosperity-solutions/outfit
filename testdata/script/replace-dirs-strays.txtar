@@ -1,0 +1,45 @@
+# Things standing in a replaced directory that are not outfit's: our own staged `~cruft` link
+# (taken off the index even though the patterns hide the directory), many untracked files in
+# front of a person's file at a tracked path (`uninstall` still stops), and a file too big to
+# copy (the sync says so and goes on, instead of failing every time).
+fixture repo team
+cd repo
+exec mkdir -p skills
+exec sh -c 'echo team-a > skills/a.md; echo team-z > skills/z.md'
+exec git add skills
+exec git commit -qm 'docs: team skills'
+exec mkdir -p .outfit/profiles/mine/skills
+exec sh -c 'printf "[outfit \"profile\"]\n    replace = skills\n" > .outfit/profiles/mine/profile.config'
+exec sh -c 'echo my-a > .outfit/profiles/mine/skills/a.md'
+exec git add --sparse -f .outfit
+exec git commit -qm 'feat: a profile that replaces skills'
+outfit init
+outfit use mine
+
+# a staged link of ours below the directory
+symlink skills/a.md~cruft -> ../.outfit/profiles/mine/skills/a.md
+exec git add --sparse -f skills/a.md~cruft
+outfit sync
+! exists skills/a.md~cruft
+exec git ls-files -s
+! stdout 'a.md~cruft'
+outfit use base
+exec git status --short
+! stdout 'cruft'
+outfit use mine
+
+# a person's file at a tracked path, behind a crowd of untracked ones
+exec sh -c 'i=0; while [ $i -lt 30 ]; do echo n > skills/n$i.txt; i=$((i+1)); done'
+exec sh -c 'echo mine-z > skills/z.md'
+! outfit uninstall
+stderr 'skills/z.md'
+exec grep mine-z skills/z.md
+exec sh -c 'rm skills/n*.txt'
+! outfit sync
+stderr 'A copy is saved'
+
+# too big to copy
+exec sh -c 'head -c 34000000 /dev/zero > skills/z.md'
+! outfit sync
+stderr 'skills/z.md could not be saved'
+exists skills/z.md

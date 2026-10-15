@@ -295,7 +295,7 @@ func removeStrays(ctx context.Context, g gitx.Client, worktree, rel, target stri
 			if !stagedOnlyLink(ctx, g, stray, parseLsFiles(res.Stdout)[stray]) {
 				continue
 			}
-			_, _ = g.Write(ctx, "--literal-pathspecs", "rm", "--cached", "-q", "--ignore-unmatch", "--", stray)
+			_, _ = g.Write(ctx, "--literal-pathspecs", "update-index", "--force-remove", "--", stray)
 		}
 		_ = os.Remove(sp)
 	}
