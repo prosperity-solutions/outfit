@@ -183,7 +183,9 @@ func Locate(r repo.Repo, name string) (Profile, bool) {
 // inactive profile is hidden; so is the active one in the moment between
 // `git config outfit.profile <name>` and the sync that brings it back). It returns
 // the profile and its profile.config as committed. It costs git calls, so it is
-// only for that rare mismatch, never the hot path.
+// for that rare mismatch, and for one check on the hot path: a personal profile is
+// active in a repository that has committed ones (a committed profile of the same name
+// wins even while it is hidden from disk), which `load` asks with one ls-tree.
 func LocateHead(ctx context.Context, g gitx.Client, r repo.Repo, name string) (Profile, *config.File, bool) {
 	if ValidName(name) != nil {
 		return Profile{}, nil, false

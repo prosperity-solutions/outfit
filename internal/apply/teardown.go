@@ -69,7 +69,7 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 			did = append(did, "link "+s.Path)
 			restore = append(restore, s.Path)
 		case err == nil:
-			failed = append(failed, s.Path+" is a regular file where outfit's link was: left alone (its bytes are yours; `outfit sync` absorbs an editor's save into the profile, then rerun)")
+			failed = append(failed, s.Path+" is a regular file where outfit's link was: left alone (its bytes are yours; `outfit sync` absorbs an editor's save into the profile, or saves both copies when the profile changed too, then rerun)")
 		default:
 			restore = append(restore, s.Path)
 		}

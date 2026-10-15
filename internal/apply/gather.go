@@ -119,7 +119,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	if in.Profile != nil {
 		seen := map[string]bool{}
 		for _, f := range in.Files {
-			if IsJunk(pathpkg.Base(f)) {
+			if profiles.IsJunk(pathpkg.Base(f)) {
 				continue // Finder, editor and merge leftovers are not profile files
 			}
 			if err := plan.ValidSwapPath(f); err != nil {
@@ -315,10 +315,6 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 	facts.ExcludeHas = excludeHas(filepath.Join(in.W.CommonDir, "info", "exclude"))
 	return want, facts, g, nil
 }
-
-// IsJunk reports a file the operating system or an editor leaves in a directory (see
-// profiles.IsJunk): never a profile file.
-func IsJunk(n string) bool { return profiles.IsJunk(n) }
 
 // sameCommit reports whether the latest commit that touched base also touched variant.
 func (in Input) sameCommit(ctx context.Context, base, variant string) bool {

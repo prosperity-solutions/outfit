@@ -2,7 +2,11 @@
 # them (never shadowing an existing name), their links are absolute and their edits
 # do not show in `git status` (so `outfit status` says when they were made),
 # `git worktree remove` takes worktree profiles with it, `promote` moves a local
-# profile into .outfit/profiles/ for git to version, and name clashes are refused.
+# profile into .outfit/profiles/ for git to version (refusing what it cannot copy whole,
+# settling the other worktrees that use it), and name clashes are refused. Also: copies
+# with --from (hidden committed profile, local, shadowed), a committed profile beating a
+# same-named active local one, uninstall that stops while a link will not go, --purge
+# and a symlinked tier directory, and the git-process budget with a local profile.
 fixture repo team worktrees=1
 cd repo
 outfit init
@@ -30,6 +34,13 @@ outfit use mine
 islink AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
 exec cat AGENTS.md
 stdout 'my own rules'
+# A no-op sync with a personal profile active in a repository that has committed
+# profiles costs one more git process than with a committed one (the ls-tree that lets a
+# committed profile of the same name win): three, not two.
+outfit sync
+gitcalls reset
+outfit sync
+gitcalls 3
 # Edits through the link do not show in git status, by design: status lists the file.
 exec sh -c 'echo "more" >> AGENTS.md'
 exec git status --short
@@ -116,6 +127,9 @@ stdout 'saved by an editor'
 # git does not have it yet: status warns, and says how.
 outfit status
 stderr 'git clean -xd'
+# plain `git add` of a new profile directory refuses (info/exclude + sparse patterns,
+# docs/git-behavior.md row 47); `--sparse -f` is the way
+! exec git add .outfit/profiles/mine
 exec git add --sparse -f .outfit/profiles/mine
 exec git commit -qm 'feat: add profile mine'
 outfit ls
@@ -134,7 +148,7 @@ stderr 'already a committed profile'
 stderr 'no profile called'
 ! outfit promote here-only
 stderr 'worktree profile'
-stderr 'fix: outfit new <name> --from worktree:here-only'
+stderr 'fix: outfit new <other-name> --from worktree:here-only'
 ! outfit promote
 
 # --- a name clash: the committed profile wins, the warning names the fix ---

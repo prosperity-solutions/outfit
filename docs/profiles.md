@@ -24,8 +24,8 @@ with no `outfit.profile` set you are on `base` and get exactly the committed rep
 | Tier | Lives in | Versioned | Gone when |
 |---|---|---|---|
 | committed | `.outfit/profiles/<name>/` | by git, shared with the team | a commit removes it |
-| local | `<git-common-dir>/outfit/profiles/<name>/` | never | `outfit uninstall --purge`, or you delete it |
-| worktree | `<git-dir>/outfit/worktree-profiles/<name>/` | never | `git worktree remove` (the directory is inside that worktree's git dir) |
+| local | `<git-common-dir>/outfit/profiles/<name>/` | never | `outfit promote` moves it into `.outfit/profiles/`, `outfit uninstall --purge`, or you delete it |
+| worktree | `<git-dir>/outfit/worktree-profiles/<name>/` | never | `git worktree remove` of a linked worktree (the directory is inside its git dir; the main worktree's are only removed by `uninstall --purge` or by you) |
 
 Names are unique across all three: `outfit new` refuses a name any tier already uses, and
 `outfit ls` shows each profile's tier. The links for a committed profile are relative
@@ -39,7 +39,7 @@ edited in place.
 ```sh
 outfit new mine                 # an empty local profile (profile.config + room for files)
 # then put files in it at the same relative paths as the tracked files they replace
-outfit new mine3 --from yolo    # a copy of a committed (or local) profile, hidden ones included
+outfit new mine3 --from yolo    # a copy of any profile (committed ones, hidden included; `--from base` is the same as nothing)
 outfit new scratch --here       # only for this worktree; deleted with it
 outfit use mine                 # ...then it behaves like any other profile
 outfit promote mine             # move it into .outfit/profiles/mine/, then commit it
@@ -62,7 +62,7 @@ worktree counts too: `new` refuses its name, because a local profile of the same
 replace it there on that worktree's next sync. Directories with names outfit does not accept
 (made by hand) are listed with a warning, never silently ignored.
 
-`new` and `promote` never overwrite: the destination is created with a plain `mkdir`, and a
+`new` and `promote` never overwrite: an existing name is refused, the profile is built beside its place and renamed into it (a Ctrl-C leaves a dot-directory that `ls` warns about, not a half profile), and a
 copy is limited to 2000 files, 32 MiB per file and 64 MiB in all.
 
 ## The commands
@@ -78,7 +78,7 @@ copy is limited to 2000 files, 32 MiB per file and 64 MiB in all.
 | `outfit author on\|off` | puts every committed profile on disk to edit side by side, or hides them again |
 | `outfit status` | the active profile, where each value comes from, and `state in sync` / `out of sync` |
 | `outfit diff <path>` / `outfit ack <path>` | the base of a swapped file changed under it: see what changed, accept it (below) |
-| `outfit uninstall [--purge]` | removes the links, restores the base files, then undoes everything else; your local and worktree profiles are kept unless `--purge`. If a link cannot be removed it stops there (exit 1, nothing else undone, no profile deleted) and the rerun continues |
+| `outfit uninstall [--purge]` | removes the links, restores the base files, then undoes everything else; your local and worktree profiles are kept unless `--purge`. If a link cannot be removed it stops there (exit 1; no hooks, settings or profiles are touched, worktrees whose links did come off stay undone) and the rerun continues |
 
 `use` needs `outfit init` first: without the dispatcher nothing would keep a swapped file
 out of a commit. `outfit use base` returns to the committed files.
@@ -100,7 +100,7 @@ dir for a local or worktree profile (see the tiers above). So:
   **local or worktree** profile git sees nothing at all (the file is not in git): `outfit
   status` lists it with its edit time, `outfit show <profile>` prints its directory, there
   is no undo (no history), and what changed against the team's file is
-  `git diff --no-index <(git show :AGENTS.md) AGENTS.md`;
+  `diff <(git show :AGENTS.md) AGENTS.md`;
 - only the **active committed** profile is on disk (local and worktree profiles always are,
   in the git dir). The other committed ones are in git; look at them with
   `outfit show`, or put them all on disk with `outfit author on`;
@@ -127,8 +127,9 @@ how to fix it.
 
 `sync` computes what the active profile wants, compares it with what is there, and fixes
 the difference. It is **level-triggered**: it never reacts to the event that fired it, so
-running it twice changes nothing. When nothing needs doing it spawns two git processes,
-takes no lock and writes nothing. Hooks run it after `post-checkout`, `post-merge` and
+running it twice changes nothing. When nothing needs doing it spawns two git processes (three while a personal
+profile is active in a repository that has committed ones: one more asks whether a committed
+profile of the same name wins), takes no lock and writes nothing. Hooks run it after `post-checkout`, `post-merge` and
 `post-rewrite` (a checkout, a pull, an amend); `reset --hard` fires nothing, so the next
 trigger catches up. A failing sync never changes a hook's exit code.
 
@@ -241,4 +242,4 @@ switches sparse checkout off (the other order leaves ` T` in `git status` and le
 `commit -a` commit the link), then undoes the dispatcher, the settings outfit added, the
 `.git/info/exclude` entry and its directories. `git config --list`, the index flags and
 the working tree come back as they were. A regular file where a link was is yours: it is
-left in place and reported. Your own local profiles survive.
+left in place and reported. Your own local and worktree profiles survive too (`--purge` deletes them).

@@ -399,6 +399,9 @@ func untrackedProfileWarning(ctx context.Context, l *loaded) string {
 			continue
 		}
 		name, _, _ := strings.Cut(rest, "/")
+		if profiles.ValidName(name) != nil {
+			continue // leftovers (`.new-…`) and hand-made names are `ls`'s warnings, not something to commit
+		}
 		if byProfile[name] == nil {
 			names = append(names, name)
 		}
@@ -412,9 +415,8 @@ func untrackedProfileWarning(ctx context.Context, l *loaded) string {
 	for _, n := range names {
 		parts = append(parts, fmt.Sprintf("%s (%s)", n, strings.Join(first(byProfile[n], 2), ", ")))
 	}
-	n := names[0]
-	return fmt.Sprintf("profile files git does not have yet: %s. `git clean -xd` would delete them for good. Commit them: git add --sparse -f %s/%s && git commit -m 'feat: add profile %s'",
-		strings.Join(parts, "; "), profiles.CommittedRoot, n, n)
+	return fmt.Sprintf("profile files git does not have yet: %s. `git clean -xd` would delete them for good. Commit them: %s",
+		strings.Join(parts, "; "), profiles.CommitCommand(names...))
 }
 
 // syncExitJSON prints a blocked result in the caller's format and returns exit 3.

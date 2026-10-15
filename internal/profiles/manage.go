@@ -174,8 +174,8 @@ type Copy struct {
 }
 
 // create makes parent/name with the given sources (nil: a profile of nothing), all
-// inside parent: os.Root keeps every path below it, whatever a source's name says.
-// The directory is made with Mkdir, so an existing one is never merged into.
+// inside parent: os.Root keeps every path below it, whatever a source's name says. An
+// existing name is refused; the profile is built beside its place and renamed into it.
 func create(parent, name string, srcs []source) (Copy, error) {
 	if err := os.MkdirAll(parent, 0o750); err != nil {
 		return Copy{}, err
@@ -189,8 +189,9 @@ func create(parent, name string, srcs []source) (Copy, error) {
 		return Copy{}, fmt.Errorf("%s already exists", filepath.Join(parent, name))
 	}
 	// Built beside its final place and renamed into it: a kill half way (Ctrl-C) leaves
-	// a dot-directory that `ls` reports and `uninstall --purge` removes, never a profile
-	// that looks whole and is not.
+	// a dot-directory, never a profile that looks whole and is not. `ls` warns about it;
+	// `uninstall --purge` removes it from the personal tiers (a promote's, in .outfit/profiles,
+	// is yours to delete).
 	var salt [4]byte
 	if _, err := rand.Read(salt[:]); err != nil {
 		return Copy{}, err
@@ -369,4 +370,19 @@ func IsJunk(n string) bool {
 		}
 	}
 	return strings.HasPrefix(n, ".#") || (len(n) > 2 && strings.HasPrefix(n, "#") && strings.HasSuffix(n, "#"))
+}
+
+// CommitCommand is the command that stages and commits new profile directories: `--sparse`
+// because git's patterns hide profile directories, `-f` because info/exclude ignores
+// `.outfit/`. The one spelling every message uses.
+func CommitCommand(names ...string) string {
+	var dirs []string
+	for _, n := range names {
+		dirs = append(dirs, plan.Quote(CommittedRoot+"/"+n))
+	}
+	what := "profile " + names[0]
+	if len(names) > 1 {
+		what = "profiles " + strings.Join(names, ", ")
+	}
+	return "git add --sparse -f " + strings.Join(dirs, " ") + " && git commit -m " + plan.Quote("feat: add "+what)
 }

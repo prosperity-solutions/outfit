@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/prosperity-solutions/outfit/internal/agents"
@@ -165,20 +166,14 @@ func ignoreSettings(ctx context.Context, l *loaded, worktree string) error {
 	return apply.AddExcludeEntry(filepath.Join(l.Repo.CommonDir, "info", "exclude"), agents.IgnoreComment, agents.IgnoreLine)
 }
 
-// agentWorktrees lists the worktrees whose paths outfit knows. A repository whose
-// common dir is not named ".git" (a submodule, --separate-git-dir) has no known path
-// for its main worktree: it is the current one when we are in it, and otherwise left
-// out. Never an empty path: that would resolve .claude against the current directory.
+// agentWorktrees lists the worktrees whose paths outfit knows (never an empty path: that
+// would resolve .claude against the current directory).
 func agentWorktrees(l *loaded) []hooks.Worktree {
 	var out []hooks.Worktree
-	for _, w := range hooks.Worktrees(l.Repo.CommonDir) {
-		if w.Path == "" {
-			if !w.Main || l.Repo.GitDir != l.Repo.CommonDir {
-				continue
-			}
-			w.Path = l.Repo.WorkTree
+	for _, w := range uninstallWorktrees(l) {
+		if w.Path != "" {
+			out = append(out, w.Worktree)
 		}
-		out = append(out, w)
 	}
 	return out
 }
@@ -198,7 +193,8 @@ const (
 	excludeRemoved      = ".git/info/exclude entry for the Claude Code settings"
 )
 
-// uninstallWorktree is a worktree to undo: its path is never empty.
+// uninstallWorktree is a worktree to undo (its path may be empty when nothing says where
+// the main worktree of a separate git dir is: Teardown reports that).
 type uninstallWorktree struct {
 	hooks.Worktree
 }
@@ -344,7 +340,7 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 			tornDown = append(tornDown, w.label())
 		}
 	}
-	// A link that could not go (or a base file that could not come back) stops here:
+	// A link that could not go (or a regular file where one stood) stops here:
 	// switching sparse checkout off over it would leave a ` T` status that `commit -a`
 	// turns into a symlink in history, and removing state.json would forget which links
 	// to retry. Everything else (hooks, config, profiles) stays as it is; the rerun
@@ -438,10 +434,17 @@ func cmdUninstall(ctx context.Context, e Env, args []string) int {
 	defer func() {
 		if len(kept) > 0 {
 			var names []string
+			dirs := map[string]bool{}
 			for _, k := range kept {
 				names = append(names, filepath.Base(k))
+				dirs[filepath.Dir(k)] = true
 			}
-			fmt.Fprintf(e.Stdout, "  kept %d personal profile(s): %s (local and worktree profiles are yours; they live under %s; outfit uninstall --purge deletes them)\n", len(kept), strings.Join(names, ", "), filepath.Dir(kept[0]))
+			var where []string
+			for d := range dirs {
+				where = append(where, d)
+			}
+			sort.Strings(where)
+			fmt.Fprintf(e.Stdout, "  kept %d personal profile(s): %s (local and worktree profiles are yours; they live in %s; outfit uninstall --purge deletes them)\n", len(kept), strings.Join(names, ", "), strings.Join(where, ", "))
 		}
 	}()
 	if !res.Changed {

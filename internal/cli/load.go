@@ -80,8 +80,9 @@ func load(ctx context.Context, e Env) (*loaded, error) {
 		if ok && p.Tier != profiles.Committed && committedMayExist(r) {
 			// A committed profile of the same name WINS (names are unique across tiers; `ls`
 			// says so), even while it is hidden from disk: the disk-only lookup above would
-			// pick the personal one. One git call, only for personal profiles in a repository
-			// that has committed ones.
+			// pick the personal one. One git call (ls-tree; more on a hit), only while a personal
+			// profile is active in a repository that has committed ones: such a sync spawns three
+			// git processes instead of two (profiles-local.txtar pins both).
 			hp, hc, hok = profiles.LocateHead(ctx, l.Git, r, choice.Name)
 		}
 		if hok {

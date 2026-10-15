@@ -12,7 +12,6 @@ import (
 
 	"github.com/prosperity-solutions/outfit/internal/gitx"
 	"github.com/prosperity-solutions/outfit/internal/hooks"
-	"github.com/prosperity-solutions/outfit/internal/plan"
 	"github.com/prosperity-solutions/outfit/internal/profiles"
 )
 
@@ -22,7 +21,7 @@ import (
 func cmdNew(ctx context.Context, e Env, args []string) int {
 	fs := newFlags("new")
 	asJSON := fs.Bool("json", false, "print machine-readable output")
-	from := fs.String("from", "", "start from this profile (name, or tier:name for a shadowed one) instead of from nothing")
+	from := fs.String("from", "", "start from this profile (name, or tier:name for a shadowed one; base or nothing: empty)")
 	here := fs.Bool("here", false, "make a worktree profile (deleted with this worktree) instead of a local one")
 	pos, code, stop := parseArgs(e, fs, args)
 	if stop {
@@ -148,11 +147,11 @@ func cmdPromote(ctx context.Context, e Env, args []string) int {
 		return fail(Usagef("%v", rerr).WithFix("outfit ls"))
 	case p.Tier == profiles.Committed && len(profiles.HeadFiles(ctx, l.Git, name)) == 0:
 		return fail(Usagef("%s/%s exists in this worktree but git does not have it: it is not a local profile, so there is nothing to promote", profiles.CommittedRoot, name).
-			WithFix("git add --sparse -f " + plan.Quote(profiles.CommittedRoot+"/"+name) + " && git commit -m " + plan.Quote("feat: add profile "+name)))
+			WithFix(profiles.CommitCommand(name)))
 	case p.Tier == profiles.Committed:
 		return fail(Usagef("%q is already a committed profile", name).WithFix("outfit ls"))
 	case p.Tier == profiles.Worktree:
-		return fail(Usagef("%q is a worktree profile: only local profiles are promoted", name).WithFix("outfit new <name> --from worktree:" + name + "   (a local copy), then: outfit promote <name>"))
+		return fail(Usagef("%q is a worktree profile: only local profiles are promoted (make a local copy under another name, then promote that)", name).WithFix("outfit new <other-name> --from worktree:" + name))
 	}
 	wasActive := l.Result.Profile.Name == name
 	others := worktreesUsing(ctx, l, name) // looked at BEFORE the local copy goes
@@ -161,10 +160,19 @@ func cmdPromote(ctx context.Context, e Env, args []string) int {
 		return fail(Errorf("%v", err).WithFix("outfit ls"))
 	}
 	rel := profiles.CommittedRoot + "/" + name
-	next := "git add --sparse -f " + plan.Quote(rel) + " && git commit -m " + plan.Quote("feat: add profile "+name)
+	next := profiles.CommitCommand(name)
 
 	// Where the profile is in use its links pointed into the local copy that is gone:
-	// settle them now (other worktrees follow on their next sync).
+	// settle them now, here and in the other worktrees that use it (before any output, so
+	// --json and the text agree).
+	var settled, unsettled []string
+	for _, w := range others {
+		if resyncWorktree(ctx, e, w) {
+			settled = append(settled, w.label())
+		} else {
+			unsettled = append(unsettled, w.label())
+		}
+	}
 	var res *syncJSON
 	var syncErr error
 	if wasActive && requireInstalled(l) == nil {
@@ -198,17 +206,11 @@ func cmdPromote(ctx context.Context, e Env, args []string) int {
 	}
 	fmt.Fprintf(e.Stdout, "promoted %s to %s (%d file(s)); the local copy is gone\n", name, rel, c.Files)
 	fmt.Fprintf(e.Stdout, "  git does not have it yet: commit it so teammates get it (until then `git clean -xd` deletes it):\n  %s\n", next)
-	if len(others) > 0 {
-		// Their links pointed into the local copy that is gone: settle each now (they
-		// fall back to base, since the committed copy exists only here until it is
-		// committed and they have that commit) instead of leaving a dangling link until
-		// their next hook.
-		var labels []string
-		for _, w := range others {
-			labels = append(labels, w.label())
-			resyncWorktree(ctx, e, w)
-		}
-		fmt.Fprintf(e.Stderr, "warning: other worktrees use %q (%s): they are on base now and switch to the committed profile once it is committed and they have the commit\n", name, strings.Join(labels, ", "))
+	if len(settled) > 0 {
+		fmt.Fprintf(e.Stderr, "warning: other worktrees use %q (%s): they are on base now (the committed copy exists only here until it is committed and they have the commit)\n", name, strings.Join(settled, ", "))
+	}
+	if len(unsettled) > 0 {
+		fmt.Fprintf(e.Stderr, "warning: other worktrees use %q and could not be re-synced from here (%s): their links point into the removed local copy until `outfit sync` runs there\n", name, strings.Join(unsettled, ", "))
 	}
 	if syncErr != nil {
 		fmt.Fprintf(e.Stderr, "outfit: the files could not be re-linked: %v\n  fix: outfit sync\n", syncErr)
@@ -237,9 +239,9 @@ func worktreesUsing(ctx context.Context, l *loaded, name string) []uninstallWork
 }
 
 // resyncWorktree runs `outfit sync` in another worktree, best effort and bounded.
-func resyncWorktree(ctx context.Context, e Env, w uninstallWorktree) {
+func resyncWorktree(ctx context.Context, e Env, w uninstallWorktree) bool {
 	if w.Path == "" || e.Exe == "" {
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -250,7 +252,7 @@ func resyncWorktree(ctx context.Context, e Env, w uninstallWorktree) {
 			cmd.Env = append(cmd.Env, kv)
 		}
 	}
-	_ = cmd.Run()
+	return cmd.Run() == nil
 }
 
 func worktreeLabels(ws []uninstallWorktree) []string {
