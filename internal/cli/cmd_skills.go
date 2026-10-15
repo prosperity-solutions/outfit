@@ -57,8 +57,7 @@ func cmdSkills(ctx context.Context, e Env, args []string) int {
 			for _, t := range skills.Topics() {
 				rows = append(rows, row{t.Name, t.Summary, len(t.Body)})
 			}
-			b, _ := json.MarshalIndent(rows, "", "  ")
-			return writeOut(e, string(b)+"\n")
+			return writeJSON(e, rows, true)
 		}
 		return writeOut(e, skillsIndex())
 	}
@@ -71,8 +70,7 @@ func cmdSkills(ctx context.Context, e Env, args []string) int {
 		return fail(Usagef("%s", msg).WithFix("outfit skills"))
 	}
 	if *asJSON {
-		b, _ := json.MarshalIndent(map[string]any{"name": t.Name, "summary": t.Summary, "body": t.Body}, "", "  ")
-		return writeOut(e, string(b)+"\n")
+		return writeJSON(e, map[string]any{"name": t.Name, "summary": t.Summary, "body": t.Body}, true)
 	}
 	return writeOut(e, withNewline(t.Body))
 }
@@ -84,6 +82,21 @@ func writeOut(e Env, text string) int {
 		return report(e.Stdout, e.Stderr, false, Errorf("could not write to stdout: %v", err))
 	}
 	return ExitOK
+}
+
+// writeJSON prints v as one JSON document, and says so when it cannot be encoded.
+func writeJSON(e Env, v any, indent bool) int {
+	var b []byte
+	var err error
+	if indent {
+		b, err = json.MarshalIndent(v, "", "  ")
+	} else {
+		b, err = json.Marshal(v)
+	}
+	if err != nil {
+		return report(e.Stdout, e.Stderr, true, Errorf("cannot encode the output as JSON: %v", err))
+	}
+	return writeOut(e, string(b)+"\n")
 }
 
 func isBrokenPipe(err error) bool { return errors.Is(err, syscall.EPIPE) }
@@ -206,8 +219,7 @@ func skillsInstall(ctx context.Context, e Env, remove, project, dry, asJSON bool
 		}
 	}
 	if asJSON {
-		b, _ := json.Marshal(out)
-		return writeOut(e, string(b)+"\n")
+		return writeJSON(e, out, false)
 	}
 	where := "~"
 	if project {
