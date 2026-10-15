@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -61,12 +62,29 @@ func cleanDir(dir string) (string, bool) {
 	return filepath.Clean(dir), true
 }
 
-func readCache(dir string) (cacheFile, bool) {
+// openCacheRoot opens the cache directory as an os.Root, so every file operation in
+// it is confined to it (no ".." or symlink can leave). With create it makes the
+// directory first, private (0700): it holds a few small files of ours.
+func openCacheRoot(dir string, create bool) (*os.Root, error) {
 	dir, ok := cleanDir(dir)
 	if !ok {
+		return nil, errors.New("the cache directory is not an absolute path to outfit's own folder")
+	}
+	if create {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
+	}
+	return os.OpenRoot(dir)
+}
+
+func readCache(dir string) (cacheFile, bool) {
+	root, err := openCacheRoot(dir, false)
+	if err != nil {
 		return cacheFile{}, false
 	}
-	b, err := os.ReadFile(filepath.Join(dir, "update.json"))
+	defer func() { _ = root.Close() }()
+	b, err := root.ReadFile("update.json")
 	if err != nil {
 		return cacheFile{}, false
 	}
@@ -80,28 +98,27 @@ func readCache(dir string) (cacheFile, bool) {
 // writeCache is atomic, so a reader never sees half a file. Errors are ignored by
 // the caller: a banner is never worth failing a command.
 func writeCache(dir string, c cacheFile) error {
-	dir, ok := cleanDir(dir)
-	if !ok {
-		return errors.New("the cache directory is not an absolute path")
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil { // private: it holds one small file of ours
+	root, err := openCacheRoot(dir, true)
+	if err != nil {
 		return err
 	}
+	defer func() { _ = root.Close() }()
 	b, _ := json.Marshal(c)
-	f, err := os.CreateTemp(dir, ".update-*")
+	tmp := fmt.Sprintf(".update-%d-%d", os.Getpid(), time.Now().UnixNano())
+	f, err := root.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	if _, err := f.Write(b); err != nil {
 		_ = f.Close()
-		_ = os.Remove(f.Name())
+		_ = root.Remove(tmp)
 		return err
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(f.Name())
+		_ = root.Remove(tmp)
 		return err
 	}
-	return os.Rename(f.Name(), filepath.Join(dir, "update.json"))
+	return root.Rename(tmp, "update.json")
 }
 
 // Banner decides whether to tell the user a newer release exists. It checks at most

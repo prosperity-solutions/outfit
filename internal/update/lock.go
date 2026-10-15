@@ -3,7 +3,6 @@ package update
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"syscall"
 )
 
@@ -14,16 +13,14 @@ var ErrLocked = errors.New("another outfit update is running")
 // if the process dies, so there is no stale lock to clean). The caller runs the
 // returned function when done.
 func Lock(dir string) (func(), error) {
-	dir, ok := cleanDir(dir)
-	if !ok {
-		return nil, errors.New("the cache directory is not an absolute path")
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	root, err := openCacheRoot(dir, true)
+	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = root.Close() }()
 	// Read-only is enough for flock, and works on a lock file left behind by a
 	// `sudo outfit update` that now belongs to root.
-	f, err := os.OpenFile(filepath.Join(dir, "update.lock"), os.O_CREATE|os.O_RDONLY, 0o600)
+	f, err := root.OpenFile("update.lock", os.O_CREATE|os.O_RDONLY, 0o600)
 	if err != nil {
 		return nil, err
 	}
