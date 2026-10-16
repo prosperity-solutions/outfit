@@ -1,0 +1,111 @@
+/* A Macintosh desktop (System 7), black and white on grey, in one file of CSS. No framework, no fonts to download. */
+:root {
+  --ink: #000;
+  --paper: #fff;
+  /* Monospace all the way down, from fonts the system already has (nothing is downloaded) */
+  --ui: "Monaco", "Menlo", "Lucida Console", "DejaVu Sans Mono", "Courier New", ui-monospace, monospace;
+  --mono: var(--ui);
+}
+* { box-sizing: border-box; }
+html {
+  /* A calm, flat grey desktop. (The classic dithered checkerboard shimmers when the page scrolls.) */
+  background: #b4b4b4;
+}
+body {
+  margin: 0;
+  padding: 44px 12px 40px;
+  color: var(--ink);
+  font: 14px/1.6 var(--ui);
+}
+main { max-width: 760px; margin: 0 auto; }
+
+/* Menu bar */
+.menubar {
+  position: fixed; top: 0; left: 0; right: 0; height: 26px; z-index: 1;
+  display: flex; align-items: center; gap: 4px; padding: 0 6px;
+  background: var(--paper); border-bottom: 1px solid var(--ink);
+  white-space: nowrap; overflow: hidden;
+}
+.menubar a { color: var(--ink); text-decoration: none; padding: 2px 10px; }
+.menubar a:hover, .menubar a:focus-visible { background: var(--ink); color: var(--paper); outline: 0; }
+.menubar .logo { font-weight: bold; margin-right: 28px; }
+
+/* Windows */
+.window {
+  background: var(--paper); border: 1px solid var(--ink);
+  box-shadow: 2px 2px 0 var(--ink); margin: 0 3px 44px 0;
+}
+.title {
+  display: flex; align-items: center; gap: 8px; height: 24px; padding: 0 8px;
+  border-bottom: 1px solid var(--ink); background: var(--paper);
+}
+/* the title-bar stripes fill the space either side of the title, and stop short of the close box */
+.title::before, .title::after {
+  content: ""; flex: 1; height: 7px;
+  background: repeating-linear-gradient(var(--ink) 0 1px, var(--paper) 1px 3px);
+}
+.title::before { order: 1; }
+.title span, .title h2 { order: 2; margin: 0; padding: 0 4px; font: inherit; font-weight: bold; line-height: 14px; white-space: nowrap; }
+.title::after { order: 3; }
+.close { order: 0; flex: none; width: 13px; height: 13px; border: 1px solid var(--ink); background: var(--paper); }
+.body { padding: 22px 24px; }
+.body > :last-child { margin-bottom: 0; }
+
+h1 { font-size: 40px; line-height: 1; margin: 2px 0 12px; letter-spacing: -2px; }
+.lead { font-weight: bold; margin: 0 0 14px; }
+p { margin: 0 0 12px; }
+.small { margin: 10px 0 0; }
+a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+a:hover { background: var(--ink); color: var(--paper); }
+
+code, pre { font: inherit; }
+pre { margin: 0 0 12px; padding: 10px 12px; overflow-x: auto; white-space: pre; border: 1px solid var(--ink); background: var(--paper); }
+
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0 0 12px; }
+.cols pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cmdrow { display: flex; gap: 14px; align-items: center; margin-top: 4px; }
+.cmdrow pre { flex: 1; margin: 0; min-width: 0; }
+#cmd { white-space: pre-wrap; overflow-wrap: anywhere; }
+#copy { display: none; }
+.js #copy { display: block; }
+
+/* One kind of button */
+.btn {
+  display: inline-block; padding: 4px 16px;
+  background: var(--paper); color: var(--ink); border: 1px solid var(--ink);
+  font: inherit; text-align: center; text-decoration: none; cursor: pointer;
+}
+.btn:hover, .btn:active { background: var(--ink); color: var(--paper); }
+.btn:focus-visible, a:focus-visible { outline: 2px dotted var(--ink); outline-offset: 3px; }
+
+.list { margin: 0 0 12px; padding-left: 22px; list-style: "- "; }
+.steps { margin: 0 0 12px; padding-left: 22px; }
+.list li, .steps li { margin: 0 0 8px; }
+.list li:last-child { margin-bottom: 0; }
+
+details { margin: 0 0 12px; }
+summary { cursor: pointer; font-weight: bold; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: "\25B8  "; }
+details[open] > summary::before { content: "\25BE  "; }
+summary:hover { background: var(--ink); color: var(--paper); }
+summary:focus-visible { outline: 2px dotted var(--ink); outline-offset: 3px; }
+details p { margin: 6px 0 4px 22px; }
+
+footer { max-width: 760px; margin: 0 auto; padding: 0 0 8px; text-align: center; }
+footer p { margin: 0 0 8px; }
+footer .links a { margin: 0 10px; }
+
+@media (min-width: 900px) {
+  body { padding-top: 56px; }
+}
+@media (max-width: 640px) {
+  .cols { grid-template-columns: 1fr; }
+  .cmdrow { flex-direction: column; align-items: stretch; }
+  .menubar a:nth-child(n+4) { display: none; }
+}
+@media (max-width: 520px) {
+  h1 { font-size: 34px; }
+}
+
+.dialog { max-width: 460px; margin: 60px auto 0; }

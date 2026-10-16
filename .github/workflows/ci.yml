@@ -146,6 +146,8 @@ jobs:
           pip install --require-hashes --only-binary ':all:' -r scripts/ci/pyyaml-requirements.txt
           python3 tests/validate-workflow-gates.py --selftest
           python3 tests/validate-workflow-gates.py
+      - name: Website keeps its title, JSON-LD, links and install line
+        run: python3 tests/validate-site.py
       - name: goreleaser check
         run: |
           go run github.com/goreleaser/goreleaser/v2@v2.18.2 check

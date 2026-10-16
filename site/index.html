@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+<title>outfit: your own AGENTS.md, skills and hooks, no diff</title>
+<meta name="description" content="Swap AGENTS.md, CLAUDE.md, skills and git hooks per developer without messing up git. git status stays clean, nobody else's diff changes. Free, MIT.">
+<meta name="keywords" content="outfit, AGENTS.md, CLAUDE.md, coding agents, Claude Code, Codex, Cursor, git hooks, husky, lefthook, sparse checkout, dotfiles, developer tools, CLI, open source">
+<meta name="author" content="Prosperity Solutions">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://outfit.oss.life.li/">
+
+<meta property="og:title" content="outfit: One repo. Many outfits.">
+<meta property="og:description" content="Hot swap your agent harness and your local checks, without messing up git. Nobody else's diff changes.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://outfit.oss.life.li/">
+<meta property="og:image" content="https://outfit.oss.life.li/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="outfit: One repo. Many outfits. A retro Mac window with two terminals side by side.">
+<meta property="og:site_name" content="outfit">
+<meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="outfit: One repo. Many outfits.">
+<meta name="twitter:description" content="Hot swap your agent harness and your local checks, without messing up git.">
+<meta name="twitter:image" content="https://outfit.oss.life.li/og.png">
+<meta name="theme-color" content="#b4b4b4">
+
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="alternate" type="text/markdown" href="llms.txt" title="LLM index">
+<link rel="stylesheet" href="style.css">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "outfit", "applicationCategory": "DeveloperApplication", "operatingSystem": "macOS, Linux", "description": "Swap AGENTS.md, CLAUDE.md, skills folders and hook checks in a git repository for your own versions, only on your machine. Git status stays clean and nobody else's diff changes.", "url": "https://outfit.oss.life.li", "license": "https://github.com/prosperity-solutions/outfit/blob/main/LICENSE", "codeRepository": "https://github.com/prosperity-solutions/outfit", "downloadUrl": "https://github.com/prosperity-solutions/outfit/releases/latest", "installUrl": "https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh", "author": {"@type": "Organization", "name": "Prosperity Solutions", "url": "https://github.com/prosperity-solutions"}, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "What is outfit?", "acceptedAnswer": {"@type": "Answer", "text": "A small command-line tool that swaps files in a git repository (AGENTS.md, CLAUDE.md, a skills folder, hook switches) for your own versions, only on your machine. The repository's committed files never change, so nobody else's diff does either."}}, {"@type": "Question", "name": "Does it change my teammates' diffs or pull requests?", "acceptedAnswer": {"@type": "Answer", "text": "No. Your versions live in profile folders. Git is told to look away from the swapped paths, git status stays clean, and a commit guard refuses to ever stage a swapped file."}}, {"@type": "Question", "name": "How does it work?", "acceptedAnswer": {"@type": "Answer", "text": "A symlink stands where the file was, pointing into your profile. Sparse checkout tells git to ignore that path. Hooks re-check after every pull, checkout and rebase, and copy an editor's save back into your profile."}}, {"@type": "Question", "name": "How do I use my own AGENTS.md or CLAUDE.md without committing it?", "acceptedAnswer": {"@type": "Answer", "text": "Put your version in a profile (a folder) and run outfit use with its name. outfit puts your file where the committed one was, git ignores the swap, and nothing shows up in git status or in a pull request."}}, {"@type": "Question", "name": "How do I skip a slow pre-commit hook just for me?", "acceptedAnswer": {"@type": "Answer", "text": "Run outfit set hook.pre-commit=off. It applies only on your machine (add --global for every repository), the team's hook file is untouched, and checks the team marked locked, like a secret scan, stay on."}}, {"@type": "Question", "name": "How is it different from skip-worktree, .git/info/exclude or dotfiles?", "acceptedAnswer": {"@type": "Answer", "text": "git update-index --skip-worktree hides local edits to a tracked file, but breaks on the next pull or checkout. .git/info/exclude only ignores untracked files. outfit does the skip-worktree trick safely: your file stands in place of the committed one, it is kept in sync after pulls and rebases, a commit guard stops the swap from being staged, and outfit use base puts the committed file back."}}, {"@type": "Question", "name": "Which coding agents does it work with?", "acceptedAnswer": {"@type": "Answer", "text": "Any agent that reads files from your repository: Claude Code, Codex, Cursor, Gemini CLI and the rest. outfit changes the files they read, not the agents. It also ships an agent skill: outfit skills."}}, {"@type": "Question", "name": "Do my teammates need outfit?", "acceptedAnswer": {"@type": "Answer", "text": "No. Without it they get exactly what is committed. outfit init --team adds a short note for them."}}, {"@type": "Question", "name": "Is it safe?", "acceptedAnswer": {"@type": "Answer", "text": "outfit never overwrites your bytes: if both sides changed, it saves both and asks. Releases are signed with minisign (and notarized by Apple on macOS) and carry build provenance, and outfit update verifies all of it."}}, {"@type": "Question", "name": "How do I undo it?", "acceptedAnswer": {"@type": "Answer", "text": "outfit use base puts the committed files back. outfit uninstall removes everything outfit added."}}, {"@type": "Question", "name": "What does it cost, and where does it run?", "acceptedAnswer": {"@type": "Answer", "text": "It is free and MIT licensed. One static binary for macOS and Linux, with git 2.36 or newer."}}]}</script>
+</head>
+<body>
+
+<nav class="menubar" aria-label="Site">
+  <a class="logo" href="./">outfit</a>
+  <a href="https://github.com/prosperity-solutions/outfit">GitHub</a>
+  <a href="https://github.com/prosperity-solutions/outfit/blob/main/docs/README.md">Docs</a>
+  <a href="https://github.com/prosperity-solutions/outfit/releases">Releases</a>
+  <a href="https://github.com/prosperity-solutions/outfit/blob/main/SECURITY.md">Security</a>
+</nav>
+
+<main>
+
+<section class="window" aria-labelledby="t-hero">
+  <div class="title"><i class="close" aria-hidden="true"></i><h2 id="t-hero">outfit</h2></div>
+  <div class="body">
+    <h1>One repo. Many outfits.</h1>
+    <p class="lead">Hot swap your agent harness and your local checks.</p>
+    <p>outfit is a free CLI that swaps <code>AGENTS.md</code>, <code>CLAUDE.md</code>, skills and git hooks per developer, in place and without messing up git. Same prompt, different outfit:</p>
+
+    <div class="cols">
+<pre><code>$ outfit use strict
+$ claude -p "add a login form"
+
+agent reads:
+  "Plan first. Tests first.
+   Formatter. Small diffs.
+   Linter clean. Always."
+
+result:
+  plan, tests, formatter,
+  change, tests again,
+  linter error, fix,
+  tests again, lint again,
+  6 files, 14 tests
+  took 14m 32s</code></pre>
+<pre><code>$ outfit use yolo
+$ claude -p "add a login form"
+
+agent reads:
+  "Be terse. Just ship."
+
+result:
+  1 file
+  took 20s</code></pre>
+    </div>
+    <p>(An illustration.) An outfit is a folder: your <code>AGENTS.md</code>, <code>CLAUDE.md</code>, skills and hook switches. <code>git status</code> stays clean in both.</p>
+  </div>
+</section>
+
+<section class="window" aria-labelledby="t-install">
+  <div class="title"><i class="close" aria-hidden="true"></i><h2 id="t-install">Install</h2></div>
+  <div class="body">
+    <div class="cmdrow">
+      <pre class="sunken" id="cmd"><code>curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh</code></pre>
+      <button class="btn" id="copy" type="button">Copy</button>
+    </div>
+    <p class="small">One line. No login, no token, no <code>sudo</code>. macOS and Linux, git 2.36+.</p>
+  </div>
+</section>
+
+<section class="window" aria-labelledby="t-what">
+  <div class="title"><i class="close" aria-hidden="true"></i><h2 id="t-what">What it does</h2></div>
+  <div class="body">
+    <ul class="list">
+      <li><b>Your files, in place of theirs.</b> <code>AGENTS.md</code>, <code>CLAUDE.md</code>, a config, a whole folder.</li>
+      <li><b>Your checks.</b> Skip the heavy pre-commit, keep the rest, add your own. The team's locked checks stay locked.</li>
+      <li><b>Zero noise.</b> <code>git status</code> is clean, <code>git add -A</code> can't commit your setup, PR diffs don't move.</li>
+      <li><b>Profiles are folders.</b> Commit one so colleagues can opt in, or keep it local and private.</li>
+      <li><b>Any repo, any hooks.</b> husky, lefthook, plain <code>.git/hooks</code>. Your team doesn't need to use it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="window" aria-labelledby="t-how">
+  <div class="title"><i class="close" aria-hidden="true"></i><h2 id="t-how">How it works</h2></div>
+  <div class="body">
+    <ol class="steps">
+      <li><b>A symlink</b> stands where the file was, pointing into your profile.</li>
+      <li><b>Sparse checkout</b> tells git to look away from that path. The committed file never changes, so there is no diff.</li>
+      <li><b>Hooks</b> re-check after every pull, checkout and rebase, and a commit guard refuses to ever stage the link.</li>
+    </ol>
+<pre class="sunken"><code>AGENTS.md  ->  .outfit/profiles/me/AGENTS.md
+   ^ git sees the committed file. You see yours.</code></pre>
+    <p>Edit through the link and you edit your profile. An editor's atomic save is caught and copied back. Your bytes are never overwritten: if both sides changed, outfit saves both and asks.</p>
+  </div>
+</section>
+
+<section class="window" aria-labelledby="t-try">
+  <div class="title"><i class="close" aria-hidden="true"></i><h2 id="t-try">Try it</h2></div>
+  <div class="body">
+<pre><code>$ outfit init                 # in front of your git hooks
+$ outfit use yolo             # swap in a profile
+$ outfit status               # what is on, from where
+$ outfit set hook.pre-commit=off
+$ outfit use base             # exactly the committed files
+$ outfit new mine --from yolo # a private one</code></pre>
+  </div>
+</section>
+
+<section class="window" aria-labelledby="t-faq">
+  <div class="title"><i class="close" aria-hidden="true"></i><h2 id="t-faq">Questions</h2></div>
+  <div class="body">
+    <details>
+      <summary>What is outfit?</summary>
+      <p>A small command-line tool that swaps files in a git repository (AGENTS.md, CLAUDE.md, a skills folder, hook switches) for your own versions, only on your machine. The repository's committed files never change, so nobody else's diff does either.</p>
+    </details>
+    <details>
+      <summary>Does it change my teammates' diffs or pull requests?</summary>
+      <p>No. Your versions live in profile folders. Git is told to look away from the swapped paths, git status stays clean, and a commit guard refuses to ever stage a swapped file.</p>
+    </details>
+    <details>
+      <summary>How does it work?</summary>
+      <p>A symlink stands where the file was, pointing into your profile. Sparse checkout tells git to ignore that path. Hooks re-check after every pull, checkout and rebase, and copy an editor's save back into your profile.</p>
+    </details>
+    <details>
+      <summary>How do I use my own AGENTS.md or CLAUDE.md without committing it?</summary>
+      <p>Put your version in a profile (a folder) and run outfit use with its name. outfit puts your file where the committed one was, git ignores the swap, and nothing shows up in git status or in a pull request.</p>
+    </details>
+    <details>
+      <summary>How do I skip a slow pre-commit hook just for me?</summary>
+      <p>Run outfit set hook.pre-commit=off. It applies only on your machine (add --global for every repository), the team's hook file is untouched, and checks the team marked locked, like a secret scan, stay on.</p>
+    </details>
+    <details>
+      <summary>How is it different from skip-worktree, .git/info/exclude or dotfiles?</summary>
+      <p>git update-index --skip-worktree hides local edits to a tracked file, but breaks on the next pull or checkout. .git/info/exclude only ignores untracked files. outfit does the skip-worktree trick safely: your file stands in place of the committed one, it is kept in sync after pulls and rebases, a commit guard stops the swap from being staged, and outfit use base puts the committed file back.</p>
+    </details>
+    <details>
+      <summary>Which coding agents does it work with?</summary>
+      <p>Any agent that reads files from your repository: Claude Code, Codex, Cursor, Gemini CLI and the rest. outfit changes the files they read, not the agents. It also ships an agent skill: outfit skills.</p>
+    </details>
+    <details>
+      <summary>Do my teammates need outfit?</summary>
+      <p>No. Without it they get exactly what is committed. outfit init --team adds a short note for them.</p>
+    </details>
+    <details>
+      <summary>Is it safe?</summary>
+      <p>outfit never overwrites your bytes: if both sides changed, it saves both and asks. Releases are signed with minisign (and notarized by Apple on macOS) and carry build provenance, and outfit update verifies all of it.</p>
+    </details>
+    <details>
+      <summary>How do I undo it?</summary>
+      <p>outfit use base puts the committed files back. outfit uninstall removes everything outfit added.</p>
+    </details>
+    <details>
+      <summary>What does it cost, and where does it run?</summary>
+      <p>It is free and MIT licensed. One static binary for macOS and Linux, with git 2.36 or newer.</p>
+    </details>
+  </div>
+</section>
+
+<section class="window" aria-labelledby="t-about">
+  <div class="title"><i class="close" aria-hidden="true"></i><h2 id="t-about">About</h2></div>
+  <div class="body">
+    <p>One static binary. MIT licensed. Releases are signed (minisign, and Apple's notarization on macOS) and carry build provenance. <code>outfit update</code> checks all of it before it replaces itself.</p>
+    <p>Docs, source and releases are on <a href="https://github.com/prosperity-solutions/outfit">GitHub</a>. Coding agents: start at <a href="llms.txt">llms.txt</a>.</p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <p class="links"><a href="https://github.com/prosperity-solutions/outfit">GitHub</a> <a href="https://github.com/prosperity-solutions/outfit/blob/main/docs/README.md">Docs</a> <a href="llms.txt">llms.txt</a> <a href="https://github.com/prosperity-solutions/outfit/blob/main/LICENSE">MIT License</a> <a href="https://liechtensteinlife.com/en-DE/markets/de/legal-notice-ps">Legal Notice</a></p>
+  <p>outfit &middot; by <a href="https://github.com/prosperity-solutions">Prosperity Solutions</a> &middot; vibe coded with Claude Code</p>
+</footer>
+
+<script src="site.js"></script>
+</body>
+</html>

@@ -332,6 +332,11 @@ Three rules that make it worth the spend rather than theatre:
 
 ## Step 3 — Docs audit
 
+**Say it with attitude.** Anything a person reads (README, `site/`, `--help`, errors, doc headings)
+follows the Voice in [AGENTS.md](AGENTS.md#voice): bold, short, concrete, a little cheeky, never
+overclaiming, and the same message in the README, the site and `outfit skills`. A diff that changes
+the pitch (headline, example, install line) changes all three or says why not.
+
 Walk the [documentation checklist](AGENTS.md#documentation-checklist). If the
 change adds commands, flags, config keys, output shapes or user-visible behaviour,
 update **all** listed files. Purely-internal changes are exempt — say so

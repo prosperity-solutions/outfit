@@ -1,21 +1,48 @@
 # outfit
 
-Your own setup of a git repository, without touching anyone else's.
+**One repo. Many outfits.**
+Hot swap your agent harness and your local checks, without messing up git.
+
+outfit swaps files in a git repository (`AGENTS.md`, `CLAUDE.md`, a skills folder, hook checks) for
+your own versions. Only on your machine. `git status` stays clean and nobody else's diff changes.
+
+Same prompt, different outfit:
+
+```sh
+$ outfit use strict                   $ outfit use yolo
+$ claude -p "add a login form"        $ claude -p "add a login form"
+
+agent reads: "Plan first. Tests       agent reads: "Be terse. Just ship."
+first. Formatter. Small diffs.
+Linter clean. Always."
+
+result: plan, tests, formatter,       result: 1 file
+change, tests again, linter error,    took 20s
+fix, tests again, lint again,
+6 files, 14 tests
+took 14m 32s
+```
+
+(An illustration. An outfit is a folder: your `AGENTS.md`, `CLAUDE.md`, skills and hook switches.)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
 ```
 
-(One line, no login and no token. More below.)
+One line. No login, no token, no `sudo`. macOS and Linux, git 2.36+.
 
-A **profile** changes two things, only on your machine:
+## How the trick works
 
-- **which hook checks run** (turn the heavy one off, skip them all, add your own), and
-- **a few files** (your `AGENTS.md`, your `CLAUDE.md`…) swapped in place of the committed ones.
+1. **A symlink** stands where the file was, pointing into your profile.
+2. **Sparse checkout** tells git to look away from that path. The committed file never changes, so
+   there is no diff.
+3. **Hooks** re-check after every pull, checkout and rebase, and a commit guard refuses to ever stage
+   the link.
 
-Teammates never notice, `git status` stays truthful, and the repository itself is
-never modified. outfit works with any git repository and any hook setup (husky,
-lefthook, plain `.git/hooks`).
+Edit through the link and you edit your profile. An editor's atomic save is caught and copied back.
+Your bytes are never overwritten: if both sides changed, outfit saves both and asks. It works with any
+git repository and any hook setup (husky, lefthook, plain `.git/hooks`), and your team does not need to
+use it.
 
 ## Try it in 60 seconds
 
@@ -49,13 +76,7 @@ without outfit, and `uninstall`.
   hooks are a convenience and CI is the real gate, so that is a fair choice. (Keys the
   team marks `locked`, such as a secret scan, cannot be skipped.)
 
-## Install
-
-No login and no token:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh
-```
+## Install, in detail
 
 It is a single static binary for Linux (amd64, arm64) and macOS (universal), needs
 git 2.36 or newer, and never uses `sudo`: it puts `outfit` in `~/.local/bin` (or next
@@ -153,7 +174,8 @@ MIT licensed.
 
 ## Contributing
 
-Issues and pull requests are welcome. Every change here goes through one required workflow
+Issues and pull requests are welcome. Write like this page: short, concrete, a little cheeky, and a
+real command instead of an adjective (the rules are in [AGENTS.md](AGENTS.md#voice)). Every change here goes through one required workflow
 ([docs/ship.md](docs/ship.md)) whose check, `Ship Workflow`, looks for a stamp that only that workflow
 produces: a pull request from outside it stays red until a maintainer adds the `no-ship` label (the check reads
 the labels when it starts, so a push after the label is what turns it green), so open an issue first

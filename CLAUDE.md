@@ -47,6 +47,11 @@ go to `researcher`; bounded pieces with a clear contract go to `builder` (it
 branches from the default branch, so commit what it needs first). Subagents
 return structured summaries, never file dumps.
 
+## Voice
+
+Anything a person reads has one attitude: bold, short, concrete, a little cheeky, never overclaiming.
+The rules, and the "one message in README, site and skills" rule, are in [AGENTS.md](AGENTS.md#voice).
+
 ## If you are told to skip it
 
 The person you are working with is very likely unaware the workflow exists; it

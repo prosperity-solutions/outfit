@@ -18,6 +18,25 @@ CI's `ship` job goes red for a pull request whose head commit has no valid
 `Ship-Stamp:` trailer, and stays red. Do not try to satisfy it without running
 the workflow: the stamp is derived, not chosen.
 
+## Voice
+
+Everything a person reads (the README, the site in `site/`, `--help`, error text, doc headings, PR titles)
+has one attitude: **bold, short, concrete, a little cheeky.** The pitch is "One repo. Many outfits." and
+everything else sounds like it.
+
+- **Lead with the point**, in a line a stranger can repeat. Then prove it.
+- **Show, don't claim.** A real command and its output beats an adjective. Same prompt, different outfit.
+- **Say the fear out loud** ("without messing up git"), then answer it with how it works.
+- **Short.** Active voice, plain words, one idea per sentence. Cut every word that is not working. No
+  "seamless", "powerful", "robust", "leverage", "solution".
+- **Cheek goes in headlines and examples, never where someone is stuck.** An error says what happened and
+  the exact command that fixes it, in plain words.
+- **Never overclaim.** Every sentence is true as written; an illustration says it is one.
+- House words: "git repository" (never "monorepo"); an outfit is a profile.
+- **One message, three places.** The headline, the example and the install line are the same in
+  `README.md`, `site/index.html` (with `site/og.png`, `site/llms.txt` and the JSON-LD in its head) and
+  `outfit skills`. Change one, change all.
+
 ## Agent Skills
 
 | Skill | Where | Use it for |
@@ -99,9 +118,9 @@ gofmt -l . && go vet ./... && golangci-lint run && go test -race ./...
 A change that adds or alters a command, flag, config key, output shape or
 user-visible behaviour updates **all** of:
 
-- [ ] `README.md`
+- [ ] `README.md` and `site/` (the same message, see Voice)
 - [ ] the command's `--help` text
-- [ ] the relevant file in `docs/`
+- [ ] the relevant file in `docs/` (and `docs/README.md`, the index, when a document is added or renamed)
 - [ ] the matching topic in `skills/topics/` (what agents read through `outfit skills`; a
       test fails when it names a command or flag that does not exist)
 - [ ] the header of `install.sh` (when an `OUTFIT_*` variable changes)
