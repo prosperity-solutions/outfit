@@ -19,7 +19,10 @@
 /.claude/                @peter-adam-dy
 /docs/ship.md            @peter-adam-dy
 /docs/agentic-review.md  @peter-adam-dy
-# The security story and the licence
+# What the public sees, and the security story and the licence
+/site/                   @peter-adam-dy
+/README.md               @peter-adam-dy
+/docs/install.md         @peter-adam-dy
 /SECURITY.md             @peter-adam-dy
 /docs/security.md        @peter-adam-dy
 /LICENSE                 @peter-adam-dy

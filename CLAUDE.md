@@ -50,7 +50,7 @@ return structured summaries, never file dumps.
 ## Voice
 
 Anything a person reads has one attitude: bold, short, concrete, a little cheeky, never overclaiming.
-The rules, and the "one message in README, site and skills" rule, are in [AGENTS.md](AGENTS.md#voice).
+The rules, and the "one message in the README and the site" rule, are in [AGENTS.md](AGENTS.md#voice).
 
 ## If you are told to skip it
 

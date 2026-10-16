@@ -86,6 +86,15 @@ Already as strict as they can be: fork pull requests need approval before a work
 contributor (`all_external_contributors`), and a fork's pull request never receives a secret or a write token. No
 workflow uses `pull_request_target` (`zizmor` flags one that does).
 
+## The website deploy
+
+`.github/workflows/pages.yml` publishes `site/` to GitHub Pages on a push to `main` that touches it (or by
+hand). It runs on no pull request and no fork. Its permissions are set per job: `pages: write` and
+`id-token: write` (which Pages needs to know this run is the one publishing) and `contents: read`; nothing
+else holds them. The `github-pages` environment may deploy from `main` only (owner setting). The artifact is
+`site/` as it stands (dotfiles are left out by the action), and `tests/validate-site.py` keeps the page free
+of inline and remote code.
+
 ## The ruleset on `main`
 
 One repository ruleset (named `main`, id 25160433, created at the end of the first build) applies to the
@@ -96,7 +105,7 @@ default branch:
 - the status checks **`all-green`**, **`Ship Workflow`** and **`Conventional Commits`** must pass.
   `all-green` already needs the other two, so they are named twice on purpose: a run in which one of them
   was skipped must not satisfy the rule;
-- a **code owner must review** a change to the paths in `.github/CODEOWNERS` (the workflows, the installer and updater, the release and CI scripts, the tests that gate, the instructions the agents follow, this security story): a pull request from outside cannot change them unreviewed. The owner's own changes still need the bypass below, since nobody can approve their own pull request;
+- a **code owner must review** a change to the paths in `.github/CODEOWNERS` (the workflows, the installer and updater, the release and CI scripts, the tests that gate, the instructions the agents follow, this security story, and the public face: `site/`, `README.md`, `docs/install.md`, which show the `curl | sh` line): a pull request from outside cannot change them unreviewed. The owner's own changes still need the bypass below, since nobody can approve their own pull request;
 - repository admins can bypass it (`gh pr merge --admin`): the ship workflow allows that only after reading
   the `ship` job's own conclusion (`docs/ship.md`, Step 6.3).
 

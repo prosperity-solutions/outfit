@@ -39,7 +39,10 @@ gh api -X POST repos/prosperity-solutions/outfit/pages -f build_type=workflow
 
 ### The domain
 
-The site is `https://outfit.oss.life.li/`. At the DNS host of `life.li`, add:
+The site is `https://outfit.oss.life.li/`. Set the DNS record and the Pages domain **before** the first
+deploy if you can: until then the site is served from `https://prosperity-solutions.github.io/outfit/`, where
+the root-absolute links of `404.html` do not reach its styles, and the canonical, `og:url` and sitemap name a
+host that does not resolve yet. At the DNS host of `life.li`, add:
 
 ```
 outfit.oss  CNAME  prosperity-solutions.github.io.

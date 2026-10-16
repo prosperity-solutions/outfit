@@ -36,8 +36,8 @@ One line. No login, no token, no `sudo`. macOS and Linux, git 2.36+.
 1. **A symlink** stands where the file was, pointing into your profile.
 2. **Sparse checkout** tells git to look away from that path. The committed file never changes, so
    there is no diff.
-3. **Hooks** re-check after every pull, checkout and rebase, and a commit guard refuses to ever stage
-   the link.
+3. **Hooks** re-check after every pull, checkout and rebase. Git can't stage the link, and a commit
+   guard backs that up by refusing a commit that has it.
 
 Edit through the link and you edit your profile. An editor's atomic save is caught and copied back.
 Your bytes are never overwritten: if both sides changed, outfit saves both and asks. It works with any
@@ -73,8 +73,8 @@ without outfit, and `uninstall`.
   its `profile.config`): the team's files below it are hidden for you and yours stand in, files
   the repository does not have included ([docs/profiles.md](docs/profiles.md)).
 - **A permanent personal setup.** A `yolo` profile that skips most local checks. Local
-  hooks are a convenience and CI is the real gate, so that is a fair choice. (Keys the
-  team marks `locked`, such as a secret scan, cannot be skipped.)
+  hooks are a convenience and CI is the real gate, so that is a fair choice. (A hook the team
+  marks `locked`, such as `locked = hook.pre-push`, cannot be skipped.)
 
 ## Install, in detail
 

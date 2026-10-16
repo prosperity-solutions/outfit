@@ -33,9 +33,9 @@ everything else sounds like it.
   the exact command that fixes it, in plain words.
 - **Never overclaim.** Every sentence is true as written; an illustration says it is one.
 - House words: "git repository" (never "monorepo"); an outfit is a profile.
-- **One message, three places.** The headline, the example and the install line are the same in
-  `README.md`, `site/index.html` (with `site/og.png`, `site/llms.txt` and the JSON-LD in its head) and
-  `outfit skills`. Change one, change all.
+- **One message, two places.** The headline, the example and the install line are the same in
+  `README.md` and `site/index.html` (with `site/og.png`, `site/llms.txt` and the JSON-LD in its head);
+  `outfit skills` says the same things in its own words. Change one, change all.
 
 ## Agent Skills
 

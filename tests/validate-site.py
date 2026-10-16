@@ -6,10 +6,11 @@ Run from the repository root: python3 tests/validate-site.py
   - one h1; a title of at most 60 characters; a description of at most 160
   - the canonical URL is absolute and is the one in sitemap.xml and robots.txt
   - every JSON-LD block parses, and the FAQ data is exactly the questions on the page
-  - every local href/src exists; nothing is loaded from another host (the page's CSP forbids it)
+  - the CSP meta tag is there; every local href/src exists; nothing is loaded from another host (the page's
+    CSP forbids it); no inline CSS/JS; the same for 404.html and style.css
   - og.png is 1200x630
-  - the install line is the same in README.md, docs/install.md, site/index.html and site/llms.txt
-    (AGENTS.md, Voice: one message in every place)
+  - the install line the page shows (and Copy copies) is the install line in README.md, docs/install.md and
+    site/llms.txt (AGENTS.md, Voice: one message)
 """
 import html
 import json
@@ -76,17 +77,31 @@ else:
     if ld != vis:
         fail("the FAQ JSON-LD is not exactly the questions and answers on the page")
 
-for attr, ref in re.findall(r'(href|src)="([^"]*)"', page):
-    if ref.startswith(("#", "mailto:")):
-        continue
-    if ref.startswith("https://") and attr == "href" and not ref.endswith((".css", ".js")):
-        continue  # a link to another site (docs, GitHub, ...) is fine
-    if ref.startswith(("http://", "https://", "//")):
-        fail(f"{attr}={ref!r} loads from another host, which the page's CSP forbids")
-    elif not os.path.exists(os.path.join(SITE, ref.split("#")[0])):
-        fail(f"{attr}={ref!r} does not exist in site/")
-if "<style" in page or re.search(r"<script(?![^>]*(src=|ld\+json))", page) or " style=" in page:
-    fail("inline CSS/JS found; the CSP only allows files from the site itself")
+def check_page(name, text):
+    """A page may link to other sites with <a href>, and load nothing but its own files."""
+    if not re.search(r"<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none';", text):
+        fail(f"{name}: the Content-Security-Policy meta tag is missing or no longer starts from default-src 'none'")
+    for tag, attrs in re.findall(r"<(a|link|script|img|source|iframe|form)\b([^>]*)>", text):
+        if tag == "link" and 'rel="canonical"' in attrs:
+            continue  # the canonical URL is, by definition, absolute
+        for attr, ref in re.findall(r'\b(href|src|action)="([^"]*)"', attrs):
+            if ref.startswith(("#", "mailto:")):
+                continue
+            if tag == "a" and ref.startswith("https://"):
+                continue  # a link to another site (docs, GitHub, ...) is fine
+            if ref.startswith(("http://", "https://", "//")):
+                fail(f"{name}: <{tag} {attr}={ref!r}> loads from another host, which the page's CSP forbids")
+            elif not os.path.exists(os.path.join(SITE, ref.split("#")[0].lstrip("/"))):
+                fail(f"{name}: <{tag} {attr}={ref!r}> does not exist in site/")
+    if re.search(r"<style|\sstyle=|\son[a-z]+=", text) or re.search(r"<script(?![^>]*(src=|ld\+json))", text):
+        fail(f"{name}: inline CSS/JS or an event handler; the CSP only allows files from the site itself")
+
+
+check_page("index.html", page)
+check_page("404.html", read("site", "404.html"))
+css = read("site", "style.css")
+if re.search(r"@import|url\(\s*['\"]?(https?:)?//", css):
+    fail("style.css imports or loads something from another host")
 
 with open(os.path.join(SITE, "og.png"), "rb") as f:
     head = f.read(24)
@@ -94,7 +109,10 @@ if head[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", head[16:24]) != (120
     fail("og.png must be a 1200x630 PNG")
 
 cmd = "curl -fsSL https://raw.githubusercontent.com/prosperity-solutions/outfit/main/install.sh | sh"
-for p in (("README.md",), ("docs", "install.md"), ("site", "index.html"), ("site", "llms.txt")):
+shown = re.search(r'<pre[^>]*id="cmd"[^>]*><code>(.*?)</code></pre>', page, re.S)
+if not shown or html.unescape(shown.group(1)).strip() != cmd:
+    fail("the install line shown in the page (pre#cmd, the one Copy copies) is not the install line")
+for p in (("README.md",), ("docs", "install.md"), ("site", "llms.txt")):
     if cmd not in read(*p):
         fail(f"the install line is not in {'/'.join(p)} (one message, everywhere)")
 

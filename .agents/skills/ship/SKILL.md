@@ -334,7 +334,7 @@ Three rules that make it worth the spend rather than theatre:
 
 **Say it with attitude.** Anything a person reads (README, `site/`, `--help`, errors, doc headings)
 follows the Voice in [AGENTS.md](AGENTS.md#voice): bold, short, concrete, a little cheeky, never
-overclaiming, and the same message in the README, the site and `outfit skills`. A diff that changes
+overclaiming, and the same message in the README and the site (and `outfit skills` in its own words). A diff that changes
 the pitch (headline, example, install line) changes all three or says why not.
 
 Walk the [documentation checklist](AGENTS.md#documentation-checklist). If the
