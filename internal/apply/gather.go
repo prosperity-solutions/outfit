@@ -182,7 +182,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			g.messages = append(g.messages, "ignored a recorded swap: "+err.Error())
 			continue
 		}
-		facts.Recorded[s.Path] = plan.Record{Target: s.Target, VariantHash: s.VariantHash, VariantBlob: s.VariantBlob, BaseBlob: s.BaseBlob, SeenBase: s.SeenBase, KnownBases: s.KnownBases}
+		facts.Recorded[s.Path] = plan.Record{Target: s.Target, VariantHash: s.VariantHash, VariantBlob: s.VariantBlob, BaseBlob: s.BaseBlob, SeenBase: s.SeenBase, KnownBases: s.KnownBases, Dev: s.Dev, Inode: s.Inode}
 	}
 
 	// The profile's own files below the replaced directories: what the state lists, and every link
@@ -240,7 +240,15 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 				// (git 2.36 moves a hard-linked file aside as `<path>~cruft` too: a regular file
 				// that is the profile's own file under another name)
 				if fi, lerr := os.Lstat(in.abs(stray)); lerr == nil && fi.Mode().IsRegular() {
-					t, err = hardText(in.abs(stray), in.hardCandidates(p, facts.Recorded[p].Target)), nil
+					cands := in.hardCandidates(p, facts.Recorded[p].Target)
+					t, err = hardText(in.abs(stray), cands), nil
+					if t == "" && in.hardTier() {
+						// the same text as the profile's, now or at the last sync (the profile was saved
+						// under its name elsewhere since): what git 2.36 moved aside is still ours
+						if h := hashFile(in.abs(stray)); h != "" && (h == facts.Recorded[p].VariantHash || h == hashFile(in.variantPath(p))) {
+							t = in.Target(p)
+						}
+					}
 				}
 			}
 			if err == nil && t != "" {
@@ -319,12 +327,17 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		case fi.Mode()&os.ModeSymlink != 0:
 			pf.FS = plan.Link
 			pf.LinkTarget, _ = os.Readlink(in.abs(p))
+			pf.WantHard = in.hardTier() && ie.tracked && pf.LinkTarget == in.Target(p) && sameDisk(in.variantPath(p), filepath.Dir(in.abs(p)))
 		case fi.Mode().IsRegular() && hardText(in.abs(p), in.hardCandidates(p, facts.Recorded[p].Target)) != "":
 			// A hard link of the profile's file (hardlink.go): the same as a symlink to it.
 			pf.FS, pf.Hard = plan.Link, true
 			pf.LinkTarget = hardText(in.abs(p), in.hardCandidates(p, facts.Recorded[p].Target))
 		case fi.Mode().IsRegular():
 			pf.FS = plan.File
+			if rec := facts.Recorded[p]; rec.Inode != 0 {
+				dev, ino := fileID(fi)
+				pf.WasOurs = dev == rec.Dev && ino == rec.Inode
+			}
 			if ie.skip {
 				pf.FileHash = hashFile(in.abs(p))
 			} else if ie.tracked {
@@ -344,7 +357,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			switch {
 			case !ie.tracked:
 				pf.StrayLinks, pf.StrayTarget = append(pf.StrayLinks, stray), t
-			case stagedOnlyOurs(ctx, in.Git, stray, ie, filepath.IsAbs(t)):
+			case stagedOnlyOurs(ctx, in.Git, stray, ie, isRegularFile(in.abs(stray))):
 				// `git add -A` after the merge staged it: a commit would put the link into history,
 				// and once nothing is swapped the guard no longer looks. Take it off the index too.
 				pf.StrayLinks, pf.StrayTarget = append(pf.StrayLinks, stray), t
@@ -840,4 +853,10 @@ func stagedOnlyOurs(ctx context.Context, g gitx.Client, rel string, ie indexEntr
 	}
 	_, err := g.Read(ctx, "--literal-pathspecs", "cat-file", "-e", "HEAD:"+rel)
 	return err != nil
+}
+
+// isRegularFile reports that path is a regular file (not a symlink, not a directory).
+func isRegularFile(path string) bool {
+	fi, err := os.Lstat(path)
+	return err == nil && fi.Mode().IsRegular()
 }

@@ -56,9 +56,13 @@ func Guard(ctx context.Context, g gitx.Client, gitDir string, gc config.GitConfi
 	}
 	sparseText, _ := os.ReadFile(filepath.Join(gitDir, "info", "sparse-checkout"))
 	swapped := map[string]bool{}
+	profileFile := map[string]string{} // swapped path -> the profile's file (absolute), for a local or worktree profile
 	if st != nil {
 		for _, s := range st.Swaps {
 			swapped[s.Path] = true
+			if filepath.IsAbs(s.Target) {
+				profileFile[s.Path] = s.Target
+			}
 		}
 	}
 	for _, p := range hiddenPaths(string(sparseText)) {
@@ -86,7 +90,7 @@ func Guard(ctx context.Context, g gitx.Client, gitDir string, gc config.GitConfi
 	var out []Violation
 	sparseViolation := checkSparse(swapped, replaced, gitDir, gc)
 
-	res, err := g.Read(ctx, "diff", "--cached", "--raw", "-z", "--no-renames", "--no-ext-diff")
+	res, err := g.Read(ctx, "diff", "--cached", "--raw", "--no-abbrev", "-z", "--no-renames", "--no-ext-diff")
 	if err != nil {
 		return append(out, Violation{Message: "outfit could not read the index to check swapped files: " + err.Error(), Fix: "git status"}), nil
 	}
@@ -109,7 +113,7 @@ func Guard(ctx context.Context, g gitx.Client, gitDir string, gc config.GitConfi
 					Message: fmt.Sprintf("%s is staged as a symlink (mode 120000) below %s, which your active profile replaces: committing it would put outfit's link into history", e.path, d),
 					Fix:     fmt.Sprintf("git reset -q -- %s && outfit sync", shArg(e.path))})
 			case allow:
-			case merging && (e.newMode == "100644" || e.newMode == "100755" || e.newMode == "000000"):
+			case merging && (e.newMode == "100644" || e.newMode == "100755" || e.newMode == "000000") && !stagesProfileText(ctx, g, profileFile[e.path], e):
 			default:
 				out = append(out, Violation{Path: e.path,
 					Message: fmt.Sprintf("%s is below %s, which your active profile replaces: what is staged there is not what your checkout shows, and must not be committed from it", e.path, d),
@@ -126,7 +130,7 @@ func Guard(ctx context.Context, g gitx.Client, gitDir string, gc config.GitConfi
 				Message: fmt.Sprintf("%s is staged as a symlink (mode 120000): committing it would put outfit's link into history", e.path),
 				Fix:     fmt.Sprintf("git reset -q -- %s && outfit sync", shArg(e.path))})
 		case allow:
-		case merging && (e.newMode == "100644" || e.newMode == "100755" || e.newMode == "000000"):
+		case merging && (e.newMode == "100644" || e.newMode == "100755" || e.newMode == "000000") && !stagesProfileText(ctx, g, profileFile[e.path], e):
 		default:
 			out = append(out, Violation{Path: e.path,
 				Message: fmt.Sprintf("%s is swapped by your active profile and must not be committed from this checkout", e.path),
@@ -242,6 +246,7 @@ func checkSparse(swapped map[string]bool, replaced []string, gitDir string, gc c
 
 type rawEntry struct {
 	oldMode, newMode string
+	newBlob          string
 	status           string
 	path             string
 }
@@ -256,9 +261,20 @@ func parseRaw(b []byte) []rawEntry {
 		if len(f) < 5 {
 			continue
 		}
-		out = append(out, rawEntry{oldMode: f[0], newMode: f[1], status: f[4], path: string(parts[i+1])})
+		out = append(out, rawEntry{oldMode: f[0], newMode: f[1], newBlob: f[3], status: f[4], path: string(parts[i+1])})
 	}
 	return out
+}
+
+// stagesProfileText reports that the blob staged for e is the text of the local or worktree profile's file
+// (profile is its absolute path, "" for a committed profile): resolving a merge conflict legitimately stages
+// the team's file, never your profile's private text, which a hard link makes the file in your worktree.
+func stagesProfileText(ctx context.Context, g gitx.Client, profile string, e rawEntry) bool {
+	if profile == "" || e.newMode == "000000" {
+		return false
+	}
+	res, err := g.Read(ctx, "hash-object", "--", profile)
+	return err == nil && strings.TrimSpace(string(res.Stdout)) == e.newBlob
 }
 
 func exists(p string) bool { _, err := os.Lstat(p); return err == nil }

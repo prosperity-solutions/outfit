@@ -2,7 +2,7 @@
 
 > One repo. Many outfits. A free command-line tool that swaps files in a git repository (AGENTS.md, CLAUDE.md, skills folders, hook checks) for your own versions, only on your machine. git status stays clean and nobody else's diff changes.
 
-outfit is a small Go CLI. A profile is a folder of your own versions of tracked files, plus on/off switches for the team's hook checks. `outfit use <profile>` puts a symlink where the file was, sparse checkout tells git to look away from that path, and git hooks keep it true after every pull, checkout and rebase. The committed files never change, so pull requests and teammates see nothing. An editor's save over the link is copied back into the profile; if both sides changed, outfit saves both copies and asks. A profile can also replace a whole folder (for example `.claude/skills`).
+outfit is a small Go CLI. A profile is a folder of your own versions of tracked files, plus on/off switches for the team's hook checks. `outfit use <profile>` puts a link (a symlink, or a hard link for a private profile) where the file was, sparse checkout tells git to look away from that path, and git hooks keep it true after every pull, checkout and rebase. The committed files never change, so pull requests and teammates see nothing. An editor's save over the link is copied back into the profile; if both sides changed, outfit saves both copies and asks. A profile can also replace a whole folder (for example `.claude/skills`).
 
 - Source: https://github.com/prosperity-solutions/outfit
 - Website: https://outfit.oss.life.li/

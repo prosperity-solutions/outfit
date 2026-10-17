@@ -33,6 +33,29 @@ func sameFile(a, b string) bool {
 	return err == nil && bi.Mode().IsRegular() && os.SameFile(ai, bi)
 }
 
+// fileID is the identity of a file: the disk and the inode.
+func fileID(fi os.FileInfo) (dev, ino uint64) {
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		return uint64(st.Dev), uint64(st.Ino) //nolint:unconvert // the types differ by platform
+	}
+	return 0, 0
+}
+
+// sameDisk reports that a path and the directory dir are on one disk, so a hard link can be made.
+func sameDisk(path, dir string) bool {
+	a, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	b, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	ad, _ := fileID(a)
+	bd, _ := fileID(b)
+	return ad != 0 && ad == bd
+}
+
 // hardTier says the active profile's files are hard-linked: a local or a worktree profile.
 func (in Input) hardTier() bool {
 	return in.Profile != nil && in.Profile.Tier != profiles.Committed
@@ -47,8 +70,12 @@ func ourHardLink(abs, target string) bool {
 // hardLinkOf finds the profile file the regular file at fileRel (below worktree) is a hard link of:
 // profileRel (the swapped path it stands for) inside any personal profile. It is how a record lost to
 // a kill is rebuilt.
-func hardLinkOf(worktree, fileRel, profileRel string, personal []string) (string, bool) {
+func hardLinkOf(worktree, fileRel, profileRel string, personal []string, byBytes bool) (string, bool) {
 	abs := filepath.Join(worktree, filepath.FromSlash(fileRel))
+	h := ""
+	if byBytes {
+		h = hashFile(abs) // (git 2.36's `<path>~cruft` of a profile that was saved elsewhere since: the same text)
+	}
 	for _, root := range personal {
 		entries, err := os.ReadDir(root)
 		if err != nil {
@@ -56,7 +83,7 @@ func hardLinkOf(worktree, fileRel, profileRel string, personal []string) (string
 		}
 		for _, e := range entries {
 			cand := filepath.Join(root, e.Name(), filepath.FromSlash(profileRel))
-			if sameFile(abs, cand) {
+			if sameFile(abs, cand) || (h != "" && hashFile(cand) == h) {
 				return cand, true
 			}
 		}

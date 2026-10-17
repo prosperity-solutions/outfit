@@ -33,7 +33,7 @@ One line. No login, no token, no `sudo`. macOS and Linux, git 2.36+.
 
 ## How the trick works
 
-1. **A symlink** stands where the file was, pointing into your profile.
+1. **A link** stands where the file was, pointing into your profile.
 2. **Sparse checkout** tells git to look away from that path. The committed file never changes, so
    there is no diff.
 3. **Hooks** re-check after every pull, checkout and rebase. Git can't stage the link, and a commit

@@ -63,6 +63,11 @@ type State struct {
 // Swap is one swapped path.
 type Swap struct {
 	Path string `json:"path"`
+	// Dev and Inode are the worktree file's identity when a local or worktree profile's file is hard-linked
+	// there: a file that still has this identity but stopped being the profile's is the profile's OLD text
+	// (the profile was saved under its name as a new file), not something a person wrote.
+	Dev   uint64 `json:"dev,omitempty"`
+	Inode uint64 `json:"inode,omitempty"`
 	// Target is the symlink text sync made, so a link someone else replaced is
 	// told apart from ours.
 	Target string `json:"target,omitempty"`

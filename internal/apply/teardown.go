@@ -97,11 +97,11 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 			failed = append(failed, "recorded path "+s.Path+" is not a plain path inside the worktree: left alone")
 			continue
 		}
-		removeStrays(ctx, g, w.WorkTree, s.Path, s.Target)
+		removeStrays(ctx, g, w.WorkTree, s.Path, s.Target, s.VariantHash)
 		p := filepath.Join(w.WorkTree, filepath.FromSlash(s.Path))
 		fi, err := os.Lstat(p)
 		switch {
-		case err == nil && fi.Mode().IsRegular() && ourHardLink(p, s.Target):
+		case err == nil && fi.Mode().IsRegular() && (ourHardLink(p, s.Target) || movedHardLink(w, s.Path)):
 			// A hard link of the profile's file: the name goes, the profile's file stays.
 			fault.Point("teardown: before a link goes")
 			if err := os.Remove(p); err != nil {
@@ -127,7 +127,7 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 			// sparse checkout off) already did this one. Nothing to remove, nothing to lose.
 			restore = append(restore, s.Path)
 		case err == nil:
-			failed = append(failed, s.Path+" is a regular file where outfit's link was: left alone (its bytes are yours; `outfit sync` absorbs an editor's save into the profile, or saves both copies when the profile changed too, then rerun)")
+			failed = append(failed, s.Path+" is a file of its own where outfit's link was (an editor's save): left alone (its bytes are yours; `outfit sync` absorbs an editor's save into the profile, or saves both copies when the profile changed too, then rerun)")
 		default:
 			restore = append(restore, s.Path)
 		}
@@ -269,7 +269,7 @@ func unrecordedLinks(ctx context.Context, g gitx.Client, w Workspace, st *state.
 			ours := err == nil && isOurLinkText(t, personal)
 			if err != nil {
 				if fi, lerr := os.Lstat(sp); lerr == nil && fi.Mode().IsRegular() {
-					_, ours = hardLinkOf(w.WorkTree, stray, path, personal)
+					_, ours = hardLinkOf(w.WorkTree, stray, path, personal, true)
 				}
 			}
 			if ours {
@@ -284,7 +284,7 @@ func unrecordedLinks(ctx context.Context, g gitx.Client, w Workspace, st *state.
 		t, err := os.Readlink(filepath.Join(w.WorkTree, filepath.FromSlash(path)))
 		if err != nil {
 			// (a hard link of a personal profile's file has no text: found by being the same file)
-			if cand, ok := hardLinkOf(w.WorkTree, path, path, personal); ok {
+			if cand, ok := hardLinkOf(w.WorkTree, path, path, personal, false); ok {
 				out = append(out, state.Swap{Path: path, Target: cand})
 			}
 			continue
@@ -301,7 +301,7 @@ func unrecordedLinks(ctx context.Context, g gitx.Client, w Workspace, st *state.
 // and renaming it leaves it; normally it is in the git dir, see linkVia) and
 // `<path>~cruft` (older git, mid-merge). Only a symlink with the text outfit wrote, and
 // only one git does not track: nothing of the repository's own.
-func removeStrays(ctx context.Context, g gitx.Client, worktree, rel, target string) {
+func removeStrays(ctx context.Context, g gitx.Client, worktree, rel, target, recordedHash string) {
 	if target == "" {
 		return
 	}
@@ -310,7 +310,7 @@ func removeStrays(ctx context.Context, g gitx.Client, worktree, rel, target stri
 		t, err := os.Readlink(sp)
 		hard := false
 		if err != nil {
-			if fi, lerr := os.Lstat(sp); lerr == nil && fi.Mode().IsRegular() && ourHardLink(sp, target) {
+			if fi, lerr := os.Lstat(sp); lerr == nil && fi.Mode().IsRegular() && ourHardOrSameText(sp, target, recordedHash) {
 				t, err, hard = target, nil, true
 			}
 		}
@@ -372,4 +372,21 @@ func isRecordedSwap(st *state.State, path string) bool {
 		}
 	}
 	return false
+}
+
+// movedHardLink: the recorded profile path is gone (the repository directory was moved) but the file is
+// still a hard link of the same path inside a personal profile.
+func movedHardLink(w Workspace, rel string) bool {
+	_, ok := hardLinkOf(w.WorkTree, rel, rel, personalLinkDirs(w), false)
+	return ok
+}
+
+// ourHardOrSameText: sp is a hard link of the profile file target, or (a leftover that git 2.36 moved aside,
+// whose profile was saved under its name elsewhere since) a file with the text target or the record has.
+func ourHardOrSameText(sp, target, recordedHash string) bool {
+	if ourHardLink(sp, target) {
+		return true
+	}
+	h := hashFile(sp)
+	return filepath.IsAbs(target) && h != "" && (h == recordedHash || h == hashFile(target))
 }

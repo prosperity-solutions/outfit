@@ -346,7 +346,7 @@ func teardownExtras(ctx context.Context, g gitx.Client, w Workspace, st *state.S
 		}
 		if fi.Mode().IsRegular() && inRecord[p] {
 			// An editor's save over the link that `outfit sync` has not copied into the profile yet.
-			failed = append(failed, p+" is a regular file where outfit's link was: left alone (its bytes are yours; `outfit sync` absorbs an editor's save into the profile, then rerun)")
+			failed = append(failed, p+" is a file of its own where outfit's link was (an editor's save): left alone (its bytes are yours; `outfit sync` absorbs an editor's save into the profile, then rerun)")
 			continue
 		}
 		if fi.Mode()&os.ModeSymlink == 0 {

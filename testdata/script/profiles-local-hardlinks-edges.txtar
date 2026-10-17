@@ -1,0 +1,82 @@
+# The edges of the hard-linked local profile: an old install is upgraded, what the guard and sync do
+# with a leftover `<path>~cruft`, a merge that stages the profile's text, an unchanged save in one
+# worktree does not make the others re-absorb for ever, an old-text save is the person's. (Promoting an active local profile is in profiles-local.txtar, which
+# now runs with hard links.)
+fixture repo team upstream worktrees=1
+cd repo
+exec git config user.email a@b
+exec git config user.name a
+outfit init
+outfit new mine
+exec sh -c 'printf "T0\n" > .git/outfit/profiles/mine/AGENTS.md'
+outfit use mine
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+
+# an install from before hard links has a symlink: sync makes it a hard link once, then nothing changes
+exec rm AGENTS.md
+symlink AGENTS.md -> $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+outfit sync
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+outfit sync --json
+stdout '"changed": *false'
+
+# a staged SYMLINK cruft of ours (what the fallback or an older outfit left) is taken off the index and the disk
+symlink AGENTS.md~cruft -> $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+exec git add -f AGENTS.md~cruft
+outfit sync
+! exists AGENTS.md~cruft
+exec git ls-files -s
+! stdout 'cruft'
+
+# a leftover cruft with the profile's text from before the profile was saved elsewhere is ours too
+exec cp .git/outfit/profiles/mine/AGENTS.md AGENTS.md~cruft
+outfit sync
+! exists AGENTS.md~cruft
+
+# a merge in progress: resolving a conflict stages the team's file, never the profile's private text
+exec git checkout -q -b side
+exec sh -c 'echo side > f.txt; git add f.txt; git commit -qm side'
+exec git checkout -q main
+exec sh -c 'echo main > f.txt; git add f.txt; git commit -qm main'
+! exec git merge --no-commit side
+exec git update-index --no-skip-worktree AGENTS.md
+exec git add --sparse AGENTS.md
+exec sh -c 'echo resolved > f.txt; git add f.txt'
+! exec git commit -qm merged
+stderr 'AGENTS.md'
+exec git reset -q -- AGENTS.md
+exec git merge --abort
+outfit sync
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+
+# two worktrees: an unchanged atomic save in one is absorbed (same bytes: nothing is written, the profile's
+# file keeps its inode) and the other never re-absorbs
+cd ../repo-wt1
+outfit use mine
+samefile AGENTS.md ../repo/AGENTS.md
+cd ../repo
+exec sh -c 'cp AGENTS.md $WORK/t.tmp && mv $WORK/t.tmp AGENTS.md'
+! samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+outfit sync
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+cd ../repo-wt1
+outfit sync --json
+stdout '"changed": *false'
+samefile AGENTS.md ../repo/AGENTS.md
+cd ../repo
+outfit sync --json
+stdout '"changed": *false'
+
+# an in-place edit, then an atomic save that brings the recorded text back: the person's save is NOT
+# overwritten by the "old text" rule (that rule is for the very file outfit linked)
+exec sh -c 'echo junk >> AGENTS.md'
+exec sh -c 'printf "T0\n" > $WORK/t.tmp && mv $WORK/t.tmp AGENTS.md'
+! samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+! outfit sync
+exec cat AGENTS.md
+stdout 'T0'
+exec cat .git/outfit/profiles/mine/AGENTS.md
+stdout 'junk'
+exec sh -c 'cp .git/outfit/profiles/mine/AGENTS.md AGENTS.md'
+outfit sync
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md

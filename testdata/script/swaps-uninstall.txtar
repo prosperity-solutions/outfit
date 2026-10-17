@@ -84,6 +84,6 @@ outfit init
 outfit use yolo
 atomicsave AGENTS.md 'my own bytes\n'
 ! outfit uninstall
-stderr 'regular file where outfit.s link was'
+stderr 'file of its own where outfit.s link was'
 exec cat AGENTS.md
 stdout 'my own bytes'

@@ -42,13 +42,23 @@ func TestAStaleCopyOfTheProfileIsReplacedNotQuarantined(t *testing.T) {
 	// The profile was saved under its name as a new file (an absorb from another worktree): this
 	// worktree's file is the profile's OLD text, unchanged since linking.
 	w, f := inSync()
-	f.Paths["AGENTS.md"] = PathFacts{FS: File, Tracked: true, SkipWorktree: true, Mode: "100644", FileHash: "old", VariantHash: "new"}
+	f.Paths["AGENTS.md"] = PathFacts{FS: File, Tracked: true, SkipWorktree: true, Mode: "100644", FileHash: "old", VariantHash: "new", WasOurs: true}
 	f.Recorded["AGENTS.md"] = Record{Target: tgt, VariantHash: "old"}
 	got := Plan(w, f)
 	if len(got) != 1 || got[0].Kind != LinkPath || !got[0].Replaces {
 		t.Fatalf("%v", kinds(got))
 	}
-	// ... but a file that is neither the old text nor the new one is the person's: both saved.
+	// ... but only the file outfit linked (its recorded inode). The same bytes in a file somebody wrote
+	// since (an atomic save that brought the old text back) are the person's: both saved.
+	pf0 := f.Paths["AGENTS.md"]
+	pf0.WasOurs = false
+	f.Paths["AGENTS.md"] = pf0
+	if got := Plan(w, f); !hasKind(got, QuarantineBoth) || hasKind(got, LinkPath) {
+		t.Fatalf("not the linked inode: %v", kinds(got))
+	}
+	pf0.WasOurs = true
+	f.Paths["AGENTS.md"] = pf0
+	// ... and a file that is neither the old text nor the new one is the person's: both saved.
 	pf := f.Paths["AGENTS.md"]
 	pf.FileHash = "edited"
 	f.Paths["AGENTS.md"] = pf
@@ -63,5 +73,21 @@ func TestAnExtraStaysASymlink(t *testing.T) {
 		if a.Kind == LinkPath && !a.Extra {
 			t.Fatalf("the profile's own files below a replaced directory are never hard-linked: %+v", a)
 		}
+	}
+}
+
+func TestASymlinkOfALocalProfileIsUpgradedToAHardLink(t *testing.T) {
+	w, f := inSync()
+	pf := f.Paths["AGENTS.md"]
+	pf.WantHard = true
+	f.Paths["AGENTS.md"] = pf
+	got := Plan(w, f)
+	if len(got) != 1 || got[0].Kind != LinkPath || !got[0].Replaces {
+		t.Fatalf("%v", kinds(got))
+	}
+	pf.Hard, pf.WantHard = true, false // once it is one, nothing is planned
+	f.Paths["AGENTS.md"] = pf
+	if got := Plan(w, f); len(got) != 0 {
+		t.Fatalf("%v", kinds(got))
 	}
 }

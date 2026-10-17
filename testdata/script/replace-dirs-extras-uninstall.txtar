@@ -30,7 +30,7 @@ symlink skills/mine.md -> /somewhere/notes.md
 # an editor's save that was never absorbed stops the uninstall, and nothing is lost
 atomicsave skills/new.md 'saved, not synced\n'
 ! outfit uninstall
-stderr 'skills/new.md is a regular file where outfit.s link was'
+stderr 'skills/new.md is a file of its own where outfit.s link was'
 exec cat skills/new.md
 stdout 'saved, not synced'
 outfit sync

@@ -6,9 +6,10 @@ the team. `git status` stays truthful.
 
 ## Read this before you edit anything
 
-1. **A file can be a link.** With a profile active, a swapped file (say `AGENTS.md`) is a
-   symlink into `.outfit/profiles/<profile>/AGENTS.md` (committed profile) or into the git
-   directory (local or worktree profile). Editing it edits the *profile's* file. The
+1. **A swapped file can be the profile's file.** With a profile active, a swapped file (say `AGENTS.md`) is
+   a symlink into `.outfit/profiles/<profile>/AGENTS.md` (committed profile) or, for a local or worktree
+   profile, a **hard link**: an ordinary-looking file that is the same file as the profile's under the git
+   directory. Editing it edits the *profile's* file. The
    team's file is untouched. A local or worktree profile has no history: there is no undo. `outfit status` lists every swapped path; check it first.
 2. **An editor's atomic save replaces the link with a regular file.** `outfit sync` notices and
    copies the new bytes into the profile ("absorb"). If the profile's file changed too (an

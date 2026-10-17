@@ -7,7 +7,8 @@ description: >
   create, edit, promote or hide profiles. Use this skill when the repository has a
   `.outfit/` directory, when the user mentions outfit, profiles, "my own AGENTS.md",
   swapped files, toggles, `outfit sync` or `outfit status`, or when a file in the
-  working tree is a symlink into `.outfit/profiles/` or a git directory. Covers every
+  working tree is a symlink into `.outfit/profiles/` or a git directory, or an ordinary file that `outfit status`
+  lists as swapped. Covers every
   `outfit` command.
 metadata:
   managed-by: outfit

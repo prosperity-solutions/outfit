@@ -36,6 +36,12 @@ type PathFacts struct {
 	// Hard says the "link" is a hard link (a regular file that is the profile's own file under
 	// another name), not a symlink; LinkTarget is then the profile file's path.
 	Hard bool
+	// WasOurs says the regular file at the path has the identity recorded for the hard link outfit made:
+	// it is the profile's OLD file (the profile was saved under its name as a new file since).
+	WasOurs bool
+	// WantHard says this symlink should be a hard link (a local or worktree profile whose file is on the
+	// same disk): installs from before hard links are upgraded once.
+	WantHard bool
 
 	Tracked      bool   // the index has the path at stage 0
 	SkipWorktree bool   // git's skip-worktree tag: git leaves the path alone
@@ -78,6 +84,8 @@ type PathFacts struct {
 type Record struct {
 	Target      string
 	VariantHash string
+	// Dev and Inode: the identity of the hard-linked worktree file at the last sync (0 for a symlink).
+	Dev, Inode uint64
 	// Extra marks a link below a replaced directory at a path the repository does not track.
 	Extra bool
 	// BaseBlob is the base blob the swap stands on (set at link time, moved by an ack or
@@ -458,7 +466,7 @@ func Plan(w Want, f Facts) []Action {
 				continue
 			}
 			out = append(out, Action{Kind: QuarantineFile, Path: p,
-				Reason: p + " is a regular file where outfit's link used to be, and the profile no longer swaps it: a copy is saved before the base file is restored"})
+				Reason: p + " is a file of its own where outfit's link used to be (an editor's save), and the profile no longer swaps it: a copy is saved before the base file is restored"})
 		}
 	}
 
@@ -507,6 +515,10 @@ func Plan(w Want, f Facts) []Action {
 			switch {
 			case pf.LinkTarget != s.Target:
 				out = append(out, Action{Kind: LinkPath, Path: p, Target: s.Target, Replaces: pf.Hard})
+			case pf.WantHard && !pf.Hard && pf.Tracked:
+				// Linked before hard links existed: a symlink into .git is what makes an agent ask to
+				// read outside the folder.
+				out = append(out, Action{Kind: LinkPath, Path: p, Target: s.Target, Replaces: true})
 			case !had || rec.VariantHash != pf.VariantHash || rec.Target != s.Target || (pf.VariantBlob != "" && rec.VariantBlob != pf.VariantBlob) || (pf.BaseBlob != "" && rec.SeenBase != pf.BaseBlob):
 				out = append(out, Action{Kind: RecordHash, Path: p, Target: s.Target, Adapted: Adapted(rec, pf)})
 			}
@@ -530,7 +542,7 @@ func Plan(w Want, f Facts) []Action {
 				// The file and the profile's copy are the same bytes (a person resolved a
 				// quarantine by making them equal): nothing to choose, just relink.
 				out = append(out, Action{Kind: Absorb, Path: p, Target: s.Target})
-			case had && pf.FileHash != "" && pf.FileHash == rec.VariantHash && pf.VariantHash != rec.VariantHash:
+			case had && pf.WasOurs && pf.FileHash != "" && pf.FileHash == rec.VariantHash && pf.VariantHash != rec.VariantHash:
 				// A hard link the profile left: it was saved under its name as a new file (an
 				// absorb from another worktree, an editor in the profile folder). This file is the
 				// profile's OLD text, unchanged since linking, so the new text replaces it.

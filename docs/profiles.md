@@ -98,9 +98,9 @@ out of a commit. `outfit use base` returns to the committed files.
 
 For each swapped path outfit asks git to hide the committed file (a non-cone
 `!/<path>` sparse-checkout pattern, with `sparse.expectFilesOutsideOfPatterns=true`),
-then puts a symlink at the path pointing into the profile's directory: a **relative** one
-into `.outfit/profiles/<profile>/` for a committed profile, an **absolute** one into the git
-dir for a local or worktree profile (see the tiers above). So:
+then puts a link at the path: a **relative symlink** into `.outfit/profiles/<profile>/` for a committed
+profile, and for a local or worktree profile a **hard link** of the profile's file in the git dir (see the
+tiers above; a symlink where a hard link cannot be made). So:
 
 - `git status` stays clean, and `git add -A`, `git commit -a`, `reset --hard`,
   `clean -fdx`, `stash -u` and `rebase` leave the link alone;
@@ -208,6 +208,9 @@ the repository tracks nothing in (a typo, or the wrong case: git matches pattern
 some systems) is not replaced, with a note. A profile may not replace the directory that holds the
 team's git hooks (a hook the team locked on would stop running unseen), nor `.git` or `.outfit`.
 
+(For a local or worktree profile these links are still **symlinks** into the git dir, so an agent that follows one
+is asked to read outside the folder; only the swapped, tracked files are hard-linked.)
+
 A profile file is **not linked** (with a note) when something is in the way: a regular file of yours already
 at that path (a copy is saved, the file stays, exit 3), a symlink that is not outfit's, the team tracking a
 file where a folder would have to stand (or files below the path), a name that differs from a tracked file only
@@ -237,6 +240,8 @@ What it does with each swapped path:
 |---|---|
 | the right link | nothing (it only notes that the profile's file changed through it) |
 | nothing, or a link to somewhere else | makes the link |
+| a symlink of a local or worktree profile (an install from before hard links) | makes it a hard link, once |
+| the profile's file was saved under its name as a new file (an absorb from another worktree), and this worktree's hard link is still that old file | replaces it with the profile's new text |
 | an editor's **atomic save** replaced the link by a regular file, and the profile's file is unchanged since | **absorbs** it: copies the new bytes into the profile's file, byte for byte, and relinks |
 | the same, but the profile's file changed too (this includes an edit you made through the link since the last `outfit` command: nothing runs when a file is edited, so sync cannot tell it from a change made by git; run `outfit sync` after editing and before an editor saves, or take the printed fix) | saves **both** under `.git/outfit/quarantine/<time>-<key>/{file,variant}/`, leaves everything where it is, exits **3** and prints what to compare |
 | a path in the middle of a merge conflict (git replaced the link with a regular file full of markers) | leaves it alone: never absorbs the markers, keeps the patterns as they are, exits 3 and prints the fix. Resolve the **base** file, `git add --sparse <path> && git commit`, then `outfit sync` links it again |

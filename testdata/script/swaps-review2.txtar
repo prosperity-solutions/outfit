@@ -14,7 +14,7 @@ rm apps/web/AGENTS.md
 exec sh -c 'echo "an editor wrote this" > apps/web/AGENTS.md'
 exec git config outfit.profile yolo
 ! outfit sync
-stderr 'regular file where outfit.s link used to be'
+stderr 'file of its own where outfit.s link used to be'
 stderr 'copies saved in'
 exec git config outfit.profile
 outfit sync --json

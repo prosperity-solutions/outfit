@@ -1,6 +1,7 @@
 package apply
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -194,7 +195,7 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 				if !realParents(in.W.WorkTree, a.Path) {
 					return fmt.Errorf("%s is below a symlinked directory: refusing to act through it", a.Path)
 				}
-				if fi, err := os.Lstat(p); err == nil && (fi.Mode()&os.ModeSymlink != 0 || (fi.Mode().IsRegular() && ourHardLink(p, a.Target))) {
+				if fi, err := os.Lstat(p); err == nil && (fi.Mode()&os.ModeSymlink != 0 || (fi.Mode().IsRegular() && ourHardOrSameText(p, a.Target, ""))) {
 					if err := os.Remove(p); err != nil {
 						return err
 					}
@@ -319,7 +320,13 @@ func (in Input) execute(ctx context.Context, st *state.State, acts []plan.Action
 					}
 				}
 			}
-			next.Swaps = append(next.Swaps, state.Swap{Path: sw.Path, Target: sw.Target, VariantHash: pf.VariantHash, VariantBlob: pf.VariantBlob, BaseBlob: base, SeenBase: g.blobs[sw.Path], KnownBases: known})
+			swap := state.Swap{Path: sw.Path, Target: sw.Target, VariantHash: pf.VariantHash, VariantBlob: pf.VariantBlob, BaseBlob: base, SeenBase: g.blobs[sw.Path], KnownBases: known}
+			if pf.Hard {
+				if fi, err := os.Lstat(in.abs(sw.Path)); err == nil {
+					swap.Dev, swap.Inode = fileID(fi)
+				}
+			}
+			next.Swaps = append(next.Swaps, swap)
 		}
 	}
 	sort.Slice(next.Swaps, func(i, j int) bool { return next.Swaps[i].Path < next.Swaps[j].Path })
@@ -569,8 +576,12 @@ func (in Input) absorb(path, target string) error {
 	if vi, err := os.Lstat(in.variantPath(path)); err == nil {
 		mode = vi.Mode().Perm()
 	}
-	if err := state.WriteFileAtomic(in.variantPath(path), b, mode); err != nil {
-		return fmt.Errorf("cannot save %s into the profile: %w", path, err)
+	// (When the profile already holds these bytes nothing is written: a write would give the profile's file
+	// a new inode and leave every other worktree's hard link behind, forever re-absorbing.)
+	if vb, verr := os.ReadFile(in.variantPath(path)); verr != nil || !bytes.Equal(vb, b) {
+		if err := state.WriteFileAtomic(in.variantPath(path), b, mode); err != nil {
+			return fmt.Errorf("cannot save %s into the profile: %w", path, err)
+		}
 	}
 	fault.Point("absorbed into the profile, not yet relinked")
 	return in.link(path, target, true, true)

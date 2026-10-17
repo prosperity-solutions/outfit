@@ -50,9 +50,33 @@ type model struct {
 // has not absorbed yet): the tree looks clean, but the next sync will change a profile file.
 func (m *model) pendingAbsorb() bool {
 	for _, p := range m.swapped() {
-		if fi, err := os.Lstat(m.r.Path(p)); err == nil && fi.Mode()&os.ModeSymlink == 0 {
+		if fi, err := os.Lstat(m.r.Path(p)); err == nil && fi.Mode()&os.ModeSymlink == 0 && !m.hardLinkedToProfile(p) {
 			return true
 		}
+	}
+	return false
+}
+
+// hardLinkedToProfile reports that the regular file at p is a hard link of its profile's file (a local or
+// worktree profile): not a save that is waiting to be absorbed. The record names the profile's file.
+func (m *model) hardLinkedToProfile(p string) bool {
+	b, err := os.ReadFile(filepath.Join(m.r.Dir, ".git", "outfit", "state.json"))
+	if err != nil {
+		return false
+	}
+	var st struct {
+		Swaps []struct{ Path, Target string } `json:"swaps"`
+	}
+	if json.Unmarshal(b, &st) != nil {
+		return false
+	}
+	for _, s := range st.Swaps {
+		if s.Path != p || !filepath.IsAbs(s.Target) {
+			continue
+		}
+		a, aerr := os.Stat(m.r.Path(p))
+		t, terr := os.Stat(s.Target)
+		return aerr == nil && terr == nil && os.SameFile(a, t)
 	}
 	return false
 }
@@ -92,7 +116,11 @@ func (m *model) dump() string {
 		if tgt, err := os.Readlink(m.r.Path(p)); err == nil {
 			fmt.Fprintf(&b, "-- %s -> %s\n", p, tgt)
 		} else {
-			fmt.Fprintf(&b, "-- %s is a regular file (or gone): %v\n", p, err)
+			if m.hardLinkedToProfile(p) {
+				fmt.Fprintf(&b, "-- %s is a hard link of its profile's file\n", p)
+			} else {
+				fmt.Fprintf(&b, "-- %s is a regular file (or gone): %v\n", p, err)
+			}
 		}
 	}
 	if sj, err := os.ReadFile(filepath.Join(m.r.Dir, ".git", "outfit", "state.json")); err == nil {
@@ -379,6 +407,39 @@ func (m *model) upstreamChange(file string) {
 
 // ---------------- the invariants ----------------
 
+// checkNoProfileTextCommitted: no blob committed outside .outfit/ equals the text of a file in a local
+// or worktree profile.
+func (m *model) checkNoProfileTextCommitted(after string) {
+	profile := map[string]string{} // blob id -> the profile file
+	for _, root := range []string{
+		filepath.Join(m.r.Dir, ".git", "outfit", "profiles"),
+		filepath.Join(m.r.Dir, ".git", "outfit", "worktree-profiles"),
+	} {
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || !d.Type().IsRegular() || strings.HasSuffix(path, "profile.config") {
+				return nil
+			}
+			if out, herr := m.r.GitErr("hash-object", "--", path); herr == nil {
+				profile[strings.TrimSpace(out)] = path
+			}
+			return nil
+		})
+	}
+	if len(profile) == 0 {
+		return
+	}
+	tree, _ := m.r.GitErr("ls-tree", "-r", "HEAD")
+	for _, l := range strings.Split(tree, "\n") {
+		f := strings.Fields(l)
+		if len(f) < 4 || strings.HasPrefix(f[3], ".outfit/") {
+			continue
+		}
+		if p, ok := profile[f[2]]; ok {
+			m.rt.Fatalf("after %s: %s in HEAD holds the text of the private profile file %s (invariant: a local profile's text is never committed)\n%s", after, f[3], p, m.dump())
+		}
+	}
+}
+
 func (m *model) check(after string) {
 	m.t.Helper()
 	// An internal error is never acceptable; "out of sync" (4) and "needs a person" (3) are.
@@ -389,6 +450,9 @@ func (m *model) check(after string) {
 	if out, _ := m.r.GitErr("ls-tree", "-r", "HEAD"); strings.Contains(out, "120000 ") {
 		m.rt.Fatalf("after %s: a symlink is committed (invariant: no symlink in history):\n%s\n%s", after, out, m.dump())
 	}
+	// No local or worktree profile's text in history: a hard link makes the profile's file an ordinary
+	// file in the worktree, so a commit of it would publish a private setup.
+	m.checkNoProfileTextCommitted(after)
 	// (git 2.36 moves outfit's link to `<path>~cruft` on a conflicting merge, and a later
 	// `git add -A` stages it: that is git acting on a leftover, the commit guard refuses it
 	// (swaps-cruft-guard.txtar) and history stays link-free above.)
