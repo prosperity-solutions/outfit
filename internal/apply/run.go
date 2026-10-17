@@ -529,13 +529,16 @@ func (in Input) link(path, target string, replaces, hard bool) error {
 	}
 	// A local or worktree profile is hard-linked (hardlink.go): the file then lives inside the worktree
 	// for every agent. A file system that cannot do it gets the symlink below.
-	if hard && in.hardTier() && filepath.IsAbs(target) {
+	if hard && in.hardAllowed() && filepath.IsAbs(target) {
 		err := in.linkHard(abs, path, target)
 		if err == nil {
 			return nil
 		}
 		if !canFallBack(err) {
 			return err
+		}
+		if !errors.Is(err, syscall.EXDEV) && !errors.Is(err, syscall.EMLINK) {
+			_ = os.WriteFile(in.noHardMarker(), []byte("a hard link failed here ("+err.Error()+"): symlinks are used in this worktree\n"), 0o600)
 		}
 	}
 	// The link is made in outfit's own directory inside the git dir and renamed into place

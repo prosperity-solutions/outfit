@@ -80,3 +80,43 @@ stdout 'junk'
 exec sh -c 'cp .git/outfit/profiles/mine/AGENTS.md AGENTS.md'
 outfit sync
 samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+
+# the guard knows git's own transformations: a .gitattributes that rewrites line endings gives the staged
+# blob a different id than the raw profile file has; the profile's text is refused all the same
+exec sh -c 'printf "/AGENTS.md text eol=lf\n" > .gitattributes; git add .gitattributes; git commit -qm attrs'
+exec sh -c 'printf "crlf one\r\ncrlf two\r\n" > AGENTS.md'
+outfit sync
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+exec git checkout -q -b side2 HEAD~1
+exec sh -c 'echo side2 > f.txt; git add f.txt; git commit -qm side2'
+exec git checkout -q main
+exec sh -c 'echo main2 > f.txt; git add f.txt; git commit -qm main2'
+! exec git merge --no-commit side2
+exec git update-index --no-skip-worktree AGENTS.md
+exec git add --sparse AGENTS.md
+exec sh -c 'echo resolved > f.txt; git add f.txt'
+! exec git commit -qm merged
+stderr 'AGENTS.md'
+exec git reset -q -- AGENTS.md
+exec git merge --abort
+outfit sync
+
+# ... and so is the OLD text another worktree still holds after the profile was saved under its name anew
+cd ../repo-wt1
+outfit sync
+samefile AGENTS.md ../repo/AGENTS.md
+exec git checkout -q -b w1
+exec sh -c 'echo wside > f.txt; git add f.txt; git commit -qm wside'
+cd ../repo
+exec sh -c 'printf "new private\n" > $WORK/t.tmp && mv $WORK/t.tmp AGENTS.md'
+outfit sync
+cd ../repo-wt1
+! samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+! exec git merge --no-commit main
+exec git update-index --no-skip-worktree AGENTS.md
+exec git add --sparse AGENTS.md
+exec sh -c 'echo resolved > f.txt; git add f.txt'
+! exec git commit -qm merged
+stderr 'AGENTS.md'
+exec git reset -q -- AGENTS.md
+exec git merge --abort

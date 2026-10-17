@@ -23,6 +23,9 @@ import (
 // profile exactly like an editor's atomic save over a symlink. Committed profiles stay symlinks: they
 // are inside the worktree already. docs/git-behavior.md (rows 56 and 57) pins what git does to one.
 
+// osLink is os.Link; a test replaces it to play a file system that cannot hard-link.
+var osLink = os.Link
+
 // sameFile reports that a and b are the same regular file (one inode under two names).
 func sameFile(a, b string) bool {
 	ai, err := os.Stat(a)
@@ -54,6 +57,20 @@ func sameDisk(path, dir string) bool {
 	ad, _ := fileID(a)
 	bd, _ := fileID(b)
 	return ad != 0 && ad == bd
+}
+
+// noHardMarker is a file in outfit's directory of the git dir: a hard link failed here for a reason about
+// the file system (not the disk, not too many links), so outfit uses symlinks in this worktree and does not
+// try again (without it, a sync would "upgrade" the symlink, fall back, and upgrade again for ever).
+func (in Input) noHardMarker() string { return filepath.Join(in.W.GitDir, "outfit", "no-hard-links") }
+
+// hardAllowed says a hard link may be made: a local or worktree profile, on a file system that has them.
+func (in Input) hardAllowed() bool {
+	if !in.hardTier() {
+		return false
+	}
+	_, err := os.Lstat(in.noHardMarker())
+	return err != nil
 }
 
 // hardTier says the active profile's files are hard-linked: a local or a worktree profile.
@@ -112,7 +129,7 @@ func (in Input) linkHard(abs, path, variant string) error {
 	if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if err := os.Link(variant, tmp); err != nil {
+	if err := osLink(variant, tmp); err != nil {
 		return err
 	}
 	fault.Point("hard link made in the git dir, not yet renamed into place")

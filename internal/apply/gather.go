@@ -327,7 +327,7 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		case fi.Mode()&os.ModeSymlink != 0:
 			pf.FS = plan.Link
 			pf.LinkTarget, _ = os.Readlink(in.abs(p))
-			pf.WantHard = in.hardTier() && ie.tracked && pf.LinkTarget == in.Target(p) && sameDisk(in.variantPath(p), filepath.Dir(in.abs(p)))
+			pf.WantHard = in.hardAllowed() && ie.tracked && pf.LinkTarget == in.Target(p) && sameDisk(in.variantPath(p), filepath.Dir(in.abs(p)))
 		case fi.Mode().IsRegular() && hardText(in.abs(p), in.hardCandidates(p, facts.Recorded[p].Target)) != "":
 			// A hard link of the profile's file (hardlink.go): the same as a symlink to it.
 			pf.FS, pf.Hard = plan.Link, true

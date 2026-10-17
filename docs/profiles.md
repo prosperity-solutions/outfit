@@ -208,7 +208,7 @@ the repository tracks nothing in (a typo, or the wrong case: git matches pattern
 some systems) is not replaced, with a note. A profile may not replace the directory that holds the
 team's git hooks (a hook the team locked on would stop running unseen), nor `.git` or `.outfit`.
 
-(For a local or worktree profile these links are still **symlinks** into the git dir, so an agent that follows one
+(For a local or worktree profile the profile's own files, the ones the repository does not track, are still **symlinks** into the git dir, so an agent that follows one
 is asked to read outside the folder; only the swapped, tracked files are hard-linked.)
 
 A profile file is **not linked** (with a note) when something is in the way: a regular file of yours already
@@ -240,8 +240,8 @@ What it does with each swapped path:
 |---|---|
 | the right link | nothing (it only notes that the profile's file changed through it) |
 | nothing, or a link to somewhere else | makes the link |
-| a symlink of a local or worktree profile (an install from before hard links) | makes it a hard link, once |
-| the profile's file was saved under its name as a new file (an absorb from another worktree), and this worktree's hard link is still that old file | replaces it with the profile's new text |
+| a symlink of a local or worktree profile (an install from before hard links) | makes it a hard link, once (on a file system that cannot hard-link, `.git/outfit/no-hard-links` records it and symlinks stay) |
+| the profile's file was saved under its name as a new file (an absorb from another worktree), and this worktree's hard link is still that old file, holding the old text | replaces it with the profile's new text |
 | an editor's **atomic save** replaced the link by a regular file, and the profile's file is unchanged since | **absorbs** it: copies the new bytes into the profile's file, byte for byte, and relinks |
 | the same, but the profile's file changed too (this includes an edit you made through the link since the last `outfit` command: nothing runs when a file is edited, so sync cannot tell it from a change made by git; run `outfit sync` after editing and before an editor saves, or take the printed fix) | saves **both** under `.git/outfit/quarantine/<time>-<key>/{file,variant}/`, leaves everything where it is, exits **3** and prints what to compare |
 | a path in the middle of a merge conflict (git replaced the link with a regular file full of markers) | leaves it alone: never absorbs the markers, keeps the patterns as they are, exits 3 and prints the fix. Resolve the **base** file, `git add --sparse <path> && git commit`, then `outfit sync` links it again |
