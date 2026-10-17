@@ -326,7 +326,7 @@ func assertConverges(t *testing.T, r *testkit.Repo, bin string, fc faultCtx, tok
 	}
 	for _, f := range sj.Files {
 		fi, err := os.Lstat(r.Path(f.Path))
-		if err != nil || !(fi.Mode()&os.ModeSymlink != 0 || hardLinked(fi)) {
+		if err != nil || (fi.Mode()&os.ModeSymlink == 0 && !hardLinked(fi)) {
 			fc.fatalf(t, "%s should be a link (a symlink, or a hard link for a local profile) to the %s profile: %v", f.Path, sj.Profile.Name, err)
 		}
 	}
