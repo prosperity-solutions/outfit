@@ -43,6 +43,7 @@ func ScriptCommands() map[string]func(*testscript.TestScript, bool, []string) {
 	return map[string]func(*testscript.TestScript, bool, []string){
 		"atomicsave": cmdAtomicSave,
 		"islink":     cmdIsLink,
+		"samefile":   cmdSameFile,
 		"blobsha":    cmdBlobSHA,
 		"gitver":     cmdGitVer,
 		"hooklog":    cmdHookLog,
@@ -103,6 +104,26 @@ func cmdIsLink(ts *testscript.TestScript, neg bool, args []string) {
 			ts.Fatalf("%s is a symlink (-> %s), want not", args[0], target)
 		}
 		ts.Fatalf("%s is not a symlink to ...%s (target %q, err %v)", args[0], strings.Join(args[1:], ""), target, err)
+	}
+}
+
+// samefile a b: a and b are one regular file under two names (a hard link); `! samefile a b` says
+// they are not. A symlink is not "the same file" here: both must be regular files.
+func cmdSameFile(ts *testscript.TestScript, neg bool, args []string) {
+	if len(args) != 2 {
+		ts.Fatalf("usage: samefile a b")
+	}
+	same := false
+	ai, aerr := os.Lstat(ts.MkAbs(args[0]))
+	bi, berr := os.Lstat(ts.MkAbs(args[1]))
+	if aerr == nil && berr == nil && ai.Mode().IsRegular() && bi.Mode().IsRegular() {
+		same = os.SameFile(ai, bi)
+	}
+	if same == neg {
+		if neg {
+			ts.Fatalf("%s and %s are one file (a hard link), want not", args[0], args[1])
+		}
+		ts.Fatalf("%s and %s are not one file (errors %v, %v)", args[0], args[1], aerr, berr)
 	}
 }
 

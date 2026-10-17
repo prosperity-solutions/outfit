@@ -32,10 +32,13 @@ commands take a plain name).
 
 ## How a swap works
 
-outfit tells git to hide the committed file (a sparse-checkout pattern) and puts a symlink at
-the path: relative into `.outfit/profiles/<profile>/` for a committed profile, absolute into
-the git dir for a local or worktree one. So `git status` stays clean and `git add -A`,
-`commit -a`, `reset --hard`, `clean`, `stash` and `rebase` leave the link alone.
+outfit tells git to hide the committed file (a sparse-checkout pattern) and puts a link at the path: a
+relative symlink into `.outfit/profiles/<profile>/` for a committed profile, and for a local or worktree
+profile a **hard link** (a second name for the profile's file in the git dir, so it is an ordinary file
+inside the worktree and no agent has to read outside it). So `git status` stays clean and `git add -A`,
+`commit -a`, `reset --hard`, `clean`, `stash` and `rebase` leave the link alone. A save that writes a new
+file and renames it (Claude Code's Edit tool) leaves a copy of its own until `outfit sync` copies it into the
+profile, which every git hook and every `outfit` command does.
 
 - An edit through the link is an edit of the profile's file. For a committed profile it shows
   in `git status` as ` M .outfit/profiles/<profile>/AGENTS.md`; `git diff AGENTS.md` does not

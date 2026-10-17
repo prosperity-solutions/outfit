@@ -30,11 +30,22 @@ with no `outfit.profile` set you are on `base` and get exactly the committed rep
 Names are unique across all three: `outfit new` refuses a name any tier already uses, and
 `outfit ls` shows each profile's tier. The links for a committed profile are relative
 (`.outfit/profiles/<name>/AGENTS.md`), so an edit through the link shows in plain `git
-status` as an edit of the profile. The links for a local or worktree profile are
-**absolute** into the git dir, and edits to those files do not show in `git status`, by
+status` as an edit of the profile. A local or worktree profile is **hard-linked**: the file in your worktree is a second name for the
+profile's own file (one file, two names), so it is an ordinary file inside the folder, and a coding agent
+never has to read "outside this directory" (it does for a symlink into `.git`, and Claude Code's Edit tool
+refuses to write through one). Where a hard link cannot be made (the worktree on another disk, a file
+system without hard links) outfit uses a symlink instead. Edits to those files do not show in `git status`, by
 design (they are not in git): `outfit status` lists each file with when it last changed, e.g.
 `AGENTS.md ← mine (local, edited 2h ago)`. There is no history and no snapshot: plain files,
 edited in place.
+
+An in-place write (`>>`, most programs) is the profile's text at once, in every worktree that links it.
+A save that writes a new file and renames it over the name (Claude Code's Edit tool, many editors) leaves
+your worktree with a copy of its own: `outfit sync` copies it into the profile and links the two again,
+after every git operation that fires a hook and on every `outfit` command. Until then the profile (and
+another worktree) still has the old text; if both the profile and the copy changed, both are saved and
+nothing is overwritten (exit 3). `outfit use` of another profile, `use base` and `uninstall` take the
+hard link away and never touch the profile's file.
 
 ```sh
 outfit new mine                 # an empty local profile (profile.config + room for files)

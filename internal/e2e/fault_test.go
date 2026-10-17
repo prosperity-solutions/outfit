@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/prosperity-solutions/outfit/internal/testkit"
@@ -325,8 +326,8 @@ func assertConverges(t *testing.T, r *testkit.Repo, bin string, fc faultCtx, tok
 	}
 	for _, f := range sj.Files {
 		fi, err := os.Lstat(r.Path(f.Path))
-		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
-			fc.fatalf(t, "%s should be a link to the %s profile: %v", f.Path, sj.Profile.Name, err)
+		if err != nil || !(fi.Mode()&os.ModeSymlink != 0 || hardLinked(fi)) {
+			fc.fatalf(t, "%s should be a link (a symlink, or a hard link for a local profile) to the %s profile: %v", f.Path, sj.Profile.Name, err)
 		}
 	}
 	again := r.RunOutfit(bin, nil, "sync", "--json")
@@ -353,4 +354,11 @@ var replaceSetup = func(t *testing.T, r *testkit.Repo, bin string, tokens *[]str
 	r.Git("add", "skills")
 	r.Git("add", "--sparse", "-f", ".outfit/profiles/repl")
 	r.Git("commit", "-qm", "feat: replace skills")
+}
+
+// hardLinked says a regular file has more than one name: a local or worktree profile's file, hard-linked
+// into the worktree (internal/apply/hardlink.go).
+func hardLinked(fi os.FileInfo) bool {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && fi.Mode().IsRegular() && st.Nlink > 1
 }

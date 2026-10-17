@@ -96,9 +96,9 @@ func Guard(ctx context.Context, g gitx.Client, gitDir string, gc config.GitConfi
 		// git 2.36 moves our link aside to `<path>~cruft` when a merge conflicts on a swapped
 		// path, and `merge --abort` runs no hook to put things right: `git add -A` would stage
 		// that symlink. (Found by the property test.)
-		if base, ok := strings.CutSuffix(e.path, "~cruft"); ok && swapped[base] && e.newMode == "120000" {
+		if base, ok := strings.CutSuffix(e.path, "~cruft"); ok && swapped[base] && e.newMode != "000000" {
 			out = append(out, Violation{Path: e.path,
-				Message: fmt.Sprintf("%s is outfit's own link for %s, moved aside by git during a merge: committing it would put a link into history", e.path, base),
+				Message: fmt.Sprintf("%s is outfit's own link for %s (a symlink, or a hard link of the profile's file), moved aside by git during a merge: committing it would put a link, or your profile's text, into history", e.path, base),
 				Fix:     fmt.Sprintf("git reset -q -- %s && rm -f %s && outfit sync", shArg(e.path), shArg(e.path))})
 			continue
 		}

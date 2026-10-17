@@ -31,7 +31,7 @@ outfit ls
 stdout 'mine\s+local'
 exec sh -c 'printf "# mine\nmy own rules\n" > .git/outfit/profiles/mine/AGENTS.md'
 outfit use mine
-islink AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
 exec cat AGENTS.md
 stdout 'my own rules'
 # A no-op sync with a personal profile active in a repository that has committed
@@ -58,7 +58,7 @@ stdout '"modified":"20'
 outfit sync
 atomicsave AGENTS.md 'saved by an editor\n'
 outfit sync
-islink AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
 exec cat .git/outfit/profiles/mine/AGENTS.md
 stdout 'saved by an editor'
 outfit use base
@@ -263,7 +263,7 @@ outfit use base
 outfit new guarded
 exec sh -c 'mkdir -p .git/outfit/profiles/guarded/apps/web && echo g > .git/outfit/profiles/guarded/apps/web/AGENTS.md'
 outfit use guarded
-islink apps/web/AGENTS.md $WORK/repo/.git/outfit/profiles/guarded/apps/web/AGENTS.md
+samefile apps/web/AGENTS.md $WORK/repo/.git/outfit/profiles/guarded/apps/web/AGENTS.md
 chmod 555 apps/web
 ! outfit uninstall --purge
 stderr 'could not undo'

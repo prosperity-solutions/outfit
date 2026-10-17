@@ -1,0 +1,105 @@
+# A local or worktree profile is HARD-linked into the worktree, so the file is an ordinary file
+# inside the folder (a symlink into .git makes a coding agent ask to read "outside this directory",
+# and Claude Code's Edit tool refuses to write through one). git-behavior rows 56 and 57.
+fixture repo team worktrees=1
+cd repo
+outfit init
+outfit new mine
+exec sh -c 'printf "be terse\n" > .git/outfit/profiles/mine/AGENTS.md'
+outfit use mine
+
+# a regular file, one inode with the profile's file; git sees nothing
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+! islink AGENTS.md
+exec git status --short
+! stdout 'AGENTS.md'
+exec git add -A
+exec git status --short
+! stdout 'AGENTS.md'
+
+# an in-place write is the profile's text at once
+exec sh -c 'echo "no emojis" >> AGENTS.md'
+exec cat .git/outfit/profiles/mine/AGENTS.md
+stdout 'no emojis'
+outfit sync
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+
+# a save that writes a new file and renames it (Claude Code's Edit tool) leaves the worktree with a
+# copy of its own; sync copies it into the profile and links the two again
+atomicsave AGENTS.md 'be terse\nno emojis\nship it\n'
+! samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+outfit sync
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+exec cat .git/outfit/profiles/mine/AGENTS.md
+stdout 'ship it'
+
+# the profile saved under its name as a new file (an absorb from another worktree): this worktree's file
+# is the old text, unchanged since linking, so the new text replaces it
+exec sh -c 'printf "newer rules\n" > $WORK/p.tmp && mv $WORK/p.tmp .git/outfit/profiles/mine/AGENTS.md'
+! samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+outfit sync
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+exec cat AGENTS.md
+stdout 'newer rules'
+
+# BOTH changed: nothing is overwritten, both are saved, exit 3
+exec sh -c 'printf "profile side\n" > $WORK/p.tmp && mv $WORK/p.tmp .git/outfit/profiles/mine/AGENTS.md'
+atomicsave AGENTS.md 'worktree side\n'
+! outfit sync
+stderr 'AGENTS.md'
+exec cat AGENTS.md
+stdout 'worktree side'
+exec cat .git/outfit/profiles/mine/AGENTS.md
+stdout 'profile side'
+exec sh -c 'cp .git/outfit/profiles/mine/AGENTS.md AGENTS.md'
+outfit sync
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+
+# a second worktree links the same file: one inode in both
+cd ../repo-wt1
+outfit use mine
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+samefile AGENTS.md ../repo/AGENTS.md
+cd ../repo
+
+# git 2.36 moves the file aside as AGENTS.md~cruft in a conflicting merge: a hard link of the profile's
+# text must never be committed, and sync takes it away
+exec ln .git/outfit/profiles/mine/AGENTS.md AGENTS.md~cruft
+exec git add -A
+! exec git commit -qm 'feat: everything'
+stderr 'AGENTS.md~cruft is outfit.s own link'
+outfit sync
+! exists AGENTS.md~cruft
+exec git ls-files -s
+! stdout 'cruft'
+exec git add -A
+exec git commit -qm 'feat: nothing of ours' --allow-empty
+exec git ls-tree -r HEAD
+! stdout 'newer'
+! stdout 'be terse'
+
+# another profile: the old name goes, the new one is linked, neither profile loses a byte
+outfit new second
+exec sh -c 'printf "second rules\n" > .git/outfit/profiles/second/AGENTS.md'
+outfit use second
+samefile AGENTS.md $WORK/repo/.git/outfit/profiles/second/AGENTS.md
+! samefile AGENTS.md $WORK/repo/.git/outfit/profiles/mine/AGENTS.md
+exec cat .git/outfit/profiles/mine/AGENTS.md
+stdout 'worktree side|profile side'
+
+# back to base: the committed file, the profile kept
+outfit use base
+exec cat AGENTS.md
+! stdout 'second rules'
+exists .git/outfit/profiles/second/AGENTS.md
+outfit use mine
+
+# uninstall puts the committed file back and keeps the profile
+cd ../repo-wt1
+outfit use base
+cd ../repo
+outfit uninstall
+exec cat AGENTS.md
+stdout 'base rules'
+! stdout 'second rules|be terse|worktree side'
+exists .git/outfit/profiles/mine/AGENTS.md

@@ -95,6 +95,29 @@ func realParents(root, rel string) bool {
 	return true
 }
 
+// hardCandidates are the profile files a hard link at path p could be: the active profile's (local and
+// worktree tiers) and the one the record says it was linked to (absolute for a personal profile).
+func (in Input) hardCandidates(p, recorded string) []string {
+	var out []string
+	if in.hardTier() {
+		out = append(out, in.variantPath(p))
+	}
+	if filepath.IsAbs(recorded) && (len(out) == 0 || out[0] != recorded) {
+		out = append(out, recorded)
+	}
+	return out
+}
+
+// hardText says abs is a hard link of one of the candidates and returns that candidate ("" when not).
+func hardText(abs string, cands []string) string {
+	for _, c := range cands {
+		if ourHardLink(abs, c) {
+			return c
+		}
+	}
+	return ""
+}
+
 // gathered is what gather learned beyond the planner's Facts.
 type gathered struct {
 	blobs    map[string]string // path -> committed blob id
@@ -212,7 +235,15 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			continue
 		}
 		for _, stray := range []string{p + "~cruft", tmpLinkPath(p)} {
-			if t, err := os.Readlink(in.abs(stray)); err == nil && t != "" {
+			t, err := os.Readlink(in.abs(stray))
+			if err != nil {
+				// (git 2.36 moves a hard-linked file aside as `<path>~cruft` too: a regular file
+				// that is the profile's own file under another name)
+				if fi, lerr := os.Lstat(in.abs(stray)); lerr == nil && fi.Mode().IsRegular() {
+					t, err = hardText(in.abs(stray), in.hardCandidates(p, facts.Recorded[p].Target)), nil
+				}
+			}
+			if err == nil && t != "" {
 				if strays[p] == nil {
 					strays[p] = map[string]string{}
 				}
@@ -288,6 +319,10 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 		case fi.Mode()&os.ModeSymlink != 0:
 			pf.FS = plan.Link
 			pf.LinkTarget, _ = os.Readlink(in.abs(p))
+		case fi.Mode().IsRegular() && hardText(in.abs(p), in.hardCandidates(p, facts.Recorded[p].Target)) != "":
+			// A hard link of the profile's file (hardlink.go): the same as a symlink to it.
+			pf.FS, pf.Hard = plan.Link, true
+			pf.LinkTarget = hardText(in.abs(p), in.hardCandidates(p, facts.Recorded[p].Target))
 		case fi.Mode().IsRegular():
 			pf.FS = plan.File
 			if ie.skip {
@@ -308,11 +343,11 @@ func (in Input) gather(ctx context.Context, st *state.State) (plan.Want, plan.Fa
 			}
 			switch {
 			case !ie.tracked:
-				pf.StrayLinks = append(pf.StrayLinks, stray)
-			case stagedOnlyLink(ctx, in.Git, stray, ie):
+				pf.StrayLinks, pf.StrayTarget = append(pf.StrayLinks, stray), t
+			case stagedOnlyOurs(ctx, in.Git, stray, ie, filepath.IsAbs(t)):
 				// `git add -A` after the merge staged it: a commit would put the link into history,
 				// and once nothing is swapped the guard no longer looks. Take it off the index too.
-				pf.StrayLinks = append(pf.StrayLinks, stray)
+				pf.StrayLinks, pf.StrayTarget = append(pf.StrayLinks, stray), t
 				pf.StagedStrays = append(pf.StagedStrays, stray)
 			}
 		}
@@ -789,10 +824,18 @@ func onlyTracked(ctx context.Context, g gitx.Client, d string, files []string) [
 	return out
 }
 
-// stagedOnlyLink reports that the index holds a symlink at rel that HEAD does not: staged, never
-// committed. A link HEAD has is the repository's own file, and never ours to remove.
-func stagedOnlyLink(ctx context.Context, g gitx.Client, rel string, ie indexEntry) bool {
-	if !ie.tracked || ie.unmerged || ie.mode != "120000" {
+// stagedOnlyOurs reports that the index holds, at rel, a link of ours that HEAD does not: staged, never
+// committed. A symlink (mode 120000), or with hard set a regular file, which a hard-linked profile file
+// that `git add -A` staged is. What HEAD has is the repository's own, and never ours to remove.
+func stagedOnlyOurs(ctx context.Context, g gitx.Client, rel string, ie indexEntry, hard bool) bool {
+	if !ie.tracked || ie.unmerged {
+		return false
+	}
+	if hard {
+		if ie.mode != "100644" && ie.mode != "100755" {
+			return false
+		}
+	} else if ie.mode != "120000" {
 		return false
 	}
 	_, err := g.Read(ctx, "--literal-pathspecs", "cat-file", "-e", "HEAD:"+rel)

@@ -33,6 +33,9 @@ type Swap struct {
 type PathFacts struct {
 	FS         Kind
 	LinkTarget string // when FS == Link
+	// Hard says the "link" is a hard link (a regular file that is the profile's own file under
+	// another name), not a symlink; LinkTarget is then the profile file's path.
+	Hard bool
 
 	Tracked      bool   // the index has the path at stage 0
 	SkipWorktree bool   // git's skip-worktree tag: git leaves the path alone
@@ -55,6 +58,8 @@ type PathFacts struct {
 	// place (a kill between the two leaves it). Either would show up as an untracked
 	// symlink that `git add -A` could commit.
 	StrayLinks []string
+	// StrayTarget is the link text (or, for a hard link, the profile file's path) the strays are ours by.
+	StrayTarget string
 	// StagedStrays are the StrayLinks that `git add -A` staged: removing them also takes them
 	// off the index.
 	StagedStrays []string
@@ -231,8 +236,8 @@ type Action struct {
 	// Replaces says the path holds an UNTOUCHED copy of the committed file (checked
 	// against the index), which LinkPath may remove to put the link there.
 	Replaces bool
-	// Extra (RemoveLink): the link is one of the profile's own files below Under, a replaced
-	// directory: the directories it leaves empty go too.
+	// Extra (RemoveLink, LinkPath): the link is one of the profile's own files below Under, a replaced
+	// directory: the directories it leaves empty go too, and it is a symlink, never a hard link.
 	Extra bool
 	Under string
 	// Unstage (RemoveLink): the link is staged and HEAD does not have it: take it off the index too.
@@ -413,7 +418,7 @@ func Plan(w Want, f Facts) []Action {
 	// cut short): remove them at once (they are untracked, and `git add -A` would commit a symlink).
 	for _, p := range sortedKeys(f.Paths) {
 		for _, stray := range f.Paths[p].StrayLinks {
-			out = append(out, Action{Kind: RemoveLink, Path: stray, Unstage: containsStr(f.Paths[p].StagedStrays, stray)})
+			out = append(out, Action{Kind: RemoveLink, Path: stray, Target: f.Paths[p].StrayTarget, Unstage: containsStr(f.Paths[p].StagedStrays, stray)})
 		}
 	}
 
@@ -433,7 +438,7 @@ func Plan(w Want, f Facts) []Action {
 			// that nothing records): the link goes, and the directories it leaves empty.
 			switch f.Paths[p].FS {
 			case Link:
-				out = append(out, Action{Kind: RemoveLink, Path: p, Extra: true, Under: underDir(p, ignoreDirs)})
+				out = append(out, Action{Kind: RemoveLink, Path: p, Target: rec.Target, Extra: true, Under: underDir(p, ignoreDirs)})
 			case File:
 				out = append(out, Action{Kind: Skip, Path: p, Reason: p + " is a regular file where the profile's own file was linked, and the profile has no file for it now: left where it is"})
 			}
@@ -441,7 +446,7 @@ func Plan(w Want, f Facts) []Action {
 		}
 		switch pf := f.Paths[p]; pf.FS {
 		case Link:
-			a := Action{Kind: RemoveLink, Path: p}
+			a := Action{Kind: RemoveLink, Path: p, Target: f.Recorded[p].Target}
 			if f.SameProfile && !listed[p] {
 				a.Reason = p + " is no longer in the profile (removed, or an older branch?): the link is gone and the base file is back"
 			}
@@ -501,7 +506,7 @@ func Plan(w Want, f Facts) []Action {
 		case Link:
 			switch {
 			case pf.LinkTarget != s.Target:
-				out = append(out, Action{Kind: LinkPath, Path: p, Target: s.Target})
+				out = append(out, Action{Kind: LinkPath, Path: p, Target: s.Target, Replaces: pf.Hard})
 			case !had || rec.VariantHash != pf.VariantHash || rec.Target != s.Target || (pf.VariantBlob != "" && rec.VariantBlob != pf.VariantBlob) || (pf.BaseBlob != "" && rec.SeenBase != pf.BaseBlob):
 				out = append(out, Action{Kind: RecordHash, Path: p, Target: s.Target, Adapted: Adapted(rec, pf)})
 			}
@@ -525,6 +530,11 @@ func Plan(w Want, f Facts) []Action {
 				// The file and the profile's copy are the same bytes (a person resolved a
 				// quarantine by making them equal): nothing to choose, just relink.
 				out = append(out, Action{Kind: Absorb, Path: p, Target: s.Target})
+			case had && pf.FileHash != "" && pf.FileHash == rec.VariantHash && pf.VariantHash != rec.VariantHash:
+				// A hard link the profile left: it was saved under its name as a new file (an
+				// absorb from another worktree, an editor in the profile folder). This file is the
+				// profile's OLD text, unchanged since linking, so the new text replaces it.
+				out = append(out, Action{Kind: LinkPath, Path: p, Target: s.Target, Replaces: true})
 			case had && rec.VariantHash == pf.VariantHash && f.GitBusy != "":
 				// The same, but git is in the middle of a rebase/merge: it may reset the tracked
 				// variant (a `rebase --abort`), taking the saved bytes with it. They stay where
@@ -577,11 +587,11 @@ func planExtra(p string, s Swap, pf PathFacts, rec Record, had bool, gitBusy str
 	switch pf.FS {
 	case Missing:
 		keep[p] = true
-		return []Action{{Kind: LinkPath, Path: p, Target: s.Target}}
+		return []Action{{Kind: LinkPath, Path: p, Target: s.Target, Extra: true}}
 	case Link:
 		keep[p] = true
 		if pf.LinkTarget != s.Target {
-			return []Action{{Kind: LinkPath, Path: p, Target: s.Target}}
+			return []Action{{Kind: LinkPath, Path: p, Target: s.Target, Extra: true}}
 		}
 		if !had || rec.VariantHash != pf.VariantHash || rec.Target != s.Target {
 			return []Action{{Kind: RecordHash, Path: p, Target: s.Target}}

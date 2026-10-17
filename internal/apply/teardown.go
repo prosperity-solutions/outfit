@@ -101,6 +101,15 @@ func Teardown(ctx context.Context, w Workspace) (did []string, failed []string) 
 		p := filepath.Join(w.WorkTree, filepath.FromSlash(s.Path))
 		fi, err := os.Lstat(p)
 		switch {
+		case err == nil && fi.Mode().IsRegular() && ourHardLink(p, s.Target):
+			// A hard link of the profile's file: the name goes, the profile's file stays.
+			fault.Point("teardown: before a link goes")
+			if err := os.Remove(p); err != nil {
+				failed = append(failed, "link "+s.Path+": "+err.Error())
+				continue
+			}
+			did = append(did, "link "+s.Path)
+			restore = append(restore, s.Path)
 		case err == nil && fi.Mode()&os.ModeSymlink != 0:
 			if t, _ := os.Readlink(p); s.Target != "" && t != s.Target {
 				failed = append(failed, s.Path+" is a link, but not the one outfit made: left alone")
@@ -256,7 +265,14 @@ func unrecordedLinks(ctx context.Context, g gitx.Client, w Workspace, st *state.
 		// filesystem), ours by its text, not tracked.
 		for _, stray := range []string{path + "~cruft", tmpLinkPath(path)} {
 			sp := filepath.Join(w.WorkTree, filepath.FromSlash(stray))
-			if t, err := os.Readlink(sp); err == nil && isOurLinkText(t, personal) {
+			t, err := os.Readlink(sp)
+			ours := err == nil && isOurLinkText(t, personal)
+			if err != nil {
+				if fi, lerr := os.Lstat(sp); lerr == nil && fi.Mode().IsRegular() {
+					_, ours = hardLinkOf(w.WorkTree, stray, path, personal)
+				}
+			}
+			if ours {
 				if res, err := g.Read(ctx, "--literal-pathspecs", "ls-files", "-z", "--", stray); err == nil && len(res.Stdout) == 0 {
 					_ = os.Remove(sp)
 				}
@@ -267,6 +283,10 @@ func unrecordedLinks(ctx context.Context, g gitx.Client, w Workspace, st *state.
 		}
 		t, err := os.Readlink(filepath.Join(w.WorkTree, filepath.FromSlash(path)))
 		if err != nil {
+			// (a hard link of a personal profile's file has no text: found by being the same file)
+			if cand, ok := hardLinkOf(w.WorkTree, path, path, personal); ok {
+				out = append(out, state.Swap{Path: path, Target: cand})
+			}
 			continue
 		}
 		if isOurLinkText(t, personal) {
@@ -288,6 +308,12 @@ func removeStrays(ctx context.Context, g gitx.Client, worktree, rel, target stri
 	for _, stray := range []string{rel + "~cruft", tmpLinkPath(rel)} {
 		sp := filepath.Join(worktree, filepath.FromSlash(stray))
 		t, err := os.Readlink(sp)
+		hard := false
+		if err != nil {
+			if fi, lerr := os.Lstat(sp); lerr == nil && fi.Mode().IsRegular() && ourHardLink(sp, target) {
+				t, err, hard = target, nil, true
+			}
+		}
 		if err != nil || t != target {
 			continue
 		}
@@ -298,7 +324,7 @@ func removeStrays(ctx context.Context, g gitx.Client, worktree, rel, target stri
 		if len(res.Stdout) > 0 {
 			// Staged by `git add -A` (and not in HEAD): ours too, and a commit would put the
 			// link into history. Anything else git tracks is the repository's own.
-			if !stagedOnlyLink(ctx, g, stray, parseLsFiles(res.Stdout)[stray]) {
+			if !stagedOnlyOurs(ctx, g, stray, parseLsFiles(res.Stdout)[stray], hard) {
 				continue
 			}
 			_, _ = g.Write(ctx, "--literal-pathspecs", "update-index", "--force-remove", "--", stray)
