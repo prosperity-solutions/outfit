@@ -1,0 +1,78 @@
+# `outfit use` and `outfit author on|off` install outfit themselves when it was never installed here (the
+# only thing they could do otherwise is refuse and ask for `outfit init`); sync, diff and ack do not, and say so.
+fixture repo team
+cd repo
+
+# nothing is installed: the read-only and the settings commands work, and say what they need
+outfit status
+outfit set hook.pre-commit=off
+stderr 'outfit init'
+outfit sync
+stdout 'nothing to sync'
+outfit sync --json
+stdout '"changed": *false'
+stdout 'nothing to sync'
+! outfit diff AGENTS.md
+stderr 'nothing is swapped in this repository yet'
+stderr 'fix: outfit use <profile>'
+! outfit ack AGENTS.md
+stderr 'nothing is swapped'
+# bare `author` only reads
+! outfit author
+stderr 'not installed'
+
+# use installs, says so once, and swaps
+outfit use yolo
+stderr 'ran `outfit init` for you'
+exec git config --worktree --get core.hooksPath
+stdout 'outfit'
+exists .git/outfit/install.json
+exec git status --short
+! stdout .
+exec cat AGENTS.md
+stdout 'yolo'
+# the second time there is nothing to say
+outfit use base
+! stderr 'ran `outfit init`'
+outfit use yolo --json
+stdout '"profile":"yolo"'
+! stdout 'auto_init'
+outfit uninstall
+! exec git config --worktree --get core.hooksPath
+
+# --json says it in the output instead
+outfit use yolo --json
+stdout '"auto_init":true'
+! stderr 'ran `outfit init`'
+outfit uninstall
+
+# author on|off installs too
+outfit author on
+stderr 'ran `outfit init` for you'
+exists .outfit/profiles/yolo/AGENTS.md
+outfit uninstall
+outfit author on --json
+stdout '"auto_init":true'
+outfit uninstall
+
+# OUTFIT_NO_AUTO_INIT=1 is the strict refusal, and changes nothing
+env OUTFIT_NO_AUTO_INIT=1
+! outfit use yolo
+stderr 'not installed'
+stderr 'fix: outfit init'
+! outfit author on
+stderr 'fix: outfit init'
+! exists .git/outfit/install.json
+exec cat AGENTS.md
+! stdout 'yolo'
+env OUTFIT_NO_AUTO_INIT=
+
+# when init itself refuses (another tool owns core.hooksPath for this worktree) the command fails with that
+# message and changes nothing
+exec git config extensions.worktreeConfig true
+exec git config --worktree core.hooksPath /somewhere/else
+! outfit use yolo
+stderr 'outfit init'
+! exists .git/outfit/install.json
+exec cat AGENTS.md
+! stdout 'yolo'

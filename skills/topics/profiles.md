@@ -77,5 +77,6 @@ also stops while such a file is there.
 | the base changed since the swap | keeps the swap, one note, `status` shows `stale` (exit 4): `outfit diff`, `outfit ack` |
 | the profile's own file is gone | removes the link; the base file is back |
 
-`outfit use <profile>` needs `outfit init` first. `outfit use base` returns to the committed
-files. `outfit uninstall` puts every file back.
+`outfit use <profile>` (and `author on|off`) run `outfit init` for you when outfit was never installed in the
+repository, and say so (`"auto_init": true` in `--json`); `OUTFIT_NO_AUTO_INIT=1` makes them refuse instead.
+`outfit use base` returns to the committed files. `outfit uninstall` puts every file back.

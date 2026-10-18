@@ -121,7 +121,7 @@ commands:
   set <key>=<val>…       personal toggle override; key= unsets   [--here | --global]
   new <name>             make a personal profile (local; --here: for this worktree only); --from <profile>
   promote <name>         move a local profile into .outfit/profiles/ so git can version it
-  use <profile> [--here] switch the clone's (or this worktree's) profile and sync
+  use <profile> [--here] switch the clone's (or this worktree's) profile and sync (runs init if needed)
   sync                   make the files match the active profile (hooks and agents run it)
   ls                     list profiles across the three tiers
   show <profile> [path]  a profile's toggles and files, without switching to it

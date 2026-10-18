@@ -8,12 +8,16 @@ cp stdout $WORK/agents-base.txt
 exec cat apps/web/AGENTS.md
 cp stdout $WORK/web-base.txt
 
-# Nothing works before init: there would be no pre-commit guard.
+# `use` installs outfit itself (auto-init.txtar); OUTFIT_NO_AUTO_INIT=1 keeps the strict refusal: no
+# pre-commit guard, no swap.
+env OUTFIT_NO_AUTO_INIT=1
 ! outfit use yolo
 stderr 'not installed'
 stderr 'fix: outfit init'
-! outfit sync
-stderr 'fix: outfit init'
+env OUTFIT_NO_AUTO_INIT=
+# sync has nothing to reconcile before a profile is chosen
+outfit sync
+stdout 'nothing to sync'
 
 outfit init
 # Committed profiles are hidden from disk from the first moment, on base too

@@ -48,7 +48,7 @@ use it.
 
 ```sh
 cd your-repo
-outfit init                          # put outfit in front of your git hooks (they keep running)
+outfit init                          # put outfit in front of your git hooks (they keep running; `outfit use` does it for you)
 outfit set hook.pre-commit=off       # skip the slow pre-commit hook, only for you
 outfit ls                            # the profiles your team committed in .outfit/profiles (or: outfit new mine)
 outfit use <profile>                 # swap in its files (your AGENTS.md instead of the team's)

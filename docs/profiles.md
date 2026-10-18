@@ -91,8 +91,13 @@ copy is limited to 2000 files, 32 MiB per file and 64 MiB in all.
 | `outfit diff <path>` / `outfit ack <path>` | the base of a swapped file changed under it: see what changed, accept it (below) |
 | `outfit uninstall [--purge]` | removes the links, restores the base files, then undoes everything else; your local and worktree profiles are kept unless `--purge`. If a link cannot be removed it stops there (exit 1; no hooks, settings or profiles are touched, worktrees whose links did come off stay undone) and the rerun continues |
 
-`use` needs `outfit init` first: without the dispatcher nothing would keep a swapped file
-out of a commit. `outfit use base` returns to the committed files.
+`use` (and `author on|off`) install the dispatcher themselves when outfit was never installed in the
+repository (`outfit init`, nothing more: it prints one line, and `outfit uninstall` undoes it), because without
+it nothing would keep a swapped file out of a commit and the only alternative is to refuse. If `init` itself
+refuses (another tool owns `core.hooksPath` for the worktree) the command fails with that message and changes
+nothing. `OUTFIT_NO_AUTO_INIT=1` keeps the strict error. `--json` says `"auto_init": true` instead of printing the
+line. `sync`, `diff` and `ack` never install anything: before a profile was chosen there is nothing to
+reconcile (`sync` says so and exits 0), compare or acknowledge. `outfit use base` returns to the committed files.
 
 ## How a swap works
 

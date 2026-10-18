@@ -13,6 +13,7 @@ import (
 
 	"github.com/prosperity-solutions/outfit/internal/apply"
 	"github.com/prosperity-solutions/outfit/internal/config"
+	"github.com/prosperity-solutions/outfit/internal/gitx"
 	"github.com/prosperity-solutions/outfit/internal/hooks"
 	"github.com/prosperity-solutions/outfit/internal/plan"
 	"github.com/prosperity-solutions/outfit/internal/profiles"
@@ -33,6 +34,41 @@ func requireInstalled(l *loaded) error {
 	}
 	return nil
 }
+
+// ensureInstalled is requireInstalled for the commands whose job is to change files in the worktree (`use`,
+// `author on|off`): when outfit was never installed here it installs the hook dispatcher itself, the same as
+// `outfit init` does (nothing else: no sync, no team note, no agent settings), because the only thing such a
+// command could do otherwise is refuse and ask for exactly that. It says so, and `outfit uninstall` undoes it.
+// OUTFIT_NO_AUTO_INIT=1 keeps the strict refusal. If init itself refuses (another tool owns core.hooksPath for
+// the worktree) the command fails with that message and changes nothing. The returned bool says init ran.
+func ensureInstalled(ctx context.Context, e Env, l *loaded) (*loaded, bool, error) {
+	if requireInstalled(l) == nil {
+		return l, false, nil
+	}
+	if e.Getenv("OUTFIT_NO_AUTO_INIT") == "1" {
+		return l, false, requireInstalled(l)
+	}
+	gv, err := (gitx.Client{Dir: e.Dir}).RequireFloor(ctx)
+	if err != nil {
+		return l, false, Errorf("%v", err)
+	}
+	if e.Exe == "" {
+		return l, false, Errorf("cannot determine the path of the running outfit binary").WithFix("outfit init")
+	}
+	if _, err := hooks.Install(ctx, l.Git, l.Repo, l.Cfg, hooks.InstallOptions{
+		Binary: e.Exe, Version: e.Build.Version, GitVersion: gv.String(), Home: e.Getenv("HOME"),
+	}); err != nil {
+		return l, false, Errorf("outfit was not installed here yet, and installing it (outfit init) failed: %v", err).WithFix("outfit init")
+	}
+	l2, err := load(ctx, e)
+	if err != nil {
+		return l, false, err
+	}
+	return l2, true, nil
+}
+
+// autoInitNote is the one line printed when a command installed outfit by itself.
+const autoInitNote = "outfit: ran `outfit init` for you (your git hooks now go through outfit, which runs them first; `outfit uninstall` undoes it)"
 
 // syncInput describes the repository to apply: the active profile, the files it
 // swaps, whether committed profiles exist (so inactive ones are hidden), and author
@@ -210,8 +246,18 @@ func cmdSync(ctx context.Context, e Env, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	if err := requireInstalled(l); err != nil {
-		return fail(err)
+	if requireInstalled(l) != nil {
+		// Nothing was chosen here yet (choosing a profile is `outfit use`, which installs outfit): nothing to reconcile.
+		note := "nothing to sync: no profile has been chosen in this repository yet (`outfit use <profile>` starts)"
+		if *asJSON {
+			j := toJSON(&apply.Result{})
+			j.Notes = []string{note}
+			out, _ := json.Marshal(j)
+			fmt.Fprintln(e.Stdout, string(out))
+			return ExitOK
+		}
+		fmt.Fprintln(e.Stdout, note)
+		return ExitOK
 	}
 	res, _, err := converge(ctx, e, l, false)
 	if err != nil {
@@ -258,8 +304,12 @@ func cmdUse(ctx context.Context, e Env, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	if err := requireInstalled(l); err != nil {
+	l, autoInit, err := ensureInstalled(ctx, e, l)
+	if err != nil {
 		return fail(err)
+	}
+	if autoInit && !*asJSON {
+		fmt.Fprintln(e.Stderr, autoInitNote)
 	}
 
 	// The profile must exist somewhere; base always does.
@@ -358,11 +408,12 @@ func cmdUse(ctx context.Context, e Env, args []string) int {
 	if *asJSON {
 		j := toJSON(res)
 		out, _ := json.Marshal(struct {
-			Profile string `json:"profile"`
-			Scope   string `json:"scope"`
-			Shadow  string `json:"warning,omitempty"`
+			Profile  string `json:"profile"`
+			Scope    string `json:"scope"`
+			Shadow   string `json:"warning,omitempty"`
+			AutoInit bool   `json:"auto_init,omitempty"`
 			syncJSON
-		}{name, strings.TrimPrefix(scope, "--"), shadow, j})
+		}{name, strings.TrimPrefix(scope, "--"), shadow, autoInit, j})
 		fmt.Fprintln(e.Stdout, string(out))
 		return syncExit(res)
 	}
@@ -620,7 +671,16 @@ func cmdAuthor(ctx context.Context, e Env, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	if err := requireInstalled(l); err != nil {
+	autoInit := false
+	if len(pos) > 0 {
+		var ierr error
+		if l, autoInit, ierr = ensureInstalled(ctx, e, l); ierr != nil {
+			return fail(ierr)
+		}
+		if autoInit && !*asJSON {
+			fmt.Fprintln(e.Stderr, autoInitNote)
+		}
+	} else if err := requireInstalled(l); err != nil {
 		return fail(err)
 	}
 	st, serr := state.Read(l.Repo.GitDir)
@@ -735,9 +795,10 @@ func cmdAuthor(ctx context.Context, e Env, args []string) int {
 	if *asJSON {
 		out, _ := json.Marshal(struct {
 			authorView
-			Notes []string `json:"author_notes,omitempty"`
+			Notes    []string `json:"author_notes,omitempty"`
+			AutoInit bool     `json:"auto_init,omitempty"`
 			syncJSON
-		}{v, notes, toJSON(res)})
+		}{v, notes, autoInit, toJSON(res)})
 		fmt.Fprintln(e.Stdout, string(out))
 		return syncExit(res)
 	}

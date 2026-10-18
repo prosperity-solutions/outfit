@@ -7,6 +7,9 @@ would have, then its own logic. Husky, lefthook and plain `.git/hooks` all keep
 working, with the same arguments, the same stdin (`pre-push` reads its refs there)
 and the same exit code.
 
+`outfit use` and `outfit author on|off` run `outfit init` themselves when outfit was never installed in the
+repository (they could only refuse otherwise); `OUTFIT_NO_AUTO_INIT=1` keeps that refusal. Nothing else does.
+
 ```sh
 outfit init              # install (idempotent); --dry-run shows what would change
 outfit init --agents     # also a Claude Code SessionStart entry that runs outfit sync
