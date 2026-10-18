@@ -44,8 +44,11 @@ func staleCommand(ctx context.Context, e Env, name string, args []string) (l *lo
 	if err != nil {
 		return fail(err)
 	}
-	if requireInstalled(l) != nil {
+	if neverInstalled(l) {
 		return fail(Errorf("nothing is swapped in this repository yet (outfit is not installed here), so there is nothing to compare or acknowledge").WithFix("outfit use <profile>"))
+	}
+	if err := requireInstalled(l); err != nil {
+		return fail(err)
 	}
 	p, err := swappedPath(e, l, pos[0])
 	if err != nil {

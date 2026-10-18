@@ -30,9 +30,20 @@ const syncActiveEnv = "OUTFIT_SYNC_ACTIVE"
 // symlink ends up in history.
 func requireInstalled(l *loaded) error {
 	if _, err := state.ReadInstall(l.Repo.CommonDir); err != nil {
+		if !errors.Is(err, state.ErrNone) {
+			// A record that cannot be read (damaged, or written by a newer outfit) is not "never installed".
+			return Errorf("outfit's install record cannot be used: %v", err).WithFix("outfit update   (or outfit init, which rewrites it)")
+		}
 		return Errorf("outfit is not installed in this repository yet (no hook dispatcher, so nothing would keep a swapped file out of a commit)").WithFix("outfit init")
 	}
 	return nil
+}
+
+// neverInstalled reports that outfit was never installed here (as opposed to an install record that cannot
+// be read): the one case in which sync, diff and ack have nothing to act on.
+func neverInstalled(l *loaded) bool {
+	_, err := state.ReadInstall(l.Repo.CommonDir)
+	return errors.Is(err, state.ErrNone)
 }
 
 // ensureInstalled is requireInstalled for the commands whose job is to change files in the worktree (`use`,
@@ -42,11 +53,10 @@ func requireInstalled(l *loaded) error {
 // OUTFIT_NO_AUTO_INIT=1 keeps the strict refusal. If init itself refuses (another tool owns core.hooksPath for
 // the worktree) the command fails with that message and changes nothing. The returned bool says init ran.
 func ensureInstalled(ctx context.Context, e Env, l *loaded) (*loaded, bool, error) {
-	if requireInstalled(l) == nil {
+	if err := requireInstalled(l); err == nil {
 		return l, false, nil
-	}
-	if e.Getenv("OUTFIT_NO_AUTO_INIT") == "1" {
-		return l, false, requireInstalled(l)
+	} else if !neverInstalled(l) || e.Getenv("OUTFIT_NO_AUTO_INIT") == "1" {
+		return l, false, err
 	}
 	gv, err := (gitx.Client{Dir: e.Dir}).RequireFloor(ctx)
 	if err != nil {
@@ -55,10 +65,24 @@ func ensureInstalled(ctx context.Context, e Env, l *loaded) (*loaded, bool, erro
 	if e.Exe == "" {
 		return l, false, Errorf("cannot determine the path of the running outfit binary").WithFix("outfit init")
 	}
-	if _, err := hooks.Install(ctx, l.Git, l.Repo, l.Cfg, hooks.InstallOptions{
+	// Two commands starting at once (agents in parallel) must not both write git's config: the second waits
+	// for the first and finds it installed.
+	lock, err := apply.AcquireLock(l.Repo.GitDir)
+	if err != nil {
+		return l, false, Errorf("%v", err)
+	}
+	defer lock.Release()
+	if requireInstalled(l) == nil {
+		return l, false, nil
+	}
+	res, err := hooks.Install(ctx, l.Git, l.Repo, l.Cfg, hooks.InstallOptions{
 		Binary: e.Exe, Version: e.Build.Version, GitVersion: gv.String(), Home: e.Getenv("HOME"),
-	}); err != nil {
-		return l, false, Errorf("outfit was not installed here yet, and installing it (outfit init) failed: %v", err).WithFix("outfit init")
+	})
+	if err != nil {
+		return l, false, Errorf("%v", err) // init's own message, with its own way out
+	}
+	if res != nil && len(res.Adopted) > 0 {
+		fmt.Fprintf(e.Stderr, "outfit: adopted %d hook(s) another tool wrote into outfit's hooks directory (moved to the team's hooks directory)\n", len(res.Adopted))
 	}
 	l2, err := load(ctx, e)
 	if err != nil {
@@ -246,7 +270,7 @@ func cmdSync(ctx context.Context, e Env, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	if requireInstalled(l) != nil {
+	if neverInstalled(l) {
 		// Nothing was chosen here yet (choosing a profile is `outfit use`, which installs outfit): nothing to reconcile.
 		note := "nothing to sync: no profile has been chosen in this repository yet (`outfit use <profile>` starts)"
 		if *asJSON {
@@ -258,6 +282,9 @@ func cmdSync(ctx context.Context, e Env, args []string) int {
 		}
 		fmt.Fprintln(e.Stdout, note)
 		return ExitOK
+	}
+	if err := requireInstalled(l); err != nil {
+		return fail(err)
 	}
 	res, _, err := converge(ctx, e, l, false)
 	if err != nil {
@@ -304,15 +331,8 @@ func cmdUse(ctx context.Context, e Env, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	l, autoInit, err := ensureInstalled(ctx, e, l)
-	if err != nil {
-		return fail(err)
-	}
-	if autoInit && !*asJSON {
-		fmt.Fprintln(e.Stderr, autoInitNote)
-	}
-
-	// The profile must exist somewhere; base always does.
+	// The profile must exist somewhere; base always does. (Checked before anything is installed: a typo
+	// must not leave hooks behind.)
 	var chosen *profiles.Profile
 	if name != config.Base {
 		if err := profiles.ValidName(name); err != nil {
@@ -327,6 +347,14 @@ func cmdUse(ctx context.Context, e Env, args []string) int {
 		if chosen == nil {
 			return fail(Usagef("no profile called %q (committed, local or worktree)", name).WithFix("outfit ls"))
 		}
+	}
+
+	l, autoInit, err := ensureInstalled(ctx, e, l)
+	if err != nil {
+		return fail(err)
+	}
+	if autoInit && !*asJSON {
+		fmt.Fprintln(e.Stderr, autoInitNote)
 	}
 
 	// Settle the current profile first (absorb an editor's atomic save, say) so the
@@ -671,17 +699,13 @@ func cmdAuthor(ctx context.Context, e Env, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	// (`on` and `off` install outfit themselves, once the named profiles have been checked below: a typo must
+	// not leave hooks behind. Bare `author` only reads.)
 	autoInit := false
-	if len(pos) > 0 {
-		var ierr error
-		if l, autoInit, ierr = ensureInstalled(ctx, e, l); ierr != nil {
-			return fail(ierr)
+	if len(pos) == 0 {
+		if err := requireInstalled(l); err != nil {
+			return fail(err)
 		}
-		if autoInit && !*asJSON {
-			fmt.Fprintln(e.Stderr, autoInitNote)
-		}
-	} else if err := requireInstalled(l); err != nil {
-		return fail(err)
 	}
 	st, serr := state.Read(l.Repo.GitDir)
 	if errors.Is(serr, state.ErrNone) {
@@ -721,6 +745,14 @@ func cmdAuthor(ctx context.Context, e Env, args []string) int {
 		if !committed[t] && (on || !contains(st.AuthorProfiles, t)) {
 			return fail(Usagef("%q is not a committed profile (only those are hidden from the working tree; local and worktree profiles are always on disk)", t).WithFix("outfit ls"))
 		}
+	}
+	l2, auto, ierr := ensureInstalled(ctx, e, l)
+	if ierr != nil {
+		return fail(ierr)
+	}
+	l, autoInit = l2, auto
+	if autoInit && !*asJSON {
+		fmt.Fprintln(e.Stderr, autoInitNote)
 	}
 	// The active profile is always on disk: naming it asks for nothing.
 	var notes []string
