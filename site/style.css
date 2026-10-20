@@ -48,6 +48,10 @@ main { max-width: 760px; margin: 0 auto; }
 .title span, .title h2 { order: 2; margin: 0; padding: 0 4px; font: inherit; font-weight: bold; line-height: 14px; white-space: nowrap; }
 .title::after { order: 3; }
 .close { order: 0; flex: none; width: 13px; height: 13px; border: 1px solid var(--ink); background: var(--paper); }
+/* the hero illustration: a whole number of screen pixels per art pixel (4, 3, 2), so every pixel stays
+   crisp. Between 366px and 380px it crops a few pixels of rail rather than blur, and below that it scales */
+.stage { display: flex; justify-content: center; overflow: hidden; border-bottom: 1px solid var(--ink); padding: 12px 0 0; }
+.stage img { display: block; flex: none; width: 704px; height: auto; }
 .body { padding: 22px 24px; }
 .body > :last-child { margin-bottom: 0; }
 
@@ -106,6 +110,15 @@ footer .links a { margin: 0 10px; }
 }
 @media (max-width: 520px) {
   h1 { font-size: 34px; }
+}
+@media (max-width: 732px) {
+  .stage img { width: 528px; }
+}
+@media (max-width: 556px) {
+  .stage img { width: 352px; }
+}
+@media (max-width: 365px) {
+  .stage img { flex: auto; width: 100%; }
 }
 
 .dialog { max-width: 460px; margin: 60px auto 0; }
