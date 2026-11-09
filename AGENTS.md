@@ -20,9 +20,13 @@ the workflow: the stamp is derived, not chosen.
 
 ## Firelight docs
 
-Keep `.firelight/` true in the same PR as the change; run `firelight check .` and
-`firelight preview --check .`. If a Firelight MCP server is connected, search it
-first. Details: the `firelight` skill.
+The Firelight MCP server is the team's shared knowledge of all our repos. Maintainers
+keep it connected; outside contributors can skip it. Search it first (`search`) for
+discovery questions: environments, links, how-tos, cross-repo rules. Keep `.firelight/`
+true in the same PR as the change; run `firelight check .` and `firelight preview --check .`.
+When a Firelight answer is stale or missing, fix it in the owning repo's `.firelight/`.
+Details: the `firelight-team` skill (this team's rules) and the `firelight` skill (format
+and writing).
 
 ## Voice
 
@@ -48,7 +52,8 @@ everything else sounds like it.
 | Skill | Where | Use it for |
 |---|---|---|
 | `ship` | `.agents/skills/ship/SKILL.md` (also `.claude/skills/ship`, `docs/ship.md`) | every change, from empty diff to merged PR |
-| `firelight` | `.agents/skills/firelight/SKILL.md` (also `.claude/skills/firelight`) | keeping `.firelight/` (the repo's docs for a Firelight hub) true in the same PR |
+| `firelight-team` | `.agents/skills/firelight-team/SKILL.md` (also `.claude/skills/firelight-team`) | keeping `.firelight/` (the repo's docs for a Firelight hub) true in the same PR |
+| `firelight` | `.agents/skills/firelight/SKILL.md` (also `.claude/skills/firelight`) | the official Firelight skill: the `.firelight/` format and writing rules. `firelight skills install --project` writes it and overwrites edits, so re-add `metadata.internal: true` after a reinstall |
 
 The review methodology `ship` runs is [docs/agentic-review.md](docs/agentic-review.md).
 The agent roster (`code-reviewer`, `explorer`, `researcher`, `builder`) is in

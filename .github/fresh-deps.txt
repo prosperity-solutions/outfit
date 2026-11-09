@@ -3,4 +3,4 @@
 #   <name>@<version>   # why it cannot wait (the advisory it fixes)
 #
 # A version that is old enough needs no line. Remove a line once the version is a week old.
-prosperity-solutions/firelight@ffe1cd01cc2ee018b46584b9b34d354470b8b5a7   # v0.7.2: first-party docs action, every release is under 7 days old (first: 2026-11-05); remove on 2026-11-16
+prosperity-solutions/firelight@a221629a99629f62f123265b990ab8dd93116287   # v0.8.0: first-party docs action, released 2026-11-09, under 7 days old; remove on 2026-11-16
