@@ -18,6 +18,12 @@ CI's `ship` job goes red for a pull request whose head commit has no valid
 `Ship-Stamp:` trailer, and stays red. Do not try to satisfy it without running
 the workflow: the stamp is derived, not chosen.
 
+## Firelight docs
+
+Keep `.firelight/` true in the same PR as the change; run `firelight check .` and
+`firelight preview --check .`. If a Firelight MCP server is connected, search it
+first. Details: the `firelight` skill.
+
 ## Voice
 
 Everything a person reads (the README, the site in `site/`, `--help`, error text, doc headings, PR titles)
@@ -42,6 +48,7 @@ everything else sounds like it.
 | Skill | Where | Use it for |
 |---|---|---|
 | `ship` | `.agents/skills/ship/SKILL.md` (also `.claude/skills/ship`, `docs/ship.md`) | every change, from empty diff to merged PR |
+| `firelight` | `.agents/skills/firelight/SKILL.md` (also `.claude/skills/firelight`) | keeping `.firelight/` (the repo's docs for a Firelight hub) true in the same PR |
 
 The review methodology `ship` runs is [docs/agentic-review.md](docs/agentic-review.md).
 The agent roster (`code-reviewer`, `explorer`, `researcher`, `builder`) is in
@@ -125,6 +132,7 @@ user-visible behaviour updates **all** of:
       test fails when it names a command or flag that does not exist)
 - [ ] the header of `install.sh` (when an `OUTFIT_*` variable changes)
 - [ ] `docs/git-behavior.md` (when you learned something about how git behaves)
+- [ ] `.firelight/` (the Firelight docs: then `firelight check .` and `firelight preview --check .`)
 
 A purely internal change says so in the PR body.
 

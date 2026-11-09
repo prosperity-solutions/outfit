@@ -1,0 +1,6 @@
+format: 1
+id: outfit
+name: outfit
+summary: Swap your own AGENTS.md, skills and hook switches into a git repository, only on your machine, with git status clean.
+owner: outfit maintainers (Peter, lead maintainer)
+spaces: [open-source]

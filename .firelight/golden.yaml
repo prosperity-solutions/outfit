@@ -1,0 +1,39 @@
+format: 1
+questions:
+  - query: how do I install outfit
+    expect: [install-outfit]
+  - query: what is an outfit profile
+    expect: [profiles]
+  - query: skip the pre-commit hook only for me
+    expect: [skip-a-hook]
+  - query: how do I switch profile
+    expect: [switch-profile]
+  - query: create my own profile and share it with the team
+    expect: [create-a-profile]
+  - query: local vs committed profile
+    expect: [profile-tiers]
+  - query: outfit status says stale
+    expect: [fix-out-of-sync, stale-and-quarantine]
+  - query: does outfit work with husky or lefthook
+    expect: [hook-dispatcher]
+  - query: can the team stop people from skipping pre-push
+    expect: [toggles, set-up-for-a-team]
+  - query: replace the whole .claude/skills folder
+    expect: [swapped-files, profiles]
+  - query: profile for one worktree only
+    expect: [use-with-worktrees]
+  - query: remove outfit from my repo
+    expect: [update-or-uninstall]
+  - query: teach claude code how to use outfit
+    expect: [outfit-skills]
+  - query: edit the AGENTS.md of my profile
+    expect: [edit-a-profile]
+  - query: why does git status stay clean although my CLAUDE.md is different
+    expect: [swapped-files]
+    needs: meaning
+  - query: keep my own agent instructions local without committing them
+    expect: [profiles]
+    needs: meaning
+  - query: my laptop is too slow for the checks that run before every commit
+    expect: [skip-a-hook]
+    needs: meaning
