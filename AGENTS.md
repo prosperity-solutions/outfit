@@ -18,6 +18,16 @@ CI's `ship` job goes red for a pull request whose head commit has no valid
 `Ship-Stamp:` trailer, and stays red. Do not try to satisfy it without running
 the workflow: the stamp is derived, not chosen.
 
+## Firelight docs
+
+The Firelight MCP server is the team's shared knowledge of all our repos. Maintainers
+keep it connected; outside contributors can skip it. Search it first (`search`) for
+discovery questions: environments, links, how-tos, cross-repo rules. Keep `.firelight/`
+true in the same PR as the change; run `firelight check .` and `firelight preview --check .`.
+When a Firelight answer is stale or missing, fix it in the owning repo's `.firelight/`.
+Details: the `firelight-team` skill (this team's rules) and the `firelight` skill (format
+and writing).
+
 ## Voice
 
 Everything a person reads (the README, the site in `site/`, `--help`, error text, doc headings, PR titles)
@@ -42,6 +52,8 @@ everything else sounds like it.
 | Skill | Where | Use it for |
 |---|---|---|
 | `ship` | `.agents/skills/ship/SKILL.md` (also `.claude/skills/ship`, `docs/ship.md`) | every change, from empty diff to merged PR |
+| `firelight-team` | `.agents/skills/firelight-team/SKILL.md` (also `.claude/skills/firelight-team`) | keeping `.firelight/` (the repo's docs for a Firelight hub) true in the same PR |
+| `firelight` | `.agents/skills/firelight/SKILL.md` (also `.claude/skills/firelight`) | the official Firelight skill: the `.firelight/` format and writing rules. `firelight skills install --project` writes it and overwrites edits, so re-add `metadata.internal: true` after a reinstall |
 
 The review methodology `ship` runs is [docs/agentic-review.md](docs/agentic-review.md).
 The agent roster (`code-reviewer`, `explorer`, `researcher`, `builder`) is in
@@ -125,6 +137,7 @@ user-visible behaviour updates **all** of:
       test fails when it names a command or flag that does not exist)
 - [ ] the header of `install.sh` (when an `OUTFIT_*` variable changes)
 - [ ] `docs/git-behavior.md` (when you learned something about how git behaves)
+- [ ] `.firelight/` (the Firelight docs: then `firelight check .` and `firelight preview --check .`)
 
 A purely internal change says so in the PR body.
 
